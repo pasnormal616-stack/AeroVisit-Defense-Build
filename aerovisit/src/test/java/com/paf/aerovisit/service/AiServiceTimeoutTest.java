@@ -3,11 +3,9 @@ package com.paf.aerovisit.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Properties;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -89,13 +87,9 @@ class AiServiceTimeoutTest {
     }
 
     @Test
-    void smtpCanNeverHangARequestEither() throws IOException {
-        Properties props = new Properties();
-        try (InputStream in = getClass().getResourceAsStream("/application.properties")) {
-            props.load(new java.io.InputStreamReader(in, StandardCharsets.UTF_8));
-        }
-        assertThat(props.getProperty("spring.mail.properties.mail.smtp.connectiontimeout")).isEqualTo("10000");
-        assertThat(props.getProperty("spring.mail.properties.mail.smtp.timeout")).isEqualTo("10000");
-        assertThat(props.getProperty("spring.mail.properties.mail.smtp.writetimeout")).isEqualTo("10000");
+    void emailCanNeverHangARequestEither() {
+        // Brevo HTTP calls (EmailService) give up after 5 s connect / 10 s read
+        assertThat(EmailService.CONNECT_TIMEOUT_MS).isEqualTo(5_000);
+        assertThat(EmailService.READ_TIMEOUT_MS).isEqualTo(10_000);
     }
 }

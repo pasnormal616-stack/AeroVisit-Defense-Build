@@ -1,39 +1,120 @@
 package com.paf.aerovisit.service;
 
-import jakarta.mail.MessagingException;
-import jakarta.mail.internet.MimeMessage;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.FileSystemResource;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.HtmlUtils;
 
-import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.format.DateTimeFormatter;
+import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import com.paf.aerovisit.model.StaffSchedule;
 
 @Service
 public class EmailService {
 
-    private final JavaMailSender mailSender;
+    // 📮 Every email goes out through Brevo's HTTP API on port 443, because Railway blocks outgoing SMTP ports
+    static final String BREVO_URL = "https://api.brevo.com/v3/smtp/email";
+    static final String SENDER_NAME = "AeroVisit System";
+
+    // ⏱️ Never let a slow or unreachable Brevo hang a booking/approval request
+    static final int CONNECT_TIMEOUT_MS = 5_000;
+    static final int READ_TIMEOUT_MS = 10_000;
+
+    private final RestTemplate brevo;
 
     // Public address of this site, used to build links in emails (set PUBLIC_BASE_URL when running behind ngrok or a domain)
     private final String publicBaseUrl;
 
-    // Sender of every email: the Gmail account that signs in to SMTP (spring.mail.username / MAIL_USERNAME), so the
-    // address is configured in one place instead of being typed into each method
-    @Value("${spring.mail.username:" + DEFAULT_FROM + "}")
+    // Sender of every email (aerovisit.mail.from / MAIL_USERNAME); must be a verified sender in Brevo
+    @Value("${aerovisit.mail.from:" + DEFAULT_FROM + "}")
     String fromAddress = DEFAULT_FROM;
     static final String DEFAULT_FROM = "pasnormal616@gmail.com";
 
-    EmailService(JavaMailSender mailSender, @Value("${aerovisit.public-base-url:http://localhost:8081}") String publicBaseUrl) {
-        this.mailSender = mailSender;
+    // 🔒 Brevo API key: the BREVO_API_KEY environment variable (Railway) or the local .env file, never source code
+    @Value("${BREVO_API_KEY:}")
+    String brevoApiKey = "";
+
+    @Autowired
+    EmailService(@Value("${aerovisit.public-base-url:http://localhost:8081}") String publicBaseUrl) {
+        this(createBrevoClient(), publicBaseUrl);
+    }
+
+    // Tests pass a RestTemplate bound to a mock server
+    EmailService(RestTemplate brevo, String publicBaseUrl) {
+        this.brevo = brevo;
         this.publicBaseUrl = publicBaseUrl.endsWith("/") ? publicBaseUrl.substring(0, publicBaseUrl.length() - 1) : publicBaseUrl;
+    }
+
+    private static RestTemplate createBrevoClient() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(CONNECT_TIMEOUT_MS);
+        factory.setReadTimeout(READ_TIMEOUT_MS);
+        return new RestTemplate(factory);
+    }
+
+    /** An email could not be delivered: missing API key, unreadable attachment, Brevo error, or network failure. */
+    public static class MailDeliveryException extends RuntimeException {
+        public MailDeliveryException(String message) { super(message); }
+        public MailDeliveryException(String message, Throwable cause) { super(message, cause); }
+    }
+
+    // One QR code file from uploads/, sent to Brevo as a Base64 attachment named Entry_QRCode.png
+    private static Map<String, String> qrAttachment(String qrCodeFileName) {
+        Path qrPath = Paths.get(System.getProperty("user.dir"), "uploads", qrCodeFileName);
+        try {
+            return Map.of("name", "Entry_QRCode.png", "content", Base64.getEncoder().encodeToString(Files.readAllBytes(qrPath)));
+        } catch (IOException e) {
+            throw new MailDeliveryException("QR code attachment unreadable: " + qrPath, e);
+        }
+    }
+
+    // Sends one email through Brevo. Exactly one of htmlContent / textContent is set; attachment may be null.
+    private void postToBrevo(String toEmail, String subject, String htmlContent, String textContent, Map<String, String> attachment) {
+        if (brevoApiKey == null || brevoApiKey.isBlank()) {
+            throw new MailDeliveryException("BREVO_API_KEY is not set");
+        }
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("api-key", brevoApiKey);
+        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sender", Map.of("name", SENDER_NAME, "email", fromAddress));
+        body.put("to", List.of(Map.of("email", toEmail)));
+        body.put("subject", subject);
+        if (htmlContent != null) body.put("htmlContent", htmlContent);
+        if (textContent != null) body.put("textContent", textContent);
+        if (attachment != null) body.put("attachment", List.of(attachment));
+
+        try {
+            ResponseEntity<String> response = brevo.postForEntity(BREVO_URL, new HttpEntity<>(body, headers), String.class);
+            if (!response.getStatusCode().is2xxSuccessful()) { // Brevo answers 201 Created
+                throw new MailDeliveryException("Brevo answered " + response.getStatusCode());
+            }
+        } catch (RestClientException e) { // 4xx/5xx from Brevo, DNS failure, timeout
+            throw new MailDeliveryException("Brevo request failed: " + e.getMessage(), e);
+        }
+    }
+
+    private void sendHtml(String toEmail, String subject, String html) {
+        postToBrevo(toEmail, subject, html, null, null);
     }
 
     // 🔒 Visitor-typed text goes into HTML emails, so it is escaped first (a name like "<a href=...>" shows as text, not a link)
@@ -47,33 +128,24 @@ public class EmailService {
     }
 
     // 📧 Booking-form verification code (OtpService). Returns false instead of throwing, so the form can say "try again".
-    public boolean sendOtpEmail(String toEmail, String code, long validMinutes) {
+    public boolean sendOtpEmail(String recipientEmail, String otpCode, long ttlMinutes) {
+        String htmlMsg = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 2px solid #00205B; border-radius: 10px; overflow: hidden;'>"
+                + "<div style='background-color: #00205B; color: #D4AF37; padding: 20px; text-align: center;'>"
+                + "<h2 style='margin: 0;'>🦅 AEROVISIT COMMAND</h2>"
+                + "<p style='margin: 5px 0 0 0; color: white;'>Philippine Air Force Aerospace Museum</p>"
+                + "</div>"
+                + "<div style='padding: 20px; background-color: #f4f6f9; color: #333;'>"
+                + "<p>Use this code to verify your email on the museum booking form:</p>"
+                + "<p style='text-align: center; font-size: 2em; font-weight: bold; letter-spacing: 8px; color: #00205B; margin: 25px 0;'>" + escape(otpCode) + "</p>"
+                + "<p>The code is valid for <strong>" + ttlMinutes + " minutes</strong>. Never share it with anyone; museum staff will never ask for it.</p>"
+                + "<p style='color: #777; font-size: 0.9em;'>If you did not request this code, you can ignore this email.</p>"
+                + "<p style='text-align: center; font-weight: bold; margin-top: 30px;'>AeroVisit Automated System</p>"
+                + "</div></div>";
         try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-
-            helper.setFrom(fromAddress);
-            helper.setTo(toEmail);
-            helper.setSubject("AeroVisit - Your verification code: " + code);
-
-            String htmlMsg = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 2px solid #00205B; border-radius: 10px; overflow: hidden;'>"
-                    + "<div style='background-color: #00205B; color: #D4AF37; padding: 20px; text-align: center;'>"
-                    + "<h2 style='margin: 0;'>🦅 AEROVISIT COMMAND</h2>"
-                    + "<p style='margin: 5px 0 0 0; color: white;'>Philippine Air Force Aerospace Museum</p>"
-                    + "</div>"
-                    + "<div style='padding: 20px; background-color: #f4f6f9; color: #333;'>"
-                    + "<p>Use this code to verify your email on the museum booking form:</p>"
-                    + "<p style='text-align: center; font-size: 2em; font-weight: bold; letter-spacing: 8px; color: #00205B; margin: 25px 0;'>" + code + "</p>"
-                    + "<p>The code expires in <strong>" + validMinutes + " minutes</strong>. Never share it with anyone; museum staff will never ask for it.</p>"
-                    + "<p style='color: #777; font-size: 0.9em;'>If you did not request this code, you can ignore this email.</p>"
-                    + "<p style='text-align: center; font-weight: bold; margin-top: 30px;'>AeroVisit Automated System</p>"
-                    + "</div></div>";
-
-            helper.setText(htmlMsg, true);
-            mailSender.send(message);
-            System.out.println("📧 Verification code sent to " + toEmail);
+            sendHtml(recipientEmail, "AeroVisit Verification Code", htmlMsg);
+            System.out.println("📧 Verification code sent to " + recipientEmail);
             return true;
-        } catch (Exception e) { // MessagingException or Spring's MailException (SMTP down, bad address, timeout)
+        } catch (MailDeliveryException e) {
             System.err.println("❌ Failed to send verification code: " + e.getMessage());
             return false;
         }
@@ -87,14 +159,8 @@ public class EmailService {
     // Same auto-reply, but also shows the visitor's Booking Reference ID when one is provided
     public void sendPendingNotification(String toEmail, String name, String date, boolean isMasterBooking, String referenceId) {
         try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            
-            helper.setFrom(fromAddress);
-            helper.setTo(toEmail);
             
             String subject = isMasterBooking ? "AeroVisit - Master Booking Request Pending" : "AeroVisit - Visit Request Received";
-            helper.setSubject(subject);
             
             String customMessage = isMasterBooking ? 
                 "Because this is a large Master Booking (Educational Tour), it has bypassed standard limits and been forwarded directly to the Museum Director for special review. Your current status is <strong>PENDING</strong>." : 
@@ -117,12 +183,11 @@ public class EmailService {
                     + "<p>You will receive an official Entry QR Code in a separate email once your tour is APPROVED.</p>"
                     + "<p style='text-align: center; font-weight: bold; margin-top: 30px;'>AeroVisit Automated System</p>"
                     + "</div></div>";
-            
-            helper.setText(htmlMsg, true);
-            mailSender.send(message);
+
+            sendHtml(toEmail, subject, htmlMsg);
             System.out.println("⏳ Pending Auto-Reply successfully sent to " + toEmail);
             
-        } catch (MessagingException e) {
+        } catch (MailDeliveryException e) {
             System.err.println("❌ Failed to send Pending Auto-Reply email: " + e.getMessage());
         }
     }
@@ -135,12 +200,7 @@ public class EmailService {
     // Same approval email, but also shows the visitor's Booking Reference ID when one is provided
     public void sendApprovalEmailWithQR(String toEmail, String visitorName, String date, String qrCodeFileName, String referenceId) {
         try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true);
-
-            helper.setFrom(fromAddress); 
-            helper.setTo(toEmail);
-            helper.setSubject("PAF Aerospace Museum - Visit Approved");
+            String subject = "PAF Aerospace Museum - Visit Approved";
 
             String emailContent = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; color: #333;'>"
                     + "<p>Dear " + escape(visitorName) + ",</p>"
@@ -155,16 +215,10 @@ public class EmailService {
                     + "<p>Safe travels,<br>PAF Aerospace Museum Security Team</p>"
                     + "</div>";
 
-            helper.setText(emailContent, true);
-
-            String absolutePath = Paths.get(System.getProperty("user.dir"), "uploads", qrCodeFileName).toString();
-            FileSystemResource file = new FileSystemResource(new File(absolutePath));
-            helper.addAttachment("Entry_QRCode.png", file);
-
-            mailSender.send(message);
+            postToBrevo(toEmail, subject, emailContent, null, qrAttachment(qrCodeFileName));
             System.out.println("✅ Approval email successfully sent to " + toEmail);
 
-        } catch (MessagingException e) {
+        } catch (MailDeliveryException e) {
             System.err.println("❌ Failed to send email: " + e.getMessage());
         }
     }
@@ -172,29 +226,18 @@ public class EmailService {
     // --- 2. THE AUTOMATED REMINDER EMAIL ---
     public void sendReminderEmailWithQR(String toEmail, String visitorName, String date, String qrCodeFileName) {
         try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true);
-
-            helper.setFrom(fromAddress); 
-            helper.setTo(toEmail);
-            helper.setSubject("REMINDER: Your PAF Aerospace Museum Visit is Tomorrow!");
+            String subject = "REMINDER: Your PAF Aerospace Museum Visit is Tomorrow!";
 
             String emailContent = "Dear " + visitorName + ",\n\n"
                     + "This is an automated reminder that your scheduled visit to the PAF Aerospace Museum is TOMORROW (" + date + ").\n\n"
                     + "Your Entry QR Code is attached to this email. Please have it ready on your phone with your screen brightness turned up to scan at the gate.\n\n"
                     + "See you tomorrow,\n"
                     + "PAF Aerospace Museum Security Team";
-            
-            helper.setText(emailContent);
 
-            String absolutePath = Paths.get(System.getProperty("user.dir"), "uploads", qrCodeFileName).toString();
-            FileSystemResource file = new FileSystemResource(new File(absolutePath));
-            helper.addAttachment("Entry_QRCode.png", file);
-
-            mailSender.send(message);
+            postToBrevo(toEmail, subject, null, emailContent, qrAttachment(qrCodeFileName));
             System.out.println("⏰ Auto-Reminder successfully sent to " + toEmail);
 
-        } catch (MessagingException e) {
+        } catch (MailDeliveryException e) {
             System.err.println("❌ Failed to send reminder email: " + e.getMessage());
         }
     }
@@ -202,12 +245,7 @@ public class EmailService {
     // --- 3. THE END-OF-DAY DIRECTOR REPORT ---
     public void sendDirectorDailyReport(String directorEmail, String date, long expected, long checkedIn, long noShows) {
         try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, false);
-
-            helper.setFrom(fromAddress); 
-            helper.setTo(directorEmail);
-            helper.setSubject("📊 AeroVisit Daily Summary: " + date);
+            String subject = "📊 AeroVisit Daily Summary: " + date;
 
             String emailContent = "Good Evening Director,\n\n"
                     + "Here is your automated AeroVisit Daily Security & Attendance Report for " + date + ":\n\n"
@@ -216,13 +254,11 @@ public class EmailService {
                     + "❌ Total No-Shows / Pending / Rejected: " + noShows + "\n\n"
                     + "All system operations are running nominally. You can view the full details on your Admin Dashboard.\n\n"
                     + "System Generated by AeroVisit Engine";
-            
-            helper.setText(emailContent);
 
-            mailSender.send(message);
+            postToBrevo(directorEmail, subject, null, emailContent, null);
             System.out.println("📊 Daily Director Report successfully dispatched!");
 
-        } catch (MessagingException e) {
+        } catch (MailDeliveryException e) {
             System.err.println("❌ Failed to send Director Report: " + e.getMessage());
         }
     }
@@ -235,12 +271,7 @@ public class EmailService {
     // Same guidelines email, but introduces today's Tour Guide when one is on duty (falls back to a generic line when null)
     public void sendCheckInGuidelines(String to, String name, String tourGuideName) {
         try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            
-            helper.setFrom(fromAddress);
-            helper.setTo(to);
-            helper.setSubject("🟢 Entry Authorized: PAF Museum Guidelines");
+            String subject = "🟢 Entry Authorized: PAF Museum Guidelines";
             
             String htmlMsg = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 2px solid #00205B; border-radius: 10px; overflow: hidden;'>"
                     + "<div style='background-color: #00205B; color: #D4AF37; padding: 20px; text-align: center;'>"
@@ -273,12 +304,11 @@ public class EmailService {
                     + "</div>"
                     + "<p style='text-align: center; font-weight: bold; margin-top: 30px;'>Enjoy your tour through Philippine Air Force History!</p>"
                     + "</div></div>";
-            
-            helper.setText(htmlMsg, true);
-            mailSender.send(message);
+
+            sendHtml(to, subject, htmlMsg);
             System.out.println("🟢 Check-In Guidelines successfully sent to " + to);
             
-        } catch (MessagingException e) {
+        } catch (MailDeliveryException e) {
             System.err.println("❌ Failed to send Check-In email: " + e.getMessage());
         }
     }
@@ -287,12 +317,7 @@ public class EmailService {
     // 🔒 Uses the visitor's secure token (not the guessable numeric ID) so only the real visitor can open the form
     public void sendCheckOutFeedback(String to, String name, String feedbackToken) {
         try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            
-            helper.setFrom(fromAddress);
-            helper.setTo(to);
-            helper.setSubject("👋 Departure Logged: Please Submit Your After-Action Report");
+            String subject = "👋 Departure Logged: Please Submit Your After-Action Report";
             
             String feedbackLink = buildFeedbackLink(feedbackToken);
             
@@ -307,12 +332,11 @@ public class EmailService {
                     + "<p>The Museum Director requests your <strong>After-Action Report</strong>. Your feedback helps us improve the experience for future civilians and military personnel.</p>"
                     + "<a href='" + feedbackLink + "' style='display: inline-block; margin-top: 20px; padding: 15px 30px; background-color: #D4AF37; color: #00205B; text-decoration: none; font-weight: bold; font-size: 16px; border-radius: 5px;'>📋 SUBMIT OFFICIAL FEEDBACK</a>"
                     + "</div></div>";
-            
-            helper.setText(htmlMsg, true);
-            mailSender.send(message);
+
+            sendHtml(to, subject, htmlMsg);
             System.out.println("👋 Check-Out Feedback successfully sent to " + to);
             
-        } catch (MessagingException e) {
+        } catch (MailDeliveryException e) {
             System.err.println("❌ Failed to send Check-Out email: " + e.getMessage());
         }
     }
@@ -320,12 +344,7 @@ public class EmailService {
     // --- 7. NLP CRITICAL FEEDBACK ALERT (AI TRIGGERED) ---
     public void sendCriticalFeedbackAlert(String directorEmail, String visitorName, String feedbackText, double sentimentScore) {
         try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            
-            helper.setFrom(fromAddress);
-            helper.setTo(directorEmail);
-            helper.setSubject("🚨 AI ALERT: Critical Negative Feedback Detected");
+            String subject = "🚨 AI ALERT: Critical Negative Feedback Detected";
             
             String htmlMsg = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 2px solid #dc3545; border-radius: 10px; overflow: hidden;'>"
                     + "<div style='background-color: #dc3545; color: white; padding: 20px; text-align: center;'>"
@@ -342,12 +361,11 @@ public class EmailService {
                     + "<p><strong>AI Severity Score:</strong> " + sentimentScore + " (Negative)</p>"
                     + "<p style='text-align: center; font-weight: bold; margin-top: 30px;'>Please address this operational issue immediately.</p>"
                     + "</div></div>";
-            
-            helper.setText(htmlMsg, true);
-            mailSender.send(message);
+
+            sendHtml(directorEmail, subject, htmlMsg);
             System.out.println("🚨 NLP Critical Alert successfully dispatched to Director!");
             
-        } catch (MessagingException e) {
+        } catch (MailDeliveryException e) {
             System.err.println("❌ Failed to send NLP Alert email: " + e.getMessage());
         }
     }
@@ -355,15 +373,10 @@ public class EmailService {
     // --- 8. 🔥 NEW: REGISTRATION REJECTION WITH COMPLIANCE NOTES (HTML) ---
     public void sendRejectionEmail(String toEmail, String visitorName, String presetReason, String additionalNotes) {
         try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            
-            helper.setFrom(fromAddress);
-            helper.setTo(toEmail);
 
             // 📅 Capacity rejection: nothing is wrong with the registration, so the visitor is simply invited to rebook
             if (presetReason != null && presetReason.contains("Capacity Reached")) {
-                helper.setSubject("AeroVisit - Requested Date Fully Booked");
+                String subject = "AeroVisit - Requested Date Fully Booked";
 
                 String capacityMsg = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 2px solid #00205B; border-radius: 10px; overflow: hidden;'>"
                         + "<div style='background-color: #00205B; color: #D4AF37; padding: 20px; text-align: center;'>"
@@ -385,13 +398,12 @@ public class EmailService {
                         + "<p style='text-align: center; font-weight: bold; margin-top: 30px;'>Thank you for your understanding,<br>PAF Aerospace Museum Administration</p>"
                         + "</div></div>";
 
-                helper.setText(capacityMsg, true);
-                mailSender.send(message);
+                sendHtml(toEmail, subject, capacityMsg);
                 System.out.println("📅 Capacity Reached (rebook) email successfully sent to " + toEmail);
                 return;
             }
 
-            helper.setSubject("⚠️ AeroVisit Registration - Action Required");
+            String subject = "⚠️ AeroVisit Registration - Action Required";
 
             String htmlMsg = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 2px solid #dc3545; border-radius: 10px; overflow: hidden;'>"
                     + "<div style='background-color: #dc3545; color: white; padding: 20px; text-align: center;'>"
@@ -416,12 +428,11 @@ public class EmailService {
                     + "<p>Please submit a new registration request and ensure the above issue is resolved prior to submission.</p>"
                     + "<p style='text-align: center; font-weight: bold; margin-top: 30px;'>Thank you,<br>AeroVisit Security Command</p>"
                     + "</div></div>";
-            
-            helper.setText(htmlMsg, true);
-            mailSender.send(message);
+
+            sendHtml(toEmail, subject, htmlMsg);
             System.out.println("⚠️ Rejection Compliance email successfully sent to " + toEmail);
             
-        } catch (MessagingException e) {
+        } catch (MailDeliveryException e) {
             System.err.println("❌ Failed to send Rejection email: " + e.getMessage());
         }
     }
@@ -429,12 +440,7 @@ public class EmailService {
     // --- 9. BOOKING CANCELLATION: FACILITY OVERRIDE (HTML) ---
     public void sendOverrideCancellationEmail(String toEmail, String visitorName, String date, String referenceId) {
         try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-
-            helper.setFrom(fromAddress);
-            helper.setTo(toEmail);
-            helper.setSubject("AeroVisit - Your Scheduled Visit Has Been Cancelled");
+            String subject = "AeroVisit - Your Scheduled Visit Has Been Cancelled";
 
             String htmlMsg = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 2px solid #00205B; border-radius: 10px; overflow: hidden;'>"
                     + "<div style='background-color: #00205B; color: #D4AF37; padding: 20px; text-align: center;'>"
@@ -453,24 +459,19 @@ public class EmailService {
                     + "<p style='text-align: center; font-weight: bold; margin-top: 30px;'>Thank you for your understanding,<br>PAF Aerospace Museum Administration</p>"
                     + "</div></div>";
 
-            helper.setText(htmlMsg, true);
-            mailSender.send(message);
+            sendHtml(toEmail, subject, htmlMsg);
             System.out.println("📭 Override Cancellation email successfully sent to " + toEmail);
 
-        } catch (MessagingException e) {
+        } catch (MailDeliveryException e) {
             System.err.println("❌ Failed to send Override Cancellation email: " + e.getMessage());
         }
     }
 
     // --- 10. BOOKING CANCELLATION: EMERGENCY CLOSURE (HTML) ---
     // Unlike the other senders, failures are thrown, so the closure batch can count and report each one
-    public void sendEmergencyCancellation(com.paf.aerovisit.model.Visitor visitor, String reason) throws MessagingException {
-        MimeMessage message = mailSender.createMimeMessage();
-        MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+    public void sendEmergencyCancellation(com.paf.aerovisit.model.Visitor visitor, String reason) throws MailDeliveryException {
 
-        helper.setFrom(fromAddress);
-        helper.setTo(visitor.getEmail());
-        helper.setSubject("AeroVisit - Museum Closed: Your Visit on " + visitor.getVisitDate() + " Is Cancelled");
+        String subject = "AeroVisit - Museum Closed: Your Visit on " + visitor.getVisitDate() + " Is Cancelled";
 
         String visitorName = visitor.getName();
         String htmlMsg = "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 2px solid #C41F1E; border-radius: 10px; overflow: hidden;'>"
@@ -490,20 +491,15 @@ public class EmailService {
                 + "<p style='text-align: center; font-weight: bold; margin-top: 30px;'>Thank you for your understanding,<br>PAF Aerospace Museum Administration</p>"
                 + "</div></div>";
 
-        helper.setText(htmlMsg, true);
-        mailSender.send(message);
+        sendHtml(visitor.getEmail(), subject, htmlMsg);
         System.out.println("📭 Emergency Closure email successfully sent to " + visitor.getEmail());
     }
 
     // --- 11. STAFF DUTY ROSTER (HTML) ---
     // Sent by "Publish Roster & Notify Staff". Like the emergency closure email, failures are thrown so the batch can count them
-    public void sendStaffScheduleEmail(String toEmail, String staffName, List<StaffSchedule> assignedSlots) throws MessagingException {
-        MimeMessage message = mailSender.createMimeMessage();
-        MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+    public void sendStaffScheduleEmail(String toEmail, String staffName, List<StaffSchedule> assignedSlots) throws MailDeliveryException {
 
-        helper.setFrom(fromAddress);
-        helper.setTo(toEmail);
-        helper.setSubject("AeroVisit - Your Upcoming Duty Roster");
+        String subject = "AeroVisit - Your Upcoming Duty Roster";
 
         DateTimeFormatter dutyDateFormat = DateTimeFormatter.ofPattern("EEE, MMM d, yyyy", Locale.US);
         StringBuilder rows = new StringBuilder();
@@ -537,8 +533,7 @@ public class EmailService {
                 + "<p style='text-align: center; font-weight: bold; margin-top: 30px;'>AeroVisit Automated System</p>"
                 + "</div></div>";
 
-        helper.setText(htmlMsg, true);
-        mailSender.send(message);
+        sendHtml(toEmail, subject, htmlMsg);
         System.out.println("📨 Duty roster email successfully sent to " + toEmail);
     }
 }

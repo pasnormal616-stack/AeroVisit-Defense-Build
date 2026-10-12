@@ -2,39 +2,26 @@ package com.paf.aerovisit.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.springframework.mail.MailSendException;
-import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.http.HttpStatus;
+import org.springframework.mock.http.client.MockClientHttpRequest;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestTemplate;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paf.aerovisit.model.Visitor;
-
-import jakarta.mail.Multipart;
-import jakarta.mail.Part;
-import jakarta.mail.Session;
-import jakarta.mail.internet.MimeMessage;
 
 /** The emergency closure email: content, escaping, and failures reaching the caller so the batch can count them. */
 class EmergencyCancellationEmailTest {
-
-    private JavaMailSender mailSender;
-    private EmailService emailService;
-
-    @BeforeEach
-    void setUp() {
-        mailSender = mock(JavaMailSender.class);
-        when(mailSender.createMimeMessage()).thenAnswer(inv -> new MimeMessage((Session) null));
-        emailService = new EmailService(mailSender, "https://museum.example/");
-    }
 
     private static Visitor visitor() {
         Visitor v = new Visitor();
@@ -45,40 +32,51 @@ class EmergencyCancellationEmailTest {
         return v;
     }
 
+    private static EmailService serviceFor(RestTemplate rest) {
+        EmailService service = new EmailService(rest, "https://museum.example/");
+        service.brevoApiKey = EmailServiceTest.API_KEY;
+        return service;
+    }
+
     @Test
     void emailNamesTheDateReasonAndReferenceAndEscapesText() throws Exception {
-        emailService.sendEmergencyCancellation(visitor(), "Typhoon <script>alert(1)</script>");
+        List<JsonNode> sent = new ArrayList<>();
+        ObjectMapper json = new ObjectMapper();
+        RestTemplate rest = new RestTemplate();
+        MockRestServiceServer.bindTo(rest).build()
+            .expect(requestTo(EmailService.BREVO_URL))
+            .andExpect(request -> sent.add(json.readTree(((MockClientHttpRequest) request).getBodyAsString())))
+            .andRespond(withStatus(HttpStatus.CREATED));
 
-        ArgumentCaptor<MimeMessage> captor = ArgumentCaptor.forClass(MimeMessage.class);
-        verify(mailSender).send(captor.capture());
-        MimeMessage message = captor.getValue();
-        message.saveChanges();
-        assertThat(message.getAllRecipients()[0].toString()).isEqualTo("juan@example.com");
-        assertThat(message.getSubject()).contains("2026-10-12");
+        serviceFor(rest).sendEmergencyCancellation(visitor(), "Typhoon <script>alert(1)</script>");
 
-        String html = findHtml(message);
+        assertThat(sent).hasSize(1);
+        JsonNode email = sent.get(0);
+        assertThat(email.path("to").get(0).path("email").asText()).isEqualTo("juan@example.com");
+        assertThat(email.path("subject").asText()).contains("2026-10-12");
+
+        String html = email.path("htmlContent").asText();
         assertThat(html).contains("2026-10-12").contains("PAF-A7X92K")
             .contains("Typhoon &lt;script&gt;").doesNotContain("<script>")
             .contains("&lt;B&gt;JUAN&lt;/B&gt;").doesNotContain("<B>JUAN");
     }
 
-    private static String findHtml(Part part) throws Exception {
-        Object content = part.getContent();
-        if (content instanceof String text && part.isMimeType("text/html")) return text;
-        if (content instanceof Multipart multipart) {
-            for (int i = 0; i < multipart.getCount(); i++) {
-                String html = findHtml(multipart.getBodyPart(i));
-                if (html != null) return html;
-            }
-        }
-        return null;
+    @Test
+    void sendFailureIsThrownToTheCaller() {
+        RestTemplate rest = new RestTemplate();
+        MockRestServiceServer.bindTo(rest).build()
+            .expect(requestTo(EmailService.BREVO_URL))
+            .andRespond(withServerError());
+
+        assertThatThrownBy(() -> serviceFor(rest).sendEmergencyCancellation(visitor(), "Typhoon Signal No. 3"))
+            .isInstanceOf(EmailService.MailDeliveryException.class);
     }
 
     @Test
-    void sendFailureIsThrownToTheCaller() {
-        doThrow(new MailSendException("SMTP server unreachable")).when(mailSender).send(any(MimeMessage.class));
-
-        assertThatThrownBy(() -> emailService.sendEmergencyCancellation(visitor(), "Typhoon Signal No. 3"))
-            .isInstanceOf(MailSendException.class);
+    void missingApiKeyIsThrownToTheCaller() {
+        EmailService service = new EmailService(new RestTemplate(), "https://museum.example/");
+        assertThatThrownBy(() -> service.sendEmergencyCancellation(visitor(), "Typhoon Signal No. 3"))
+            .isInstanceOf(EmailService.MailDeliveryException.class)
+            .hasMessageContaining("BREVO_API_KEY");
     }
 }

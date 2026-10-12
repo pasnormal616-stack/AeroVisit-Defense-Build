@@ -28,7 +28,6 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
-import org.springframework.mail.MailSendException;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -45,7 +44,6 @@ import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
-import jakarta.mail.MessagingException;
 
 /** Emergency "red button" closure: cancellation sweep, safe email batch, access rules and the guard's gate checks. No database. */
 @WebMvcTest({ManagementController.class, GuardOperationController.class})
@@ -126,8 +124,8 @@ class EmergencyClosureTest {
         Visitor ok1 = visitor(3, "PENDING");
         Visitor ok2 = visitor(4, "APPROVED");
         when(repo.findByVisitDate(CLOSED)).thenReturn(List.of(smtpDown, badAddress, ok1, ok2));
-        doThrow(new MailSendException("SMTP server unreachable")).when(emailService).sendEmergencyCancellation(eq(smtpDown), anyString());
-        doThrow(new MessagingException("Invalid address")).when(emailService).sendEmergencyCancellation(eq(badAddress), anyString());
+        doThrow(new EmailService.MailDeliveryException("Brevo request failed: 503 Service Unavailable")).when(emailService).sendEmergencyCancellation(eq(smtpDown), anyString());
+        doThrow(new EmailService.MailDeliveryException("Brevo request failed: 400 Bad Request (invalid email)")).when(emailService).sendEmergencyCancellation(eq(badAddress), anyString());
 
         declare(CLOSED.toString(), REASON)
             .andExpect(redirectedUrl("/admin/staff"))

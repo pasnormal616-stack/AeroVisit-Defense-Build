@@ -34,7 +34,6 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
-import org.springframework.mail.MailSendException;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -419,7 +418,7 @@ class ShiftTemplateRosterTest {
             employee("Sgt. Reyes", "Gate Guard", "reyes@example.com", null, null),
             employee("Sgt. Legacy", "Admin", null, null, null),
             employee("Sgt. Cruz", "Admin", "cruz@example.com", null, null)));
-        doThrow(new MailSendException("SMTP server unreachable")).when(emailService).sendStaffScheduleEmail(eq("cruz@example.com"), anyString(), anyList());
+        doThrow(new EmailService.MailDeliveryException("Brevo request failed: 503 Service Unavailable")).when(emailService).sendStaffScheduleEmail(eq("cruz@example.com"), anyString(), anyList());
 
         mvc.perform(post("/admin/staff/publish-roster").with(csrf()))
             .andExpect(flash().attribute("success", "📨 Roster published and 1 email sent!"));
