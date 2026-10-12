@@ -38,7 +38,7 @@ try:
     sentiment_analyzer = pipeline(
         "sentiment-analysis", 
         model="cardiffnlp/twitter-xlm-roberta-base-sentiment",  # XLM-R: reads Tagalog/Taglish (needs: pip install sentencepiece)
-        local_files_only=True
+        local_files_only=os.getenv("HF_LOCAL_ONLY", "1") == "1"  # Railway: HF_LOCAL_ONLY=0 so it can download once
     )
     print("✅ AI NLP Engine Ready!")
 except Exception as e:
@@ -52,10 +52,11 @@ ai_model = RandomForestRegressor(n_estimators=100, random_state=42)
 def connect_db():
     try:
         return mysql.connector.connect(
-            host="localhost",
-            user="root",
-            password="root", 
-            database="aerovisit_db_v2"
+            host=os.getenv("DB_HOST", "localhost"),
+            port=int(os.getenv("DB_PORT", "3306")),
+            user=os.getenv("DB_USERNAME", "root"),
+            password=os.getenv("DB_PASSWORD", "root"),
+            database=os.getenv("DB_NAME", "aerovisit_db_v2")
         )
     except Exception as e:
         print(f"🔴 DB Connection Error: {e}")
@@ -432,4 +433,5 @@ def chat_with_bot(request: ChatRequest):
         return {"type": "error", "reply": "Communications link offline. Please try again."}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Railway sets PORT (and HOST=0.0.0.0); locally this stays 127.0.0.1:8000
+    uvicorn.run(app, host=os.getenv("HOST", "127.0.0.1"), port=int(os.getenv("PORT", "8000")))
