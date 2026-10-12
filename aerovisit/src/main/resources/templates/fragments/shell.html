@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<!--
+    AeroVisit Admin shell (Polaris-style) — the single source of truth for the Admin & Guard chrome:
+    dark top bar + light-gray sidebar.
+    Every admin page includes these fragments, so the sidebar, header and their
+    coordinates are byte-identical across tabs (zero layout shift).
+
+    Usage in a page:
+      <head> ... <th:block th:replace="~{fragments/shell :: head}"></th:block> ... </head>
+      <body class="av-app">
+        <th:block th:replace="~{fragments/shell :: sidebar('roster')}"></th:block>
+        <th:block th:replace="~{fragments/shell :: header('Duty Roster')}"></th:block>
+        <main class="av-main" id="main"> <div class="av-workspace"> ... </div> </main>
+-->
+<head>
+    <th:block th:fragment="head">
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+        <meta name="color-scheme" content="light dark">
+        <link rel="icon" type="image/png" href="/images/paflogo.png">
+        <script src="/js/theme.js"></script>
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+        <link rel="stylesheet" href="/styles/theme.css">
+        <link rel="stylesheet" href="/styles/admin.css">
+        <!-- CSRF token for fetch() POSTs (read by /js/csrf.js -> AeroCsrf.headers) -->
+        <meta name="_csrf" th:if="${_csrf != null}" th:content="${_csrf.token}">
+        <meta name="_csrf_header" th:if="${_csrf != null}" th:content="${_csrf.headerName}">
+        <script src="/js/csrf.js"></script>
+    </th:block>
+</head>
+<body class="av-app">
+
+<!-- ============================ SIDEBAR ============================ -->
+<aside th:fragment="sidebar(active)" class="av-sidebar" id="avSidebar" aria-label="Primary">
+    <nav class="av-nav">
+        <div class="av-nav-group">
+            <a th:unless="${isGuard}" href="/admin" class="av-nav-link" th:classappend="${active == 'manifest' or active == 'approvals' or active == 'audit'} ? 'is-active'" th:attr="aria-current=${active == 'manifest' or active == 'approvals' or active == 'audit'} ? 'page'">
+                <i class="bi bi-people"></i><span>Visitor Dashboard</span>
+            </a>
+            <!-- 🛡️ A Guard never sees the full manifest: their dashboard is today's gate (least privilege, enforced server-side) -->
+            <a th:if="${isGuard}" href="/guard/dashboard" class="av-nav-link" th:classappend="${active == 'gate'} ? 'is-active'" th:attr="aria-current=${active == 'gate'} ? 'page'">
+                <i class="bi bi-shield-check"></i><span>Gate Dashboard</span>
+            </a>
+            <a th:if="${isDirector}" href="/admin/analytics" class="av-nav-link" th:classappend="${active == 'analytics'} ? 'is-active'" th:attr="aria-current=${active == 'analytics'} ? 'page'">
+                <i class="bi bi-graph-up-arrow"></i><span>Analytics &amp; Insights</span>
+            </a>
+            <a th:if="${isGuard}" href="/admin/scanner" class="av-nav-link" th:classappend="${active == 'scanner'} ? 'is-active'" th:attr="aria-current=${active == 'scanner'} ? 'page'">
+                <i class="bi bi-qr-code-scan"></i><span>Gate Check-In</span>
+            </a>
+        </div>
+
+        <div class="av-nav-group" th:if="${isGuard or isDirector}">
+            <div class="av-nav-heading">Security</div>
+            <a href="/admin/calendar" class="av-nav-link" th:classappend="${active == 'roster'} ? 'is-active'" th:attr="aria-current=${active == 'roster'} ? 'page'">
+                <i class="bi bi-calendar-week"></i><span>Duty Roster</span>
+            </a>
+            <a href="/admin/blacklist" class="av-nav-link" th:classappend="${active == 'blacklist'} ? 'is-active'" th:attr="aria-current=${active == 'blacklist'} ? 'page'">
+                <i class="bi bi-person-x"></i><span>Banned Visitors</span>
+            </a>
+        </div>
+
+        <div class="av-nav-group" th:if="${isDirector}">
+            <div class="av-nav-heading">Management</div>
+            <a href="/admin/staff" class="av-nav-link" th:classappend="${active == 'staff'} ? 'is-active'" th:attr="aria-current=${active == 'staff'} ? 'page'">
+                <i class="bi bi-diagram-3"></i><span>Slots &amp; Staff</span>
+            </a>
+            <a href="/admin/content" class="av-nav-link" th:classappend="${active == 'content'} ? 'is-active'" th:attr="aria-current=${active == 'content'} ? 'page'">
+                <i class="bi bi-window-stack"></i><span>Website Content</span>
+            </a>
+        </div>
+    </nav>
+
+    <div class="av-sidebar-foot">
+        <div class="av-operator">
+            <div class="av-operator-avatar" aria-hidden="true">
+                <span th:text="${loggedInUser != null ? #strings.substring(loggedInUser,0,1).toUpperCase() : 'U'}">U</span>
+            </div>
+            <div class="av-operator-text">
+                <div class="av-operator-name" th:text="${loggedInUser != null ? loggedInUser : 'User'}">User</div>
+                <div class="av-operator-sub"><span class="av-status-dot"></span>Signed in</div>
+            </div>
+        </div>
+        <a href="/admin/settings" class="av-nav-link" th:classappend="${active == 'settings'} ? 'is-active'" th:attr="aria-current=${active == 'settings'} ? 'page'">
+            <i class="bi bi-gear"></i><span>Settings</span>
+        </a>
+        <!-- Logout is a POST with the CSRF token (Spring Security ends the session only on POST /logout) -->
+        <form th:action="@{/logout}" method="post" class="av-logout-form">
+            <button type="submit" class="av-nav-link av-logout"><i class="bi bi-box-arrow-right"></i><span>Log out</span></button>
+        </form>
+    </div>
+</aside>
+
+<!-- ============================ TOP BAR ============================ -->
+<header th:fragment="header(section)" class="av-header">
+    <button type="button" class="av-iconbtn av-menu-btn" data-sidebar-toggle aria-controls="avSidebar" aria-expanded="false" aria-label="Toggle navigation">
+        <i class="bi bi-list"></i>
+    </button>
+
+    <a th:href="${isGuard ? '/guard/dashboard' : '/admin'}" href="/admin" class="av-brand">
+        <span class="paf-logo-plate av-brand-logo"><img class="paf-logo" src="/images/paflogo.png" alt="Philippine Air Force Museum Logo" width="60" height="30"></span>
+    </a>
+    <div class="av-crumbs">
+        <span class="sep hide-sm">/</span>
+        <span class="current hide-sm" th:text="${section}">Dashboard</span>
+    </div>
+
+    <div class="av-header-spacer"></div>
+
+    <form th:if="${isGuard}" th:action="@{/admin/manual-checkin}" method="post" class="av-quickcheck" role="search">
+        <i class="bi bi-upc-scan" aria-hidden="true"></i>
+        <input type="text" name="referenceId" placeholder="Enter Reference ID" required aria-label="Enter Reference ID" autocomplete="off" maxlength="20">
+        <button type="submit">Check in</button>
+    </form>
+
+    <div class="av-header-spacer"></div>
+
+    <output class="av-clock" id="avClock" aria-live="off">---- -- -- --:--:-- PHT</output>
+
+    <!-- Notification bell: dropdown with pending booking requests + recent notifications (filled by the polling script in the scripts fragment) -->
+    <div class="dropdown av-bell-wrap">
+        <button type="button" class="av-iconbtn av-bell" id="avBell" data-bs-toggle="dropdown" aria-expanded="false" title="Notifications" aria-label="Notifications">
+            <i class="bi bi-bell"></i>
+            <span class="av-bell-badge" id="avBellBadge" hidden></span>
+        </button>
+        <div class="dropdown-menu dropdown-menu-end av-notif-menu" aria-labelledby="avBell">
+            <div class="av-notif-head">
+                <span>Notifications</span>
+                <span class="av-notif-new" id="avNotifNew" hidden></span>
+            </div>
+            <!-- Booking review is Director-only, so a Guard's bell has no pending-requests link -->
+            <a th:unless="${isGuard}" class="av-notif-pending" href="/admin?filter=pending&amp;sort=desc">
+                <i class="bi bi-hourglass-split" aria-hidden="true"></i>
+                <span id="avNotifPendingText">No pending booking requests</span>
+                <i class="bi bi-chevron-right" aria-hidden="true"></i>
+            </a>
+            <div class="av-notif-list" id="avNotifList" role="list">
+                <div class="av-notif-empty" id="avNotifEmpty">You're all caught up.</div>
+            </div>
+        </div>
+    </div>
+
+    <button type="button" class="av-iconbtn theme-toggle" data-theme-toggle aria-label="Toggle dark mode">
+        <i class="bi bi-moon-stars theme-icon-light"></i>
+        <i class="bi bi-sun theme-icon-dark"></i>
+    </button>
+</header>
+
+<!-- ============================ SCRIPTS ============================ -->
+<th:block th:fragment="scripts">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- New booking request toast (shown by the bell script below) -->
+    <div class="toast-container position-fixed top-0 end-0 p-3 av-toast-stack">
+        <div class="toast av-toast" id="avBellToast" role="status" aria-live="polite" aria-atomic="true">
+            <div class="d-flex align-items-center">
+                <div class="toast-body">
+                    <i class="bi bi-bell-fill me-2"></i>New booking request received!
+                    <a href="/admin?filter=pending&amp;sort=desc" class="av-toast-link ms-2">Review</a>
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification bell: polls /api/notifications every 30 seconds (skipped while the tab is hidden).
+         Badge = unread notifications + pending booking requests; opening the bell marks the notifications read,
+         so the badge drops to the pending count until those requests are approved or rejected. -->
+    <script>
+        (function () {
+            var bell = document.getElementById('avBell');
+            if (!bell) return;
+            var badge = document.getElementById('avBellBadge');
+            var list = document.getElementById('avNotifList');
+            var emptyItem = document.getElementById('avNotifEmpty');
+            var pendingText = document.getElementById('avNotifPendingText');
+            var newTag = document.getElementById('avNotifNew');
+            var STORE_KEY = 'avPendingCount';
+            var last = null;
+            var unread = 0;
+            var pending = 0;
+            try {
+                var saved = sessionStorage.getItem(STORE_KEY);
+                if (saved !== null) last = parseInt(saved, 10);
+            } catch (e) { /* storage blocked: compare within this page only */ }
+
+            function plural(n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); }
+
+            function render() {
+                var total = unread + pending;
+                badge.hidden = total <= 0;
+                badge.textContent = total > 99 ? '99+' : String(total);
+                var parts = [];
+                if (unread > 0) parts.push(plural(unread, 'new notification'));
+                if (pending > 0) parts.push(plural(pending, 'pending booking request'));
+                var label = parts.length ? parts.join(', ') : 'Notifications: nothing new';
+                bell.setAttribute('aria-label', label);
+                bell.setAttribute('title', label);
+                if (pendingText) pendingText.textContent = pending > 0 ? plural(pending, 'booking request') + ' waiting for approval' : 'No pending booking requests';
+                newTag.hidden = unread <= 0;
+                newTag.textContent = unread + ' new';
+            }
+
+            // Built with textContent only: messages contain visitor names and feedback text
+            function renderList(items) {
+                list.textContent = '';
+                if (!items.length) { list.appendChild(emptyItem); return; }
+                items.forEach(function (n) {
+                    var link = document.createElement('a');
+                    link.className = 'av-notif-item' + (n.read ? '' : ' is-unread');
+                    link.setAttribute('role', 'listitem');
+                    var url = String(n.targetUrl || '');
+                    link.href = (url.charAt(0) === '/' && url.charAt(1) !== '/') ? url : '/admin';
+                    var icon = document.createElement('i');
+                    icon.className = 'bi ' + (n.type === 'NEGATIVE_FEEDBACK' ? 'bi-emoji-frown' : 'bi-people-fill');
+                    icon.setAttribute('aria-hidden', 'true');
+                    var body = document.createElement('span');
+                    body.className = 'av-notif-body';
+                    var text = document.createElement('span');
+                    text.className = 'av-notif-text';
+                    text.textContent = String(n.message || '');
+                    var time = document.createElement('span');
+                    time.className = 'av-notif-time';
+                    time.textContent = String(n.ago || '');
+                    body.appendChild(text);
+                    body.appendChild(time);
+                    link.appendChild(icon);
+                    link.appendChild(body);
+                    list.appendChild(link);
+                });
+            }
+
+            function poll() {
+                if (document.hidden) return;
+                fetch('/api/notifications', { headers: { 'Accept': 'application/json' }, credentials: 'same-origin', cache: 'no-store' })
+                    .then(function (r) {
+                        if (!r.ok || r.redirected) throw new Error('not signed in');
+                        return r.json();
+                    })
+                    .then(function (data) {
+                        var count = Number(data.pendingCount) || 0;
+                        if (last !== null && count > last && window.bootstrap) {
+                            bootstrap.Toast.getOrCreateInstance(document.getElementById('avBellToast')).show();
+                        }
+                        last = count;
+                        try { sessionStorage.setItem(STORE_KEY, String(count)); } catch (e) { /* ignore */ }
+                        pending = count;
+                        unread = Number(data.unreadCount) || 0;
+                        renderList(Array.isArray(data.notifications) ? data.notifications : []);
+                        render();
+                    })
+                    .catch(function () { /* session expired or server unreachable: keep the last badge */ });
+            }
+
+            // Opening the bell marks the notifications read; the open list keeps its "new" highlight until the next poll
+            bell.addEventListener('show.bs.dropdown', function () {
+                if (unread <= 0) return;
+                fetch('/api/notifications/mark-read', { method: 'POST', headers: AeroCsrf.headers({ 'Accept': 'application/json' }), credentials: 'same-origin', cache: 'no-store' })
+                    .then(function (r) {
+                        if (!r.ok || r.redirected) throw new Error('not signed in');
+                        unread = 0;
+                        render();
+                    })
+                    .catch(function () { /* try again next time the bell opens */ });
+            });
+
+            poll();
+            setInterval(poll, 30000);
+            document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
+        })();
+    </script>
+</th:block>
+
+</body>
+</html>

@@ -1,0 +1,273 @@
+/* ==========================================================================
+   AeroVisit — Design Tokens (theme.css)
+   Philippine Air Force identity. Shared by Admin, Guard and Visitor portals.
+   Load order on every page:  bootstrap.min.css  →  theme.css  →  admin.css | visitor.css
+   Theme switching: <html data-theme="light|dark"> (set by /js/theme.js before paint).
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,650;12..96,800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
+/* --------------------------------------------------------------------------
+   1. Brand constants — never change between themes
+   -------------------------------------------------------------------------- */
+:root {
+    --paf-ultramarine: #002B80;
+    --paf-ultramarine-700: #00236A;
+    --paf-ultramarine-900: #001A4F;
+    --paf-gold: #D2AF39;
+    --paf-gold-700: #A8891F;
+    --paf-red: #EC2B2A;
+    --paf-red-700: #C41F1E;
+
+    /* Typography families */
+    --font-ops: 'Jost', 'Futura', 'Century Gothic', system-ui, sans-serif;           /* Admin / Guard data */
+    --font-mono: 'JetBrains Mono', 'SFMono-Regular', 'Consolas', ui-monospace, monospace; /* Telemetry */
+    --font-display: 'Bricolage Grotesque', 'Plus Jakarta Sans', system-ui, sans-serif; /* Visitor headings */
+    --font-public: 'Plus Jakarta Sans', system-ui, sans-serif;                         /* Visitor body */
+
+    /* Type scale (fixed steps; macro type uses clamp in portal sheets) */
+    --text-2xs: 0.6875rem;  /* 11px — mono micro-labels */
+    --text-xs: 0.75rem;     /* 12px */
+    --text-sm: 0.8125rem;   /* 13px — table body */
+    --text-md: 0.9375rem;   /* 15px */
+    --text-lg: 1.125rem;    /* 18px */
+    --text-xl: 1.5rem;      /* 24px */
+    --text-2xl: 2rem;       /* 32px */
+    --tracking-mono: 0.08em;
+    --tracking-tight: -0.02em;
+
+    /* Spacing (4px base) */
+    --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+    --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px;
+    --space-12: 48px; --space-16: 64px; --space-24: 96px;
+
+    /* Motion */
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+    --dur-fast: 120ms;
+    --dur-base: 200ms;
+    --dur-slow: 320ms;
+
+    /* Shell geometry — identical on every Admin/Guard page (zero layout shift) */
+    --shell-sidebar-w: 248px;
+    --shell-header-h: 56px;
+    --shell-pagehead-h: 88px;
+    --shell-toolbar-h: 48px;
+    --shell-gutter: 32px;
+
+    /* Layers */
+    --z-sidebar: 1030;
+    --z-header: 1031;
+    --z-overlay: 1060;
+    --z-chat: 1070;
+}
+
+/* --------------------------------------------------------------------------
+   2. Light scheme — tactical slate
+   -------------------------------------------------------------------------- */
+:root,
+:root[data-theme="light"] {
+    color-scheme: light;
+
+    --bg-canvas: #F1F5F9;        /* crisp tactical slate */
+    --bg-surface: #F8FAFC;       /* neutral off-white */
+    --bg-raised: #FFFFFF;        /* cards, tables, inputs */
+    --bg-sunken: #E2E8F0;        /* table header, wells */
+    --bg-inverse: #0B0F19;
+
+    --border-strong: #0B0F19;    /* brutalist structural rules */
+    --border: #CBD5E1;           /* sharp borders */
+    --border-subtle: #E2E8F0;
+
+    --text: #0B0F19;
+    --text-secondary: #334155;
+    --text-muted: #5B6B80;
+    --text-inverse: #F8FAFC;
+
+    --primary: var(--paf-ultramarine);        /* fills */
+    --primary-hover: var(--paf-ultramarine-700);
+    --primary-ink: var(--paf-ultramarine);    /* primary-coloured text/links */
+    --primary-tint: #E6ECF7;
+    --on-primary: #FFFFFF;
+
+    --gold: var(--paf-gold);
+    --gold-ink: #7A6212;                      /* AA-legible gold text on light */
+    --gold-tint: #FAF3DC;
+    --on-gold: #0B0F19;
+
+    --danger: var(--paf-red-700);           /* fill behind small white text (5.6:1) */
+    --danger-hover: #A91A19;
+    --danger-ink: #B91C1B;
+    --danger-tint: #FDECEC;
+    --on-danger: #FFFFFF;
+
+    --success: #15803D;
+    --success-ink: #166534;
+    --success-tint: #E7F6EC;
+
+    --focus-ring: 0 0 0 2px var(--bg-raised), 0 0 0 4px var(--paf-gold);
+
+    /* Visitor-portal elevation (soft, diffused — used only in visitor.css) */
+    --elev-1: 0 1px 2px rgba(11, 15, 25, 0.04), 0 8px 24px -12px rgba(0, 43, 128, 0.10);
+    --elev-2: 0 2px 4px rgba(11, 15, 25, 0.04), 0 24px 48px -20px rgba(0, 43, 128, 0.18);
+    --bezel-shell: rgba(11, 15, 25, 0.04);
+    --bezel-line: rgba(11, 15, 25, 0.07);
+    --bezel-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    --hero-scrim: rgba(0, 26, 79, 0.70);
+
+    /* Chart palette (read by /js/shell.js) */
+    --chart-1: #002B80;
+    --chart-2: #D2AF39;
+    --chart-3: #EC2B2A;
+    --chart-muted: #94A3B8;
+    --chart-grid: #E2E8F0;
+}
+
+/* --------------------------------------------------------------------------
+   3. Dark scheme — night-flight charcoal
+   -------------------------------------------------------------------------- */
+:root[data-theme="dark"] {
+    color-scheme: dark;
+
+    --bg-canvas: #0B0F19;        /* deep night-flight charcoal */
+    --bg-surface: #111827;       /* tactical slate navy */
+    --bg-raised: #1F2937;        /* elevated card surfaces */
+    --bg-sunken: #0E1420;
+    --bg-inverse: #F8FAFC;
+
+    --border-strong: #6B7280;
+    --border: #374151;           /* muted borders */
+    --border-subtle: #273142;
+
+    --text: #E8ECF2;
+    --text-secondary: #C3CAD5;
+    --text-muted: #8D98A8;
+    --text-inverse: #0B0F19;
+
+    --primary: #1F4FB5;          /* ultramarine lifted for separation on charcoal */
+    --primary-hover: #2A5CC6;
+    --primary-ink: #8FB0F5;
+    --primary-tint: rgba(0, 43, 128, 0.35);
+    --on-primary: #FFFFFF;
+
+    --gold: var(--paf-gold);
+    --gold-ink: #E3C45E;
+    --gold-tint: rgba(210, 175, 57, 0.14);
+    --on-gold: #0B0F19;
+
+    --danger: var(--paf-red-700);
+    --danger-hover: #D42322;
+    --danger-ink: #FF7473;
+    --danger-tint: rgba(236, 43, 42, 0.14);
+    --on-danger: #FFFFFF;
+
+    --success: #22A55A;
+    --success-ink: #5EDB8F;
+    --success-tint: rgba(34, 165, 90, 0.14);
+
+    --focus-ring: 0 0 0 2px var(--bg-canvas), 0 0 0 4px var(--paf-gold);
+
+    --elev-1: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+    --elev-2: 0 2px 4px rgba(0, 0, 0, 0.3), 0 24px 48px -20px rgba(0, 0, 0, 0.7);
+    --bezel-shell: rgba(255, 255, 255, 0.03);
+    --bezel-line: rgba(255, 255, 255, 0.08);
+    --bezel-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    --hero-scrim: rgba(5, 12, 30, 0.82);
+
+    --chart-1: #6F97EE;
+    --chart-2: #D2AF39;
+    --chart-3: #FF5A59;
+    --chart-muted: #6B7280;
+    --chart-grid: #273142;
+}
+
+/* No-JS fallback: honour the OS preference when theme.js has not run */
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme]) {
+        color-scheme: dark;
+        --bg-canvas: #0B0F19; --bg-surface: #111827; --bg-raised: #1F2937; --bg-sunken: #0E1420;
+        --border-strong: #6B7280; --border: #374151; --border-subtle: #273142;
+        --text: #E8ECF2; --text-secondary: #C3CAD5; --text-muted: #8D98A8;
+        --primary: #1F4FB5; --primary-hover: #2A5CC6; --primary-ink: #8FB0F5;
+    }
+}
+
+/* --------------------------------------------------------------------------
+   4. Bootstrap bridge — map Bootstrap 5.3 variables onto our tokens so every
+      existing Bootstrap component (modal, dropdown, form-control, alert,
+      table, badge) follows the active theme without markup changes.
+   -------------------------------------------------------------------------- */
+:root,
+[data-bs-theme="light"],
+[data-bs-theme="dark"] {
+    --bs-body-bg: var(--bg-canvas);
+    --bs-body-color: var(--text);
+    --bs-secondary-color: var(--text-muted);
+    --bs-tertiary-bg: var(--bg-surface);
+    --bs-secondary-bg: var(--bg-sunken);
+    --bs-emphasis-color: var(--text);
+    --bs-border-color: var(--border);
+    --bs-border-color-translucent: var(--border);
+    --bs-heading-color: var(--text);
+    --bs-link-color: var(--primary-ink);
+    --bs-link-hover-color: var(--primary-ink);
+    --bs-link-color-rgb: 0, 43, 128;
+    --bs-primary: var(--primary);
+    --bs-danger: var(--danger);
+    --bs-success: var(--success);
+    --bs-focus-ring-color: rgba(210, 175, 57, 0.5);
+}
+[data-bs-theme="dark"] { --bs-link-color-rgb: 143, 176, 245; }
+
+/* --------------------------------------------------------------------------
+   5. Global primitives
+   -------------------------------------------------------------------------- */
+html { scrollbar-gutter: stable; }  /* scrollbar never shifts layout between pages */
+
+body {
+    background-color: var(--bg-canvas);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--paf-gold); color: var(--on-gold); }
+
+:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* Theme transitions: colours only, never geometry */
+body, .av-transition-colors {
+    transition: background-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out);
+}
+
+/* Theme toggle icon swap (shared markup in both portals) */
+.theme-toggle .theme-icon-dark { display: none; }
+:root[data-theme="dark"] .theme-toggle .theme-icon-light { display: none; }
+:root[data-theme="dark"] .theme-toggle .theme-icon-dark { display: inline-block; }
+
+.visually-hidden-focusable:focus { position: fixed; top: 8px; left: 8px; z-index: 2000; }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 1ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* --------------------------------------------------------------------------
+   PAF Museum logo (images/paflogo.png: the one logo file, transparent)
+   The file has ~25% empty margin above and below the artwork: a 2:1 box with
+   object-fit: cover crops it away without editing the files. The artwork is navy
+   with see-through whites, so on dark surfaces it sits on a white plate.
+   -------------------------------------------------------------------------- */
+.paf-logo { display: block; width: auto; aspect-ratio: 2 / 1; object-fit: cover; object-position: 50% 61%; }
+.paf-logo-plate { display: inline-flex; align-items: center; justify-content: center; flex: none; background: #FFFFFF; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); }
+.paf-logo-plate .paf-logo { height: 100%; }
+
+/* Touch screens: FullCalendar's toolbar buttons (booking calendar, staff roster) get 44px tap targets */
+@media (pointer: coarse) {
+    .fc .fc-button { min-height: 44px; min-width: 44px; }
+}

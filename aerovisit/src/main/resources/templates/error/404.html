@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/visitor :: head}"></th:block>
+    <title>AeroVisit - Page Not Found</title>
+</head>
+<body class="vp vp--immersive">
+<!--/* 404 page (Spring Boot picks templates/error/404.html for any unknown URL). Anonymous visitors reach it
+     instead of the staff login: SecurityConfig.notFoundOrLogin only sends staff areas to /login. */-->
+
+<th:block th:replace="~{fragments/visitor :: backdrop}"></th:block>
+
+<th:block th:replace="~{fragments/visitor :: topnav(false)}"></th:block>
+
+<div class="vp-page">
+    <div class="vp-page-band" aria-hidden="true"></div>
+    <main class="vp-page-main">
+        <div class="container">
+            <div class="vp-narrow">
+                <div class="vp-bezel vp-reveal">
+                    <div class="vp-bezel-core vp-card-pad text-center">
+                        <div class="vp-status-ico vp-status-ico--gold"><i class="bi bi-compass"></i></div>
+                        <p class="vp-foot-note">Error 404</p>
+                        <h1 class="vp-title-xl">Page Not Found</h1>
+                        <p class="vp-lead fw-semibold">The page you are looking for doesn't exist or has moved. Please check the address, or head back to the booking page.</p>
+                        <div class="d-flex flex-wrap justify-content-center gap-2 mt-4">
+                            <a href="/" class="vp-btn vp-btn--primary">Back to Booking Page</a>
+                            <a href="/manage-booking" class="vp-btn vp-btn--ghost">Manage My Booking</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<th:block th:replace="~{fragments/visitor :: scripts}"></th:block>
+</body>
+</html>

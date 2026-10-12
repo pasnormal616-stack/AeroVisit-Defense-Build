@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/shell :: head}"></th:block>
+    <title>AeroVisit - Settings</title>
+    <script src="/js/shell.js"></script>
+</head>
+<body class="av-app">
+
+<a href="#main" class="visually-hidden-focusable">Skip to content</a>
+<th:block th:replace="~{fragments/shell :: sidebar('settings')}"></th:block>
+<th:block th:replace="~{fragments/shell :: header('Settings')}"></th:block>
+
+<main class="av-main" id="main">
+<div class="av-workspace">
+
+    <!-- PAGE HEAD -->
+    <div class="av-pagehead">
+        <div>
+            <span class="av-mono av-code">SYS-01</span>
+            <h1 class="av-pagehead-title">Settings</h1>
+            <p class="av-pagehead-desc">Your account, sign-in security and system details.</p>
+        </div>
+        <div class="av-pagehead-actions"></div>
+    </div>
+
+    <!-- TOOLBAR -->
+    <div class="av-toolbar">
+        <div class="av-tabs"><span class="av-tab is-active"><i class="bi bi-gear"></i> Account &amp; System</span></div>
+        <div class="av-toolbar-meta av-mono">
+            <span th:text="${loggedInUser}">user</span>
+        </div>
+    </div>
+
+    <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
+        <i class="bi bi-check-square-fill"></i> <span th:text="${success}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    <div th:if="${notice}" class="alert alert-warning alert-dismissible fade show" role="alert">
+        <i class="bi bi-info-circle-fill"></i> <span th:text="${notice}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+        <i class="bi bi-exclamation-triangle-fill"></i> <span th:text="${error}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+
+    <div class="row g-4">
+        <!-- 1. ACCOUNT PROFILE -->
+        <div class="col-lg-4">
+            <div class="av-panel h-100 mb-0">
+                <div class="av-panel-head"><span><i class="bi bi-person-badge me-2"></i>Account Profile</span></div>
+                <div class="av-panel-body">
+                    <div class="av-operator px-0 mb-3">
+                        <div class="av-operator-avatar" aria-hidden="true">
+                            <span th:text="${loggedInUser != null ? #strings.substring(loggedInUser,0,1).toUpperCase() : 'U'}">U</span>
+                        </div>
+                        <div class="av-operator-text">
+                            <div class="av-operator-name text-capitalize" th:text="${loggedInUser}">user</div>
+                            <div class="av-operator-sub"><span class="av-status-dot"></span>Signed in</div>
+                        </div>
+                    </div>
+                    <ul class="av-kv">
+                        <li><span>Username</span> <strong class="av-mono" th:text="${loggedInUser}">user</strong></li>
+                        <li><span>Role</span> <strong th:text="${accountRole}">Staff</strong></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. SECURITY -->
+        <div class="col-lg-4">
+            <div class="av-panel h-100 mb-0">
+                <div class="av-panel-head"><span><i class="bi bi-shield-lock me-2"></i>Security</span></div>
+                <div class="av-panel-body">
+                    <form th:action="@{/admin/settings/password}" method="post" autocomplete="off">
+                        <div class="av-field">
+                            <label class="form-label-custom" for="currentPassword">Current Password</label>
+                            <input type="password" id="currentPassword" name="currentPassword" class="form-control-custom" autocomplete="current-password" required>
+                        </div>
+                        <div class="av-field">
+                            <label class="form-label-custom" for="newPassword">New Password</label>
+                            <input type="password" id="newPassword" name="newPassword" class="form-control-custom" autocomplete="new-password" minlength="8" required>
+                        </div>
+                        <div class="av-field">
+                            <label class="form-label-custom" for="confirmPassword">Confirm New Password</label>
+                            <input type="password" id="confirmPassword" name="confirmPassword" class="form-control-custom" autocomplete="new-password" minlength="8" required>
+                        </div>
+                        <button type="submit" class="btn-primary-custom w-100"><i class="bi bi-key"></i>Change Password</button>
+                        <small class="av-hint mt-2"><i class="bi bi-info-circle me-1"></i> Staff accounts are managed by the system administrator in this build.</small>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. SYSTEM INFORMATION -->
+        <div class="col-lg-4">
+            <div class="av-panel h-100 mb-0">
+                <div class="av-panel-head"><span><i class="bi bi-hdd-network me-2"></i>System Information</span></div>
+                <div class="av-panel-body">
+                    <ul class="av-kv">
+                        <li><span>AeroVisit Version</span> <strong class="av-mono">1.0.0</strong></li>
+                        <li><span>Environment</span> <strong>Production</strong></li>
+                        <li><span>Server Time</span> <strong class="av-mono" th:text="${#temporals.format(serverDate, 'EEE, MMM d, yyyy')}">today</strong></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+</main>
+
+<th:block th:replace="~{fragments/shell :: scripts}"></th:block>
+
+</body>
+</html>

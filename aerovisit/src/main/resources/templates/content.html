@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/shell :: head}"></th:block>
+    <title>AeroVisit - Website Content</title>
+    <script src="/js/shell.js"></script>
+</head>
+<body class="av-app">
+
+<a href="#main" class="visually-hidden-focusable">Skip to content</a>
+<th:block th:replace="~{fragments/shell :: sidebar('content')}"></th:block>
+<th:block th:replace="~{fragments/shell :: header('Website Content')}"></th:block>
+
+<main class="av-main" id="main">
+<div class="av-workspace">
+
+    <div class="av-pagehead">
+        <div>
+            <span class="av-mono av-code">CMD-08</span>
+            <h1 class="av-pagehead-title">Website Content</h1>
+            <p class="av-pagehead-desc">Edit what visitors see on the public booking portal: announcements, guidelines and the exhibits slideshow.</p>
+        </div>
+        <div class="av-pagehead-actions">
+            <a href="/" target="_blank" rel="noopener" class="btn btn-light"><i class="bi bi-box-arrow-up-right"></i> View Public Portal</a>
+        </div>
+    </div>
+
+    <!-- TOOLBAR: 3 Tabs -->
+    <div class="av-toolbar">
+        <ul class="nav av-tabs" id="contentTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="announcements-tab" data-bs-toggle="tab" data-bs-target="#announcements" type="button" role="tab" aria-controls="announcements" aria-selected="true"><i class="bi bi-megaphone"></i>Announcement Board</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="guidelines-tab" data-bs-toggle="tab" data-bs-target="#guidelines" type="button" role="tab" aria-controls="guidelines" aria-selected="false"><i class="bi bi-shield-check"></i>Visitor Guidelines</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="photos-tab" data-bs-toggle="tab" data-bs-target="#photos" type="button" role="tab" aria-controls="photos" aria-selected="false"><i class="bi bi-images"></i>Exhibit Photos</button>
+            </li>
+        </ul>
+        <div class="av-toolbar-meta av-mono">
+            <span th:text="|${#lists.size(announcements)} announcements|">0 announcements</span>
+            <span th:text="|${#lists.size(guidelines)} guidelines|">0 guidelines</span>
+            <span th:text="|${#lists.size(photos)} photos|">0 photos</span>
+        </div>
+    </div>
+
+    <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
+        <i class="bi bi-check-square-fill"></i> <span th:text="${success}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+        <i class="bi bi-exclamation-triangle-fill"></i> <span th:text="${error}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+
+    <div class="tab-content" id="contentTabsContent">
+
+        <!-- ANNOUNCEMENT BOARD TAB -->
+        <div class="tab-pane fade show active" id="announcements" role="tabpanel" aria-labelledby="announcements-tab">
+            <div class="row g-4">
+                <div class="col-lg-4">
+                    <div class="av-panel mb-0">
+                        <div class="av-panel-head"><span><i class="bi bi-plus-square me-2"></i>Post an Announcement</span></div>
+                        <div class="av-panel-body">
+                            <form th:action="@{/admin/content/announcements/add}" method="post">
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="annTitle">Title</label>
+                                    <input type="text" id="annTitle" name="title" class="form-control-custom" maxlength="120" placeholder="e.g. Museum closed on Dec 25" required>
+                                </div>
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="annDate">Date</label>
+                                    <input type="date" id="annDate" name="announcementDate" class="form-control-custom" th:value="${today}" required>
+                                </div>
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="annMessage">Message</label>
+                                    <textarea id="annMessage" name="message" class="form-control-custom" rows="5" maxlength="2000" placeholder="What should visitors know?" required></textarea>
+                                    <small class="av-hint mt-1">Plain text. Line breaks are kept.</small>
+                                </div>
+                                <div class="form-check av-field">
+                                    <input class="form-check-input" type="checkbox" name="active" id="annActive" value="true" checked>
+                                    <label class="form-check-label" for="annActive">Show on the visitor portal now</label>
+                                </div>
+                                <button type="submit" class="btn-primary-custom w-100"><i class="bi bi-megaphone"></i>Post Announcement</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- PROMOTIONAL VIDEO TOUR: shown below Museum Announcements on the visitor portal -->
+                    <div class="av-panel mt-4 mb-0">
+                        <div class="av-panel-head"><span><i class="bi bi-play-btn me-2"></i>Promotional Video Tour</span></div>
+                        <div class="av-panel-body">
+                            <form th:action="@{/admin/content/video/save}" method="post">
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="promoVideoUrl">YouTube video link</label>
+                                    <input type="text" inputmode="url" id="promoVideoUrl" name="promoVideoUrl" class="form-control-custom" maxlength="300" placeholder="https://www.youtube.com/watch?v=..." th:value="${promoVideoUrl}">
+                                    <small class="av-hint mt-1">Plays below Museum Announcements on the visitor portal. Clear the box and save to remove the video.</small>
+                                </div>
+                                <button type="submit" class="btn-primary-custom w-100"><i class="bi bi-check2"></i>Save Video</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- CONTACT & SOCIAL MEDIA: email line and icons in the public footer; a blank field hides that item -->
+                    <div class="av-panel mt-4 mb-0">
+                        <div class="av-panel-head"><span><i class="bi bi-share me-2"></i>Contact &amp; Social Media</span></div>
+                        <div class="av-panel-body">
+                            <form th:action="@{/admin/content/social/save}" method="post">
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="contactEmail"><i class="bi bi-envelope me-1"></i>Official contact email</label>
+                                    <input type="email" id="contactEmail" name="contactEmail" class="form-control-custom" maxlength="150" placeholder="museum@paf.mil.ph" th:value="${contactEmail}">
+                                </div>
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="facebookUrl"><i class="bi bi-facebook me-1"></i>Facebook page</label>
+                                    <input type="text" inputmode="url" id="facebookUrl" name="facebookUrl" class="form-control-custom" maxlength="300" placeholder="https://www.facebook.com/..." th:value="${facebookUrl}">
+                                </div>
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="instagramUrl"><i class="bi bi-instagram me-1"></i>Instagram profile</label>
+                                    <input type="text" inputmode="url" id="instagramUrl" name="instagramUrl" class="form-control-custom" maxlength="300" placeholder="https://www.instagram.com/..." th:value="${instagramUrl}">
+                                </div>
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="xUrl"><i class="bi bi-twitter-x me-1"></i>X (Twitter) profile</label>
+                                    <input type="text" inputmode="url" id="xUrl" name="xUrl" class="form-control-custom" maxlength="300" placeholder="https://x.com/..." th:value="${xUrl}">
+                                    <small class="av-hint mt-1">Shown in the visitor portal footer. Leave a box empty to hide that email or icon.</small>
+                                </div>
+                                <button type="submit" class="btn-primary-custom w-100"><i class="bi bi-check2"></i>Save Contact &amp; Social Links</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-lg-8">
+                    <div class="av-panel mb-0">
+                        <div class="av-panel-head">
+                            <span><i class="bi bi-list-ul me-2"></i>All Announcements</span>
+                            <span class="av-label">Newest first &middot; only Live ones appear on the portal</span>
+                        </div>
+                        <div th:if="${#lists.isEmpty(announcements)}" class="av-empty">
+                            <i class="bi bi-megaphone"></i>No announcements yet. The portal hides the board until you post one.
+                        </div>
+                        <div class="list-group list-group-flush">
+                            <div class="list-group-item py-3" th:each="a : ${announcements}">
+                                <div class="d-flex justify-content-between align-items-start gap-3">
+                                    <div class="flex-grow-1 av-minw-0">
+                                        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                                            <span th:if="${a.active}" class="badge-soft badge-approved">Live</span>
+                                            <span th:unless="${a.active}" class="badge-soft badge-pending">Hidden</span>
+                                            <span class="av-mono av-muted" th:text="${#temporals.format(a.announcementDate, 'MMM d, yyyy')}"></span>
+                                        </div>
+                                        <div class="av-cell-strong" th:text="${a.title}"></div>
+                                        <div class="av-cell-sub text-break av-pre-line" th:text="${a.message}"></div>
+                                    </div>
+                                    <div class="d-inline-flex gap-1 flex-shrink-0">
+                                        <form th:action="@{/admin/content/announcements/{id}/toggle(id=${a.id})}" method="post">
+                                            <button type="submit" class="btn btn-sm btn-light p-1" th:classappend="${a.active} ? 'text-secondary' : 'text-success'"
+                                                    th:title="${a.active} ? 'Hide from portal' : 'Show on portal'" th:attr="aria-label=${a.active} ? 'Hide announcement from portal' : 'Show announcement on portal'">
+                                                <i class="bi" th:classappend="${a.active} ? 'bi-eye-slash' : 'bi-eye'"></i>
+                                            </button>
+                                        </form>
+                                        <button type="button" class="btn btn-sm btn-light text-primary p-1" data-bs-toggle="collapse" th:attr="data-bs-target=|#ann-edit-${a.id}|,aria-controls=|ann-edit-${a.id}|" aria-expanded="false" title="Edit" aria-label="Edit announcement"><i class="bi bi-pencil"></i></button>
+                                        <form th:action="@{/admin/content/announcements/{id}/delete(id=${a.id})}" method="post" onsubmit="return confirm('Delete this announcement permanently?');">
+                                            <button type="submit" class="btn btn-sm btn-light text-danger p-1" title="Delete" aria-label="Delete announcement"><i class="bi bi-trash"></i></button>
+                                        </form>
+                                    </div>
+                                </div>
+
+                                <div class="collapse" th:id="|ann-edit-${a.id}|">
+                                    <form th:action="@{/admin/content/announcements/{id}/update(id=${a.id})}" method="post" class="av-well mt-3 mb-0">
+                                        <div class="row g-3">
+                                            <div class="col-md-8 av-field">
+                                                <label class="form-label-custom" th:for="|annTitle-${a.id}|">Title</label>
+                                                <input type="text" th:id="|annTitle-${a.id}|" name="title" class="form-control-custom" maxlength="120" required th:value="${a.title}">
+                                            </div>
+                                            <div class="col-md-4 av-field">
+                                                <label class="form-label-custom" th:for="|annDate-${a.id}|">Date</label>
+                                                <input type="date" th:id="|annDate-${a.id}|" name="announcementDate" class="form-control-custom" required th:value="${a.announcementDate}">
+                                            </div>
+                                        </div>
+                                        <div class="av-field">
+                                            <label class="form-label-custom" th:for="|annMessage-${a.id}|">Message</label>
+                                            <textarea th:id="|annMessage-${a.id}|" name="message" class="form-control-custom" rows="4" maxlength="2000" required th:text="${a.message}"></textarea>
+                                        </div>
+                                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                                            <div class="form-check mb-0">
+                                                <input class="form-check-input" type="checkbox" name="active" value="true" th:id="|annActive-${a.id}|" th:checked="${a.active}">
+                                                <label class="form-check-label" th:for="|annActive-${a.id}|">Show on the visitor portal</label>
+                                            </div>
+                                            <button type="submit" class="btn-primary-custom"><i class="bi bi-check2"></i>Save Changes</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- VISITOR GUIDELINES TAB -->
+        <div class="tab-pane fade" id="guidelines" role="tabpanel" aria-labelledby="guidelines-tab">
+            <div class="row g-4">
+                <div class="col-lg-4">
+                    <div class="av-panel mb-0">
+                        <div class="av-panel-head"><span><i class="bi bi-plus-square me-2"></i>Add a Guideline</span></div>
+                        <div class="av-panel-body">
+                            <form th:action="@{/admin/content/guidelines/add}" method="post">
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="glIcon">Icon</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text av-icon-preview" aria-hidden="true"><i class="bi bi-person-badge"></i></span>
+                                        <select id="glIcon" name="icon" class="form-control-custom" data-icon-select required>
+                                            <option th:each="entry : ${guidelineIcons}" th:value="${entry.key}" th:text="${entry.value}"></option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="glTitle">Title</label>
+                                    <input type="text" id="glTitle" name="title" class="form-control-custom" maxlength="80" placeholder="e.g. Photography" required>
+                                </div>
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="glDescription">Description</label>
+                                    <textarea id="glDescription" name="description" class="form-control-custom" rows="4" maxlength="1000" placeholder="e.g. Photos are allowed, but flash photography is not permitted inside the hangars." required></textarea>
+                                    <small class="av-hint mt-1">Plain text. Line breaks are kept.</small>
+                                </div>
+                                <button type="submit" class="btn-primary-custom w-100"><i class="bi bi-plus-lg"></i>Add Guideline</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-lg-8">
+                    <div class="av-panel mb-0">
+                        <div class="av-panel-head">
+                            <span><i class="bi bi-shield-check me-2"></i>Guideline Cards</span>
+                            <span class="av-label">Shown in this order on the Visitor Guidelines tab</span>
+                        </div>
+                        <div th:if="${#lists.isEmpty(guidelines)}" class="av-empty">
+                            <i class="bi bi-shield-check"></i>No guidelines yet. The portal shows a short "coming soon" note until you add one.
+                        </div>
+                        <div class="list-group list-group-flush">
+                            <div class="list-group-item py-3" th:each="g, stat : ${guidelines}">
+                                <div class="d-flex justify-content-between align-items-start gap-3">
+                                    <div class="d-flex gap-3 flex-grow-1 av-minw-0">
+                                        <span class="av-icon-preview" aria-hidden="true"><i class="bi" th:classappend="${g.icon}"></i></span>
+                                        <div class="av-minw-0">
+                                            <div class="av-cell-strong" th:text="${g.title}"></div>
+                                            <div class="av-cell-sub text-break av-pre-line" th:text="${g.description}"></div>
+                                        </div>
+                                    </div>
+                                    <div class="d-inline-flex gap-1 flex-shrink-0">
+                                        <form th:action="@{/admin/content/guidelines/{id}/move(id=${g.id})}" method="post">
+                                            <input type="hidden" name="direction" value="up">
+                                            <button type="submit" class="btn btn-sm btn-light p-1" th:disabled="${stat.first}" title="Move up" aria-label="Move guideline up"><i class="bi bi-arrow-up"></i></button>
+                                        </form>
+                                        <form th:action="@{/admin/content/guidelines/{id}/move(id=${g.id})}" method="post">
+                                            <input type="hidden" name="direction" value="down">
+                                            <button type="submit" class="btn btn-sm btn-light p-1" th:disabled="${stat.last}" title="Move down" aria-label="Move guideline down"><i class="bi bi-arrow-down"></i></button>
+                                        </form>
+                                        <button type="button" class="btn btn-sm btn-light text-primary p-1" data-bs-toggle="collapse" th:attr="data-bs-target=|#gl-edit-${g.id}|,aria-controls=|gl-edit-${g.id}|" aria-expanded="false" title="Edit" aria-label="Edit guideline"><i class="bi bi-pencil"></i></button>
+                                        <form th:action="@{/admin/content/guidelines/{id}/delete(id=${g.id})}" method="post" onsubmit="return confirm('Delete this guideline from the visitor portal?');">
+                                            <button type="submit" class="btn btn-sm btn-light text-danger p-1" title="Delete" aria-label="Delete guideline"><i class="bi bi-trash"></i></button>
+                                        </form>
+                                    </div>
+                                </div>
+
+                                <div class="collapse" th:id="|gl-edit-${g.id}|">
+                                    <form th:action="@{/admin/content/guidelines/{id}/update(id=${g.id})}" method="post" class="av-well mt-3 mb-0">
+                                        <div class="row g-3">
+                                            <div class="col-md-5 av-field">
+                                                <label class="form-label-custom" th:for="|glIcon-${g.id}|">Icon</label>
+                                                <div class="input-group">
+                                                    <span class="input-group-text av-icon-preview" aria-hidden="true"><i class="bi" th:classappend="${g.icon}"></i></span>
+                                                    <select th:id="|glIcon-${g.id}|" name="icon" class="form-control-custom" data-icon-select required>
+                                                        <option th:each="entry : ${guidelineIcons}" th:value="${entry.key}" th:text="${entry.value}" th:selected="${entry.key == g.icon}"></option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-7 av-field">
+                                                <label class="form-label-custom" th:for="|glTitle-${g.id}|">Title</label>
+                                                <input type="text" th:id="|glTitle-${g.id}|" name="title" class="form-control-custom" maxlength="80" required th:value="${g.title}">
+                                            </div>
+                                        </div>
+                                        <div class="av-field">
+                                            <label class="form-label-custom" th:for="|glDescription-${g.id}|">Description</label>
+                                            <textarea th:id="|glDescription-${g.id}|" name="description" class="form-control-custom" rows="4" maxlength="1000" required th:text="${g.description}"></textarea>
+                                        </div>
+                                        <div class="d-flex justify-content-end">
+                                            <button type="submit" class="btn-primary-custom"><i class="bi bi-check2"></i>Save Changes</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- EXHIBIT PHOTOS TAB -->
+        <div class="tab-pane fade" id="photos" role="tabpanel" aria-labelledby="photos-tab">
+            <div class="av-panel">
+                <div class="av-panel-head"><span><i class="bi bi-cloud-arrow-up me-2"></i>Upload Photos</span><span class="av-label">JPG, PNG or WebP &middot; 5 MB max each</span></div>
+                <div class="av-panel-body">
+                    <form th:action="@{/admin/content/photos/upload}" method="post" enctype="multipart/form-data" class="row g-3 align-items-end" id="photoUploadForm">
+                        <div class="col-md-9">
+                            <label class="form-label-custom" for="photoInput">Museum photos</label>
+                            <input type="file" id="photoInput" name="photos" class="form-control-custom" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple required>
+                        </div>
+                        <div class="col-md-3">
+                            <button type="submit" class="btn-primary-custom w-100"><i class="bi bi-upload"></i>Upload</button>
+                        </div>
+                    </form>
+                    <small class="av-hint mt-2"><i class="bi bi-info-circle me-1"></i>Photos appear in the Exhibits tab slideshow in upload order. Landscape photos look best.</small>
+                </div>
+            </div>
+
+            <div class="av-panel mb-0">
+                <div class="av-panel-head"><span><i class="bi bi-images me-2"></i>Slideshow Photos</span></div>
+                <div th:if="${#lists.isEmpty(photos)}" class="av-empty">
+                    <i class="bi bi-images"></i>No photos yet. The Exhibits tab shows a placeholder until you upload some.
+                </div>
+                <div class="av-panel-body" th:unless="${#lists.isEmpty(photos)}">
+                    <div class="row g-3">
+                        <div class="col-sm-6 col-lg-4 col-xl-3" th:each="p, stat : ${photos}">
+                            <div class="card h-100">
+                                <div class="ratio ratio-16x9">
+                                    <img th:src="@{/exhibit-photos/{f}(f=${p.filename})}" class="object-fit-cover rounded-top" loading="lazy" th:alt="|Exhibit photo ${stat.count}|">
+                                </div>
+                                <div class="card-body d-flex justify-content-between align-items-center gap-2 p-2">
+                                    <span class="av-mono av-muted small" th:text="|#${stat.count} · ${#temporals.format(p.uploadDate, 'MMM d, yyyy')}|"></span>
+                                    <form th:action="@{/admin/content/photos/{id}/delete(id=${p.id})}" method="post" onsubmit="return confirm('Remove this photo from the slideshow? The file is deleted.');">
+                                        <button type="submit" class="btn btn-sm btn-light text-danger p-1" title="Delete photo" aria-label="Delete photo"><i class="bi bi-trash"></i></button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+</main>
+
+<th:block th:replace="~{fragments/shell :: scripts}"></th:block>
+<script>
+    // Keep the open tab across saves: the server redirects to /admin/content#announcements, #guidelines or #photos
+    (function () {
+        var hash = location.hash.replace('#', '');
+        var tabBtn = hash && document.getElementById(hash + '-tab');
+        if (tabBtn && window.bootstrap) bootstrap.Tab.getOrCreateInstance(tabBtn).show();
+        document.querySelectorAll('#contentTabs [data-bs-toggle="tab"]').forEach(function (btn) {
+            btn.addEventListener('shown.bs.tab', function () {
+                history.replaceState(null, '', btn.getAttribute('data-bs-target'));
+            });
+        });
+    })();
+
+    // Guideline icon dropdowns: show the chosen Bootstrap icon next to the list
+    document.querySelectorAll('[data-icon-select]').forEach(function (select) {
+        var preview = select.parentNode.querySelector('.av-icon-preview i');
+        function sync() { preview.className = 'bi ' + select.value; }
+        select.addEventListener('change', sync);
+        sync();
+    });
+
+    // Catch oversized photos before the upload starts (the server checks again)
+    document.getElementById('photoUploadForm').addEventListener('submit', function (e) {
+        var files = document.getElementById('photoInput').files;
+        var total = 0;
+        for (var i = 0; i < files.length; i++) {
+            total += files[i].size;
+            if (files[i].size > 5 * 1024 * 1024) {
+                e.preventDefault();
+                alert('"' + files[i].name + '" is larger than 5 MB. Please resize it and try again.');
+                return;
+            }
+        }
+        if (total > 10 * 1024 * 1024) {
+            e.preventDefault();
+            alert('These photos add up to more than 10 MB. Please upload them in smaller batches.');
+        }
+    });
+</script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/visitor :: head}"></th:block>
+    <title>Registration Success - AeroVisit</title>
+</head>
+<body class="vp vp--immersive">
+
+<th:block th:replace="~{fragments/visitor :: backdrop}"></th:block>
+
+<th:block th:replace="~{fragments/visitor :: topnav(false)}"></th:block>
+
+<div class="vp-page">
+    <div class="vp-page-band" aria-hidden="true"></div>
+    <main class="vp-page-main">
+        <div class="container">
+            <div class="vp-narrow">
+                <div class="vp-bezel vp-reveal">
+                    <div class="vp-bezel-core vp-card-pad">
+
+                        <div class="vp-status-ico vp-status-ico--ok"><i class="bi bi-check2-circle"></i></div>
+                        <h1 class="vp-title-xl">Registration Received</h1>
+                        <p class="vp-lead">Your visit request has been securely transmitted to the Philippine Air Force Aerospace Museum Command Center.</p>
+
+                        <dl class="vp-details">
+                            <div class="vp-details-row" th:if="${visitor.referenceId != null}"><dt>Booking Reference ID</dt><dd class="is-primary" th:text="${visitor.referenceId}"></dd></div>
+                            <div class="vp-details-row"><dt>System ID</dt><dd th:text="'#' + ${visitor.id}"></dd></div>
+                            <div class="vp-details-row"><dt>Lead Visitor</dt><dd th:text="${visitor.name}"></dd></div>
+                            <div class="vp-details-row"><dt>Visit Date</dt><dd class="is-primary" th:text="${visitor.visitDate}"></dd></div>
+                            <div class="vp-details-row"><dt>Time Window</dt><dd th:text="${visitor.timeWindow}"></dd></div>
+                            <div class="vp-details-row"><dt>Total Guests</dt><dd th:text="${visitor.groupSize}"></dd></div>
+                            <div class="vp-details-row"><dt>Status</dt><dd><span class="vp-status-tag" th:text="${statusLabel != null ? statusLabel : visitor.status}"></span></dd></div>
+                        </dl>
+
+                        <!-- statusLabel is only set by /check-status; right after booking it is absent and the PENDING note shows -->
+                        <div class="vp-note" th:unless="${statusLabel == null or statusLabel == 'Pending Review'}">
+                            <i class="bi bi-info-circle"></i>
+                            <div><strong>This booking is no longer pending.</strong> Sign in to <a href="/manage-booking">Manage Booking</a> with your email and Booking Reference ID to see its details.</div>
+                        </div>
+
+                        <div class="vp-note" th:if="${statusLabel == null or statusLabel == 'Pending Review'}">
+                            <i class="bi bi-envelope-paper"></i>
+                            <div><strong>Next Steps:</strong> Your application is currently <span class="vp-status-tag">PENDING</span>. Please monitor your email inbox (<strong><span th:text="${visitor.email}"></span></strong>). Once the Museum Director approves your visit, you will receive an official Entry QR Code.</div>
+                        </div>
+
+                        <a href="/" class="vp-btn vp-btn--primary vp-btn--block">Return to Home Calendar <span class="vp-btn-icon"><i class="bi bi-arrow-right"></i></span></a>
+
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+    <th:block th:replace="~{fragments/visitor :: footer}"></th:block>
+</div>
+
+<th:block th:replace="~{fragments/visitor :: scripts}"></th:block>
+</body>
+</html>

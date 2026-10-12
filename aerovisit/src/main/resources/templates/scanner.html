@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/shell :: head}"></th:block>
+    <title>AeroVisit - Tactical Scanner HUD</title>
+    <!-- Pinned (2.3.8 = the "latest" this page used until now) + SRI: a new CDN release or a tampered file can't break the gate scanner -->
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha256-ZgsSQ3sddH4+aLi+BoXAjLcoFAEQrSE/FnsUtm+LHY4=" crossorigin="anonymous"></script>
+    <script src="/js/shell.js"></script>
+</head>
+<body class="av-app">
+
+<a href="#main" class="visually-hidden-focusable">Skip to content</a>
+<th:block th:replace="~{fragments/shell :: sidebar('scanner')}"></th:block>
+<th:block th:replace="~{fragments/shell :: header('Gate Check-In')}"></th:block>
+
+<main class="av-main" id="main">
+<div class="av-workspace">
+
+    <div class="av-pagehead">
+        <div>
+            <span class="av-mono av-code">OPS-04</span>
+            <h1 class="av-pagehead-title">Gate Check-In</h1>
+            <p class="av-pagehead-desc">Present the visitor's entry QR pass to the camera. Scanning resumes automatically.</p>
+        </div>
+        <div class="av-pagehead-actions">
+            <a href="/admin" class="btn btn-light"><i class="bi bi-x-square"></i> Abort</a>
+        </div>
+    </div>
+
+    <div class="av-toolbar">
+        <div class="av-tabs"><span class="av-tab is-active"><i class="bi bi-qr-code-scan"></i> Scanner HUD // Active</span></div>
+        <div class="av-toolbar-meta av-mono"><span class="av-legend av-legend--ok">Cleared</span><span class="av-legend av-legend--alert">Denied</span></div>
+    </div>
+
+    <div class="av-scanner">
+        <div class="av-panel mb-0">
+            <div class="av-panel-head"><span><i class="bi bi-camera-video me-2"></i>Optical Feed</span><span class="av-label">Awaiting target QR code…</span></div>
+            <div class="av-scanner-frame">
+                <div id="reader"></div>
+            </div>
+        </div>
+
+        <aside class="av-panel mb-0">
+            <div class="av-panel-head"><span>Gate Protocol</span></div>
+            <div class="av-panel-body">
+                <ul class="av-kv av-kv--steps">
+                    <li><span>01</span><strong>Match face to uploaded ID photo</strong></li>
+                    <li><span>02</span><strong>Green = cleared, proceed</strong></li>
+                    <li><span>03</span><strong>Red = deny entry, escalate</strong></li>
+                    <li><span>04</span><strong>No QR? Enter the Reference ID (header)</strong></li>
+                </ul>
+            </div>
+        </aside>
+    </div>
+</div>
+</main>
+
+<div id="alert-overlay" role="alertdialog" aria-live="assertive">
+    <div id="alert-box" class="alert-box">
+        <!-- Image placeholder for Visual Verification -->
+        <img id="alert-id-photo" src="" alt="Target ID Photo">
+
+        <h1 id="alert-icon" class="mb-2"></h1>
+        <h3 id="alert-message"></h3>
+        <!-- 🪖 GROUP MANIFEST: filled from the scan response -->
+        <div id="alert-manifest" class="card text-start mt-3 d-none">
+            <ul class="list-group list-group-flush">
+                <li class="list-group-item d-flex justify-content-between gap-3"><span class="text-body-secondary">Lead Name</span><strong id="manifest-lead"></strong></li>
+                <li class="list-group-item d-flex justify-content-between gap-3"><span class="text-body-secondary">Total Headcount</span><strong id="manifest-headcount"></strong></li>
+                <li class="list-group-item d-none" id="manifest-companions-row">
+                    <div class="text-body-secondary mb-1">Manifest</div>
+                    <ol id="manifest-companions" class="mb-0 ps-3"></ol>
+                </li>
+            </ul>
+        </div>
+        <!-- ✅ VERIFY, THEN CONFIRM: shown for a valid pass. Nothing is saved until the guard accepts or denies. -->
+        <div id="decision-controls" class="mt-3 d-none">
+            <!-- 🚌 Master Booking: how many guests actually arrived (sent with Accept) -->
+            <div id="master-headcount" class="card text-start mb-2 d-none">
+                <div class="card-body py-2">
+                    <label for="master-headcount-input" class="form-label mb-1">Guests who actually arrived</label>
+                    <input type="number" id="master-headcount-input" class="form-control form-control-sm" min="1">
+                </div>
+            </div>
+            <!-- 📱 Phones: Accept / Deny stack as full-width buttons; side by side from 576px up -->
+            <div class="d-flex flex-column flex-sm-row gap-2">
+                <button type="button" id="accept-btn" class="btn btn-success flex-fill"><i class="bi bi-check2-circle me-1"></i>Accept &amp; Check-In</button>
+                <button type="button" id="deny-open" class="btn btn-danger flex-fill"><i class="bi bi-shield-x me-1"></i>Void / Deny Entry</button>
+            </div>
+            <!-- 🛑 GATE DENIAL reason -->
+            <div id="deny-panel" class="card text-start mt-2 d-none">
+                <div class="card-body">
+                    <label for="deny-reason" class="form-label">Reason for Denial</label>
+                    <select id="deny-reason" class="form-select form-select-sm">
+                        <option value="" selected disabled>Select an official reason...</option>
+                        <option value="Group does not match manifest">Group does not match manifest</option>
+                        <option value="Unregistered person in group">Unregistered person in group</option>
+                        <option value="ID does not match lead booker">ID does not match lead booker</option>
+                        <option value="Expired or invalid ID presented">Expired or invalid ID presented</option>
+                        <option value="Security concern">Security concern</option>
+                    </select>
+                    <button type="button" id="deny-confirm" class="btn btn-sm btn-danger w-100 mt-2">Confirm Deny Entry</button>
+                </div>
+            </div>
+        </div>
+        <p class="av-mono d-none" id="alert-resume-note">Resuming scan in 2 seconds…</p>
+        <button type="button" id="alert-dismiss" class="btn btn-light mt-3">Dismiss — resume scanning</button>
+    </div>
+</div>
+
+<th:block th:replace="~{fragments/shell :: scripts}"></th:block>
+
+<script>
+    // --- MILITARY HUD AUDIO SYNTHESIZER ---
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    function playBeep(type) {
+        if (audioCtx.state === 'suspended') { audioCtx.resume(); }
+
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        if (type === 'success') {
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(1200, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+            oscillator.start(audioCtx.currentTime);
+            oscillator.stop(audioCtx.currentTime + 0.15);
+        } else {
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(300, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+            oscillator.start(audioCtx.currentTime);
+            oscillator.stop(audioCtx.currentTime + 0.4);
+        }
+    }
+
+    // --- VERIFY, THEN CONFIRM SCANNER LOGIC ---
+    // A scan never admits anyone: the card stays up until the guard accepts, denies or dismisses it.
+    let isProcessing = false;
+    let resumeTimer = null;
+    let currentVisitorId = '';
+
+    // 📷 Tuned for shaky hands: more frames per second, a large scan zone, and QR-only decoding
+    const html5QrcodeScanner = new Html5QrcodeScanner(
+        "reader", {
+            fps: 20,
+            // Scan zone = 75% of the shorter side of the camera view (never below 250px), so the code need not be centred exactly
+            qrbox: (viewfinderWidth, viewfinderHeight) => {
+                const size = Math.max(250, Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.75));
+                return { width: size, height: size };
+            },
+            // Passes are shown to the rear camera un-mirrored, so skip the extra mirrored decode of every frame
+            disableFlip: true,
+            // Only look for QR codes instead of trying every barcode format on each frame
+            formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+            // Use the browser's native BarcodeDetector (hardware-accelerated on Chrome/Android) when available
+            experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+            supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
+        }, false);
+
+    const el = id => document.getElementById(id);
+
+    function postForm(url, params) {
+        return fetch(url, {
+            method: 'POST',
+            headers: AeroCsrf.headers({ 'Content-Type': 'application/x-www-form-urlencoded' }),
+            body: new URLSearchParams(params)
+        }).then(response => response.json());
+    }
+
+    // tone: 'verify' (blue, awaiting decision), 'success' (green) or 'error' (red)
+    function showResult(tone, icon, message) {
+        el('alert-box').className = 'alert-box alert-' + tone + '-hud';
+        el('alert-icon').innerText = icon;
+        el('alert-message').innerText = message;
+    }
+
+    // Blocks double-submits while an Accept / Deny request is in flight
+    function setBusy(busy) {
+        el('accept-btn').disabled = busy;
+        el('deny-open').disabled = busy;
+        el('deny-confirm').disabled = busy;
+    }
+
+    function resumeScanning() {
+        clearTimeout(resumeTimer);
+        el('alert-overlay').classList.remove('show');
+        currentVisitorId = '';
+        isProcessing = false;
+    }
+
+    // After Accept or Deny succeeds: show the outcome for 2 seconds, then clear the card and resume the camera
+    function finishDecision(tone, icon, message) {
+        showResult(tone, icon, message);
+        playBeep(tone === 'success' ? 'success' : 'error');
+        el('decision-controls').classList.add('d-none');
+        el('alert-dismiss').classList.add('d-none');
+        el('alert-resume-note').classList.remove('d-none');
+        resumeTimer = setTimeout(resumeScanning, 2000);
+    }
+
+    // A refused Accept / Deny keeps the card up so the guard can retry, deny instead, or dismiss
+    function decisionFailed(message) {
+        el('alert-message').innerText = message;
+        playBeep('error');
+        setBusy(false);
+    }
+
+    function onScanSuccess(decodedText, decodedResult) {
+        if (isProcessing) return;
+        isProcessing = true;
+
+        postForm('/admin/api/scan', { qrData: decodedText })
+        .then(data => {
+            const idPhoto = el('alert-id-photo');
+
+            // Inject the ID Image if the backend found one
+            if (data.imageUrl && data.imageUrl !== '') {
+                idPhoto.src = data.imageUrl;
+                idPhoto.style.display = 'inline-block';
+            } else {
+                idPhoto.style.display = 'none';
+                idPhoto.src = '';
+            }
+
+            // 🪖 GROUP MANIFEST card (textContent only: names are visitor-supplied)
+            const manifestCard = el('alert-manifest');
+            const companionList = el('manifest-companions');
+            const partySize = parseInt(data.headcount, 10) || 1;
+            const companions = (data.companions || '').split('\n').filter(n => n.trim() !== '');
+            if (data.leadName) {
+                el('manifest-lead').textContent = data.leadName;
+                el('manifest-headcount').textContent = partySize;
+                companionList.replaceChildren(...companions.map(name => {
+                    const li = document.createElement('li');
+                    li.textContent = name;
+                    return li;
+                }));
+                if (partySize > 1 && companions.length === 0) {
+                    // Booked before manifests were required
+                    const li = document.createElement('li');
+                    li.className = 'text-danger fw-semibold';
+                    li.textContent = 'No manifest on file. Verify every guest manually.';
+                    companionList.replaceChildren(li);
+                }
+                el('manifest-companions-row').classList.toggle('d-none', partySize <= 1);
+                manifestCard.classList.remove('d-none');
+            } else {
+                manifestCard.classList.add('d-none');
+            }
+
+            // ✅ Accept / Deny only for a valid pass (status "ready"); the server re-checks both actions
+            const ready = data.status === 'ready';
+            currentVisitorId = ready ? data.visitorId : '';
+            el('decision-controls').classList.toggle('d-none', !ready);
+            el('deny-panel').classList.add('d-none');
+            el('deny-reason').value = '';
+            setBusy(false);
+            const isMaster = ready && data.masterBooking === 'true';
+            el('master-headcount').classList.toggle('d-none', !isMaster);
+            if (isMaster) {
+                el('master-headcount-input').max = partySize;
+                el('master-headcount-input').value = partySize;
+            }
+
+            el('alert-resume-note').classList.add('d-none');
+            const dismissBtn = el('alert-dismiss');
+            dismissBtn.classList.remove('d-none');
+            dismissBtn.textContent = ready ? 'Cancel — no decision, resume scanning' : 'Dismiss — resume scanning';
+
+            if (ready) {
+                showResult('verify', '🔎', data.message);
+                playBeep('success');
+            } else if (data.status === 'success') {
+                showResult('success', '✅', data.message); // second scan: check-out
+                playBeep('success');
+            } else {
+                showResult('error', '⛔', data.message);
+                playBeep('error');
+            }
+
+            // No auto-resume: the card stays until the guard acts
+            clearTimeout(resumeTimer);
+            el('alert-overlay').classList.add('show');
+            (ready ? el('accept-btn') : dismissBtn).focus();
+        })
+        .catch(error => {
+            console.error("Transmission Error:", error);
+            isProcessing = false;
+        });
+    }
+
+    el('alert-dismiss').addEventListener('click', resumeScanning);
+
+    el('accept-btn').addEventListener('click', () => {
+        const params = { visitorId: currentVisitorId };
+        if (!el('master-headcount').classList.contains('d-none')) params.headcount = el('master-headcount-input').value;
+        setBusy(true);
+        postForm('/admin/api/confirm-check-in', params)
+        .then(data => data.status === 'success' ? finishDecision('success', '✅', data.message) : decisionFailed(data.message))
+        .catch(error => {
+            console.error("Transmission Error:", error);
+            decisionFailed('Server unreachable: the visitor was NOT checked in. Try again.');
+        });
+    });
+
+    el('deny-open').addEventListener('click', () => {
+        el('deny-panel').classList.remove('d-none');
+        el('deny-reason').focus();
+    });
+
+    el('deny-confirm').addEventListener('click', () => {
+        const reasonSelect = el('deny-reason');
+        if (!reasonSelect.value) { reasonSelect.focus(); return; }
+        setBusy(true);
+        postForm('/admin/api/deny-entry', { visitorId: currentVisitorId, reason: reasonSelect.value })
+        .then(data => data.status === 'success' ? finishDecision('error', '⛔', data.message) : decisionFailed(data.message))
+        .catch(error => {
+            console.error("Transmission Error:", error);
+            decisionFailed('Server unreachable: entry was NOT denied. Try again or use Deny Entry on the dashboard.');
+        });
+    });
+
+    function onScanFailure(error) {
+        // Background scan failures ignored to prevent console spam
+    }
+
+    html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+
+    // 📱 Rotating a phone or tablet: the camera view is sized when it starts, so restart it to fit the new screen shape.
+    // Only while the camera is running; an open scan-result card and its pending decision are left untouched.
+    let refitTimer = null;
+    window.matchMedia('(orientation: portrait)').addEventListener('change', () => {
+        clearTimeout(refitTimer);
+        refitTimer = setTimeout(() => {
+            if (!window.matchMedia('(pointer: coarse)').matches || !document.querySelector('#reader video')) return;
+            html5QrcodeScanner.clear()
+                .then(() => html5QrcodeScanner.render(onScanSuccess, onScanFailure))
+                .catch(err => console.warn('Scanner re-fit after rotation skipped:', err));
+        }, 300);
+    });
+</script>
+
+</body>
+</html>

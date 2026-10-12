@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<body>
+
+<!-- 🧬 BAN VISITOR: one dialog for every row, pointed at the clicked visitor by banDialogScript. The ban follows the face.
+     Shared by the Command Dashboard (admin.html) and the Guard Dashboard (guard.html). A trigger needs
+     data-bs-toggle="modal" data-bs-target="#banModal" plus data-ban-url and data-ban-name. -->
+<div th:fragment="banDialog" class="modal fade" id="banModal" tabindex="-1" aria-labelledby="banModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header av-modal--danger">
+                <h5 class="modal-title" id="banModalTitle"><i class="bi bi-person-x me-2"></i>Ban Visitor</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="banForm" method="post">
+                <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                <div class="modal-body text-start">
+                    <p class="av-small av-muted mb-3">Target: <strong class="text-dark" id="banModalName"></strong></p>
+                    <p class="av-small av-muted mb-3">The ban follows this person's face, not their email: their open bookings are revoked, and new bookings with this face are refused under any name or email until the ban ends.</p>
+                    <div class="mb-3">
+                        <label class="form-label" for="banReason">Reason</label>
+                        <select id="banReason" name="reason" class="form-select form-select-sm" required>
+                            <option value="Fake ID Uploaded">Fake ID Uploaded</option>
+                            <option value="Repeated No-Shows">Repeated No-Shows</option>
+                            <option value="Misconduct on Premises">Misconduct on Premises</option>
+                            <option value="Security Threat">Security Threat</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                    <div class="mb-1">
+                        <label class="form-label" for="banDuration">Duration</label>
+                        <select id="banDuration" name="duration" class="form-select form-select-sm" required>
+                            <option value="30_DAYS" selected>30 days</option>
+                            <option value="6_MONTHS">6 months</option>
+                            <option value="PERMANENT">Permanent</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger"><i class="bi bi-person-x me-1"></i> Ban Visitor</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<th:block th:fragment="banDialogScript">
+<script>
+// Ban dialog: Bootstrap passes the clicked "Ban Visitor" item as relatedTarget; the name goes in as text, never HTML.
+// The form starts with no action, so it can't be submitted to the wrong visitor before a row was chosen.
+(function () {
+    var modal = document.getElementById('banModal');
+    if (!modal) return;
+    var form = document.getElementById('banForm');
+    modal.addEventListener('show.bs.modal', function (event) {
+        var item = event.relatedTarget;
+        if (!item) return;
+        form.setAttribute('action', item.getAttribute('data-ban-url'));
+        document.getElementById('banModalName').textContent = item.getAttribute('data-ban-name') || '';
+        document.getElementById('banDuration').value = '30_DAYS';
+        document.getElementById('banReason').selectedIndex = 0;
+    });
+    modal.addEventListener('hidden.bs.modal', function () { form.removeAttribute('action'); });
+    form.addEventListener('submit', function (e) { if (!form.getAttribute('action')) e.preventDefault(); });
+})();
+</script>
+</th:block>
+
+</body>
+</html>

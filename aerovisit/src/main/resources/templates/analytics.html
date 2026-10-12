@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/shell :: head}"></th:block>
+    <title>AeroVisit - Analytics &amp; Insights</title>
+    <!-- Pinned (4.5.1 = the "latest" this page used until now) + SRI: a new CDN release or a tampered file can't change it -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" integrity="sha256-SERKgtTty1vsDxll+qzd4Y2cF9swY9BCq62i9wXJ9Uo=" crossorigin="anonymous"></script>
+    <script src="/js/shell.js"></script>
+</head>
+<body class="av-app">
+
+<a href="#main" class="visually-hidden-focusable">Skip to content</a>
+<th:block th:replace="~{fragments/shell :: sidebar('analytics')}"></th:block>
+<th:block th:replace="~{fragments/shell :: header('Analytics & Insights')}"></th:block>
+
+<main class="av-main" id="main">
+<div class="av-workspace">
+
+    <!-- PAGE HEAD -->
+    <div class="av-pagehead">
+        <div>
+            <span class="av-mono av-code">OPS-04</span>
+            <h1 class="av-pagehead-title">Analytics &amp; Insights</h1>
+            <p class="av-pagehead-desc">AI turnout forecast, traffic trends, visitor conversion and feedback.</p>
+        </div>
+        <div class="av-pagehead-actions">
+            <!-- Reports (Director only, also enforced in SecurityConfig): pick the range from each menu. ?range= is read by
+                 AdminDashboardController (week = Monday to Sunday, month = the calendar month); Excel without a range = last 30 days. -->
+            <div class="dropdown" th:if="${isDirector}">
+                <button type="button" class="btn btn-light dropdown-toggle" id="exportPdfMenu" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-file-earmark-arrow-down"></i> Export Log (PDF)</button>
+                <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="exportPdfMenu">
+                    <li><a class="dropdown-item" href="/admin/report?range=today" onclick="return confirm('Generate and download the PDF report for today?');">Today</a></li>
+                    <li><a class="dropdown-item" href="/admin/report?range=week" onclick="return confirm('Generate and download the PDF report for this week (Monday to Sunday)?');">This Week</a></li>
+                    <li><a class="dropdown-item" href="/admin/report?range=month" onclick="return confirm('Generate and download the PDF report for this month?');">This Month</a></li>
+                </ul>
+            </div>
+            <div class="dropdown" th:if="${isDirector}">
+                <button type="button" class="btn btn-light dropdown-toggle" id="exportExcelMenu" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-file-earmark-spreadsheet"></i> Export Excel</button>
+                <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="exportExcelMenu">
+                    <li><a class="dropdown-item" href="/admin/export-excel?range=today" onclick="return confirm('Download today\'s visitors (with feedback and AI analysis) as an Excel file?');">Today</a></li>
+                    <li><a class="dropdown-item" href="/admin/export-excel?range=week" onclick="return confirm('Download this week\'s visitors (Monday to Sunday, with feedback and AI analysis) as an Excel file?');">This Week</a></li>
+                    <li><a class="dropdown-item" href="/admin/export-excel?range=month" onclick="return confirm('Download this month\'s visitors (with feedback and AI analysis) as an Excel file?');">This Month</a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item" href="/admin/export-excel" onclick="return confirm('Download the last 30 days of visitors (with feedback and AI analysis) as an Excel file?');">Last 30 Days</a></li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- TOOLBAR -->
+    <div class="av-toolbar">
+        <div class="av-tabs"><span class="av-tab is-active"><i class="bi bi-graph-up-arrow"></i> Strategic Overview</span></div>
+        <div class="av-toolbar-meta av-mono">
+            <span th:text="${#temporals.format(#temporals.createToday(), 'EEE, MMM d, yyyy')}">Today</span>
+            <span>Refreshed on page load</span>
+        </div>
+    </div>
+
+    <!-- AI TURNOUT FORECAST -->
+    <section class="av-metrics" aria-label="AI turnout forecast">
+
+        <!-- AI Briefing (director / admin) -->
+        <div class="av-metrics-intel" th:if="${isDirector}">
+            <div class="av-stat-row">
+                <div class="av-stat">
+                    <div class="av-stat-top">
+                        <span class="av-label">Predicted Walk-ins</span>
+                        <!-- XAI Diagnostic Button -->
+                        <button class="btn btn-sm btn-light p-1" data-bs-toggle="modal" data-bs-target="#xaiModal" title="View AI Decision Matrix" aria-label="View AI Decision Matrix">
+                            <i class="bi bi-cpu"></i>
+                        </button>
+                    </div>
+                    <p class="av-stat-value" th:text="${walkIns != null ? walkIns : '--'}">0</p>
+                    <!-- Confidence Intervals Display -->
+                    <div class="av-stat-meta av-mono av-muted">
+                        <span th:if="${minWalkIns != null and minWalkIns != '--' and minWalkIns > 0}">
+                            Range <strong class="text-dark" th:text="${minWalkIns} + '–' + ${maxWalkIns}"></strong>
+                            &middot; <span class="text-success fw-bold" th:text="${confidencePercentage} + '%'">85%</span> conf.
+                        </span>
+                    </div>
+                </div>
+                <div class="av-stat av-stat--ok">
+                    <div class="av-stat-top">
+                        <span class="av-label">Online Pre-Booked</span>
+                        <i class="bi bi-laptop text-success"></i>
+                    </div>
+                    <p class="av-stat-value" th:text="${preBooked != null ? preBooked : '--'}">0</p>
+                    <div class="av-stat-meta av-mono av-muted">Portal reservations</div>
+                </div>
+                <div class="av-stat av-stat--primary">
+                    <div class="av-stat-top">
+                        <span class="av-label">Total Expected</span>
+                        <i class="bi bi-calculator"></i>
+                    </div>
+                    <p class="av-stat-value" th:text="${totalPrediction != null ? totalPrediction : '--'}">0</p>
+                    <div class="av-stat-meta av-mono av-label">Walk-ins + pre-booked</div>
+                </div>
+            </div>
+
+            <!-- OPERATIONAL PROTOCOL -->
+            <div class="av-panel av-panel--alert mb-0">
+                <div class="av-panel-head">
+                    <span><i class="bi bi-shield-exclamation me-2"></i>Operational Protocol</span>
+                    <span class="av-weather av-mono">
+                        <i class="bi bi-cloud-sun"></i>
+                        Base Weather: <strong th:text="${liveWeather != null ? liveWeather : 'Clear'}">Clear</strong>
+                        <span class="av-muted">(Villamor Radar)</span>
+                    </span>
+                </div>
+                <dl class="av-protocol-grid mb-0">
+                    <div class="av-protocol-cell">
+                        <dt class="av-label">Security Condition</dt>
+                        <dd class="text-lowercase" th:text="${#strings.replace(securityCondition != null ? securityCondition : 'SYSTEM OFFLINE', '_', ' ')}"></dd>
+                    </div>
+                    <div class="av-protocol-cell">
+                        <dt class="av-label">Personnel Required</dt>
+                        <dd th:text="${personnel != null ? personnel : '--'}"></dd>
+                    </div>
+                    <div class="av-protocol-cell">
+                        <dt class="av-label">Facility Protocol</dt>
+                        <dd class="text-lowercase" th:text="${#strings.replace(facilityProtocol != null ? facilityProtocol : 'Disconnected', '_', ' ')}"></dd>
+                    </div>
+                </dl>
+            </div>
+        </div>
+
+    </section>
+
+    <!-- DIRECTOR CHARTS ROW -->
+    <div class="row g-4 mb-4" th:if="${isDirector}">
+        <div class="col-md-5">
+            <div class="av-panel h-100 mb-0">
+                <div class="av-panel-head">
+                    <span>AI Traffic Forecast (37-Day)</span>
+                    <button type="button" class="btn btn-sm btn-light p-1"
+                            onclick="zoomChart('visitorChart', 'AI Traffic Forecast (37-Day: Historical vs. ML Forecast)')"
+                            title="Inspect / Expand Chart" aria-label="Expand forecast chart">
+                        <i class="bi bi-arrows-fullscreen"></i>
+                    </button>
+                </div>
+                <div class="av-chart-box">
+                    <canvas id="visitorChart" height="180"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="av-panel h-100 mb-0">
+                <div class="av-panel-head">
+                    <span>Peak Arrival Heatmap</span>
+                    <button type="button" class="btn btn-sm btn-light p-1"
+                            onclick="zoomChart('peakHourChart', 'Peak Arrival Heatmap (Hourly Civilian Distribution)')"
+                            title="Inspect / Expand Chart" aria-label="Expand heatmap chart">
+                        <i class="bi bi-arrows-fullscreen"></i>
+                    </button>
+                </div>
+                <div class="av-chart-box">
+                    <canvas id="peakHourChart" height="200"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="av-panel h-100 mb-0">
+                <div class="av-panel-head"><span>Attrition Funnel</span></div>
+                <div class="av-chart-box">
+                    <canvas id="attritionFunnel" height="200"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- FEEDBACK INSIGHTS: ROOT CAUSE MATRIX (Director Only) -->
+    <div class="av-panel" th:if="${isDirector}">
+        <div class="av-panel-head">
+            <span><i class="bi bi-diagram-3 me-2"></i>Feedback Insights &middot; Root Cause Matrix</span>
+            <div class="d-flex align-items-center gap-2">
+                <span class="av-label"><span th:text="${complaintCount}">0</span> Complaints</span>
+                <button type="button" class="btn btn-sm btn-light" data-bs-toggle="modal" data-bs-target="#zoneModal">
+                    <i class="bi bi-geo-alt"></i> Manage Zones
+                </button>
+            </div>
+        </div>
+        <div class="row g-0">
+            <div class="col-md-6">
+                <div class="av-chart-box">
+                    <div class="av-label mb-2">Complaints by Topic</div>
+                    <div class="av-chart-fixed"><canvas id="complaintTopicChart" height="200"></canvas></div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="av-chart-box">
+                    <div class="av-label mb-2">Complaints by Zone</div>
+                    <div class="av-chart-fixed"><canvas id="complaintZoneChart" height="200"></canvas></div>
+                </div>
+            </div>
+        </div>
+        <div class="av-panel-body" th:if="${!rootCauseRows.isEmpty()}">
+            <div class="av-label mb-2">Zone &times; Topic</div>
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead>
+                        <tr>
+                            <th scope="col">Zone</th>
+                            <th scope="col" class="text-end" th:each="t : ${insightTopicLabels}" th:text="${t}">Topic</th>
+                            <th scope="col" class="text-end">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="row : ${rootCauseRows}">
+                            <td th:text="${row.zone}">Zone</td>
+                            <td class="text-end av-mono" th:each="c : ${row.counts}" th:classappend="${c == 0} ? 'av-muted' : 'fw-bold'" th:text="${c}">0</td>
+                            <td class="text-end av-mono fw-bold" th:text="${row.total}">0</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div th:if="${complaintCount == 0}" class="av-empty av-empty--ok">
+            <i class="bi bi-check2-circle"></i>
+            No complaints recorded. Negative reviews and 1&ndash;2 star ratings will appear here.
+        </div>
+    </div>
+
+    <!-- VISITOR FEEDBACK & RATING (Director Only) -->
+    <div class="av-panel" th:if="${isDirector}">
+        <div class="av-panel-head">
+            <span><i class="bi bi-star-fill text-warning me-2"></i>Live Visitor Feedback</span>
+            <div class="av-rating-summary">
+                <span class="av-label"><span th:text="${reviewCount}">0</span> Total Reports</span>
+                <span class="avg"><span th:text="${averageRating}">0.0</span> <span class="av-label">AVG</span></span>
+            </div>
+        </div>
+        <!-- Feed controls: client-side search + sort (script at the bottom of the page) -->
+        <div class="av-panel-body border-bottom" th:if="${reviewCount > 0}">
+            <div class="row g-3 align-items-end">
+                <div class="col-12 col-md-5">
+                    <label class="av-label d-block mb-1" for="feedSearch">Search by Name</label>
+                    <input type="search" id="feedSearch" class="form-control form-control-sm" placeholder="e.g. Dela Cruz" autocomplete="off">
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="av-label d-block mb-1" for="feedSortRating">Sort by Rating</label>
+                    <select id="feedSortRating" class="form-select form-select-sm">
+                        <option value="" selected>Any rating</option>
+                        <option value="desc">Highest First</option>
+                        <option value="asc">Lowest First</option>
+                    </select>
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="av-label d-block mb-1" for="feedSortDate">Sort by Date</label>
+                    <select id="feedSortDate" class="form-select form-select-sm">
+                        <option value="desc">Newest First</option>
+                        <option value="asc">Oldest First</option>
+                    </select>
+                </div>
+                <div class="col-12 col-md-1 text-md-end">
+                    <span id="feedCount" class="av-label av-mono" aria-live="polite"></span>
+                </div>
+            </div>
+        </div>
+        <div class="av-feed" id="feedbackFeed">
+            <div th:each="v : ${feedbackVisitors}" th:if="${v.rating != null}" class="av-feed-item"
+                 th:data-id="${v.id}" th:data-name="${v.name}" th:data-rating="${v.rating}"
+                 th:data-date="${v.checkOutTime != null ? v.checkOutTime : v.visitDate}">
+                <div class="av-feed-item-head">
+                    <span class="av-feed-name" th:text="${v.name}">Visitor Name</span>
+                    <span class="av-stars" th:attr="aria-label=${v.rating} + ' of 5 stars'">
+                        <span th:each="i : ${#numbers.sequence(1, v.rating)}">★</span>
+                    </span>
+                </div>
+                <p class="av-feed-quote" th:text="${v.feedback != '' ? '&quot;' + v.feedback + '&quot;' : 'No written comment provided.'}"></p>
+            </div>
+
+            <div id="feedNoMatch" class="av-empty d-none" th:if="${reviewCount > 0}">
+                <i class="bi bi-search"></i>
+                No reviews match that name.
+            </div>
+
+            <!-- Fallback if no reviews exist -->
+            <div th:if="${reviewCount == 0}" class="av-empty">
+                <i class="bi bi-chat-square-text"></i>
+                No feedback reports have been submitted yet.
+            </div>
+        </div>
+    </div>
+
+</div>
+<footer class="av-footer">
+    <span class="av-footer-version">AeroVisit OS v1.2.0-prod</span>
+    <span><i class="bi bi-shield-lock me-1"></i>Secured via Role-Based Access Control &amp; Encrypted Passwords.</span>
+    <span>&copy; 2026 PAF Aerospace Museum.</span>
+</footer>
+</main>
+
+<!-- Explainable AI (XAI) Diagnostics Modal with NLP Summary -->
+<div class="modal fade" id="xaiModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title mb-0"><i class="bi bi-cpu me-2"></i>Explainable AI (XAI) Diagnostics</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+
+            <div class="modal-body av-modal-well p-4">
+                <div class="av-xai-summary" role="note">
+                    <i class="bi bi-info-square-fill"></i>
+                    <div>
+                        <strong class="av-label d-block mb-1">Executive Summary</strong>
+                        Based on historical traffic and the current <span class="fw-bold text-lowercase" th:text="${liveWeather != null ? liveWeather : 'nominal'}"></span> weather conditions, the AI's 100 decision trees predict <strong th:text="${walkIns}">0</strong> walk-ins. Combined with <strong th:text="${preBooked}">0</strong> scheduled online reservations, the system expects <strong th:text="${totalPrediction}">0</strong> total civilians today with a <strong class="text-success" th:text="${confidencePercentage} + '%'">0%</strong> statistical confidence level.
+                    </div>
+                </div>
+
+                <p class="av-small av-muted mb-3">
+                    This matrix details the live variables and statistical computations processed by the backend <strong class="text-dark">Random Forest Ensemble Regressor</strong> to generate today's operational forecast.
+                </p>
+
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="av-panel h-100 mb-0">
+                            <div class="av-panel-head"><span>01 &middot; Live Data Ingestion</span></div>
+                            <div class="av-panel-body py-2">
+                                <ul class="av-kv">
+                                    <li><span>Temporal Weight (Day)</span> <strong>Current Weekday</strong></li>
+                                    <li><span>Environmental Telemetry</span> <strong th:text="${liveWeather}">Clear</strong></li>
+                                    <li><span>Portal Pre-Booked</span> <strong th:text="${preBooked} + ' Civilians'">0</strong></li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="av-panel h-100 mb-0">
+                            <div class="av-panel-head"><span>02 &middot; Ensemble Processing</span></div>
+                            <div class="av-panel-body py-2">
+                                <ul class="av-kv">
+                                    <li><span>Algorithm</span> <strong>Random Forest</strong></li>
+                                    <li><span>Active Decision Trees</span> <strong>100 Trees</strong></li>
+                                    <li><span>Statistical Variance</span> <strong>1.5 Std. Deviations</strong></li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <div class="av-panel av-panel--accent mb-0">
+                            <div class="av-panel-head"><span>03 &middot; Final Computation Output</span></div>
+                            <div class="av-panel-body">
+                                <div class="av-equation">
+                                    <div><div class="av-label mb-1">Walk-In Median</div><div class="num" th:text="${walkIns}">0</div></div>
+                                    <div class="op">+</div>
+                                    <div><div class="av-label mb-1">Known Pre-Booked</div><div class="num" th:text="${preBooked}">0</div></div>
+                                    <div class="op">=</div>
+                                    <div><div class="av-label mb-1">Total Expected</div><div class="num is-total" th:text="${totalPrediction}">0</div></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Manage Zones Modal (Director): areas offered on the visitor feedback form -->
+<div class="modal fade" id="zoneModal" tabindex="-1" aria-labelledby="zoneModalTitle" aria-hidden="true" th:if="${isDirector}">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title mb-0" id="zoneModalTitle"><i class="bi bi-geo-alt me-2"></i>Manage Museum Zones</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="av-small av-muted">Active zones appear in the visitor feedback form. Disabling a zone hides it from the form but keeps its past feedback in the matrix.</p>
+                <form id="zoneAddForm" class="d-flex gap-2 mb-3">
+                    <label for="zoneNameInput" class="visually-hidden">New zone name</label>
+                    <input type="text" id="zoneNameInput" class="form-control" maxlength="60" placeholder="e.g. Hangar 2 Restoration Bay" required>
+                    <button type="submit" class="btn btn-primary text-nowrap"><i class="bi bi-plus-lg"></i> Add</button>
+                </form>
+                <div id="zoneError" class="alert alert-danger py-2 av-small d-none" role="alert"></div>
+                <ul id="zoneList" class="list-group">
+                    <li class="list-group-item av-muted av-small">Loading zones…</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Chart Inspection Modal -->
+<div class="modal fade" id="chartInspectModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title mb-0" id="chartModalTitle">
+                    <i class="bi bi-bar-chart-line me-2"></i>Telemetry Deep Dive
+                </h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-4">
+                <div class="av-chart-modal-canvas">
+                    <canvas id="zoomedCanvas"></canvas>
+                </div>
+            </div>
+            <div class="modal-footer d-flex justify-content-between">
+                <small class="av-label"><i class="bi bi-info-circle me-1"></i> Interactive data inspection view for Command Briefings.</small>
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<th:block th:replace="~{fragments/shell :: scripts}"></th:block>
+
+<!-- Chart Expansion Script -->
+<script>
+    let zoomChartInstance = null;
+
+    function zoomChart(sourceCanvasId, titleText) {
+        const sourceCanvas = document.getElementById(sourceCanvasId);
+        if (!sourceCanvas) return;
+
+        const originalChart = Chart.getChart(sourceCanvas);
+        if (!originalChart) return;
+
+        document.getElementById('chartModalTitle').innerHTML = '<i class="bi bi-graph-up-arrow me-2"></i> ' + titleText;
+
+        const modalCanvas = document.getElementById('zoomedCanvas');
+        const ctx = modalCanvas.getContext('2d');
+
+        if (zoomChartInstance) {
+            zoomChartInstance.destroy();
+        }
+
+        const clonedConfig = {
+            type: originalChart.config.type,
+            data: JSON.parse(JSON.stringify(originalChart.config.data)),
+            options: {
+                ...originalChart.config.options,
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    ...originalChart.config.options.plugins,
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: { font: { size: 13, weight: 'bold' } }
+                    }
+                }
+            }
+        };
+
+        zoomChartInstance = new Chart(ctx, clonedConfig);
+
+        const modal = new bootstrap.Modal(document.getElementById('chartInspectModal'));
+        modal.show();
+    }
+</script>
+
+<script th:inline="javascript">
+    /*<![CDATA[*/
+    var isDirector = /*[[${isDirector}]]*/ false;
+
+    // Colours resolve from theme tokens (theme.css) and re-apply on theme toggle (shell.js).
+    var C = AeroShell.color;
+    var GRID = { color: C('--chart-grid') };
+
+    if (isDirector) {
+
+        // 1. Forecast Chart
+        var chartDates = /*[[${chartDates}]]*/ [];
+        var chartHistorical = /*[[${chartHistorical}]]*/ [];
+        var chartPredictive = /*[[${chartPredictive}]]*/ [];
+
+        // Dates arrive as "2026-10-11"; parsed as a local date so the label never shifts a day with the time zone
+        function forecastDate(iso) {
+            var p = String(iso).split('-');
+            var d = new Date(+p[0], +p[1] - 1, +p[2]);
+            return isNaN(d) ? String(iso) : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+        }
+
+        var ctx1 = document.getElementById('visitorChart').getContext('2d');
+        new Chart(ctx1, {
+            type: 'line',
+            data: {
+                labels: chartDates,
+                datasets: [
+                    {
+                        label: 'Historical Data',
+                        data: chartHistorical,
+                        borderColor: C('--chart-1'),
+                        backgroundColor: C('--chart-1/0.1'),
+                        pointBackgroundColor: C('--chart-1'),
+                        pointBorderColor: C('--bg-raised'),
+                        avColors: { borderColor: '--chart-1', backgroundColor: '--chart-1/0.1',
+                                    pointBackgroundColor: '--chart-1', pointBorderColor: '--bg-raised' },
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3,
+                        // smooth, but never bends above/below the real values (plain tension overshoots, even under zero)
+                        cubicInterpolationMode: 'monotone',
+                        // 30 daily points: slightly smaller dots so they don't merge into a band on a narrow panel
+                        pointRadius: 3,
+                        pointHoverRadius: 6,
+                        pointBorderWidth: 1
+                    },
+                    {
+                        label: 'ML Forecast',
+                        data: chartPredictive,
+                        borderColor: C('--chart-2'),
+                        backgroundColor: C('--chart-2/0.1'),
+                        pointBackgroundColor: C('--chart-2'),
+                        pointBorderColor: C('--bg-raised'),
+                        avColors: { borderColor: '--chart-2', backgroundColor: '--chart-2/0.1',
+                                    pointBackgroundColor: '--chart-2', pointBorderColor: '--bg-raised' },
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        fill: true,
+                        tension: 0.3,
+                        cubicInterpolationMode: 'monotone',
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                        pointBorderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                // Hovering anywhere above a date shows that date's values (no need to hit a 3-4 px dot exactly)
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: true, position: 'top', labels: { boxWidth: 12, usePointStyle: true, font: { size: 11 } } },
+                    tooltip: {
+                        // Skip empty values, and the forecast's copy of today's figure (it only joins the two lines)
+                        filter: function (item) {
+                            if (item.parsed.y === null || item.parsed.y === undefined) return false;
+                            var historical = item.chart.data.datasets[0].data[item.dataIndex];
+                            return !(item.datasetIndex === 1 && historical !== null && historical !== undefined);
+                        },
+                        callbacks: {
+                            title: function (items) {
+                                if (!items.length) return '';
+                                var forecastOnly = items.every(function (i) { return i.datasetIndex === 1; });
+                                return forecastDate(items[0].label) + (forecastOnly ? '  (forecast)' : '');
+                            },
+                            label: function (item) {
+                                var n = Math.round(item.parsed.y);
+                                var who = n === 1 ? ' visitor' : ' visitors';
+                                return ' ' + (item.datasetIndex === 1 ? 'Forecast: ' : 'Actual: ') + n.toLocaleString('en-US') + who;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { grid: { color: C('--chart-grid'), drawTicks: false }, ticks: { font: { size: 10 }, maxTicksLimit: 7, padding: 6 } },
+                    // precision 0 = whole-number ticks only, spaced automatically (a fixed step of 1 crowded the axis on busy days)
+                    y: { grid: GRID, border: { display: false }, beginAtZero: true, ticks: { font: { size: 10 }, precision: 0 },
+                         title: { display: true, text: 'Visitors', font: { size: 10 } } }
+                }
+            }
+        });
+
+        // 2. Peak Hour Heatmap Chart
+        var peakLabels = /*[[${peakHourLabels}]]*/ [];
+        var peakData = /*[[${peakHourData}]]*/ [];
+        var ctx2 = document.getElementById('peakHourChart').getContext('2d');
+        new Chart(ctx2, {
+            type: 'bar',
+            data: {
+                labels: peakLabels,
+                datasets: [{
+                    label: 'Arrivals',
+                    data: peakData,
+                    backgroundColor: C('--chart-1'),
+                    avColors: { backgroundColor: '--chart-1' },
+                    borderRadius: 0
+                }]
+            },
+            options: {
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { size: 9 }, maxRotation: 45, minRotation: 45 } },
+                    y: { grid: GRID, beginAtZero: true, ticks: { font: { size: 10 }, stepSize: 1 } }
+                }
+            }
+        });
+
+        // 3. Attrition Funnel Chart
+        var totalReg = /*[[${totalRegistered}]]*/ 0;
+        var totalApp = /*[[${totalApproved}]]*/ 0;
+        var totalCheck = /*[[${totalCheckedIn}]]*/ 0;
+
+        var ctxFunnel = document.getElementById('attritionFunnel').getContext('2d');
+        new Chart(ctxFunnel, {
+            type: 'bar',
+            data: {
+                labels: ['1. Portal Registered', '2. Admin Approved', '3. Base Checked-In'],
+                datasets: [{
+                    data: [totalReg, totalApp, totalCheck],
+                    backgroundColor: [C('--chart-muted'), C('--chart-2'), C('--chart-1')],
+                    avColors: { backgroundColor: ['--chart-muted', '--chart-2', '--chart-1'] },
+                    borderRadius: 0,
+                    barPercentage: 0.5
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                indexAxis: 'y',
+                scales: {
+                    x: { beginAtZero: true, display: false },
+                    y: { grid: { display: false }, ticks: { font: { size: 10 } } }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) { return " " + context.raw + " Civilians"; }
+                        }
+                    }
+                }
+            }
+        });
+
+        // 4. Feedback Insights: complaints by topic / by zone (Root Cause Matrix)
+        var topicLabels = /*[[${insightTopicLabels}]]*/ [];
+        var topicData = /*[[${insightTopicData}]]*/ [];
+        var zoneLabels = /*[[${insightZoneLabels}]]*/ [];
+        var zoneData = /*[[${insightZoneData}]]*/ [];
+        var complaintBars = function (canvasId, labels, data, token) {
+            new Chart(document.getElementById(canvasId).getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{ label: 'Complaints', data: data, backgroundColor: C(token), avColors: { backgroundColor: token }, borderRadius: 0, barPercentage: 0.6 }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    maintainAspectRatio: false, // fills the fixed-height .av-chart-fixed box
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { grid: GRID, beginAtZero: true, ticks: { font: { size: 10 }, stepSize: 1 } },
+                        y: { grid: { display: false }, ticks: { font: { size: 10 } } }
+                    }
+                }
+            });
+        };
+        complaintBars('complaintTopicChart', topicLabels, topicData, '--chart-3');
+        complaintBars('complaintZoneChart', zoneLabels, zoneData, '--chart-1');
+    }
+    /*]]>*/
+</script>
+
+<!-- Live Visitor Feedback: search by name + sort by rating / date, no reload.
+     Order: rating (when chosen), then date, then newest record id, so ties always land the same way. -->
+<script>
+    (function () {
+        var feed = document.getElementById('feedbackFeed');
+        var search = document.getElementById('feedSearch');
+        if (!feed || !search) return;
+        var ratingSort = document.getElementById('feedSortRating');
+        var dateSort = document.getElementById('feedSortDate');
+        var noMatch = document.getElementById('feedNoMatch');
+        var count = document.getElementById('feedCount');
+        var items = Array.prototype.slice.call(feed.querySelectorAll('.av-feed-item'));
+
+        function byRating(a, b) {
+            if (!ratingSort.value) return 0;
+            var d = Number(a.dataset.rating) - Number(b.dataset.rating);
+            return ratingSort.value === 'asc' ? d : -d;
+        }
+        function byDate(a, b) {
+            var x = a.dataset.date || '', y = b.dataset.date || ''; // ISO text sorts chronologically
+            var d = x < y ? -1 : (x > y ? 1 : 0);
+            return dateSort.value === 'asc' ? d : -d;
+        }
+        function byId(a, b) { return Number(b.dataset.id) - Number(a.dataset.id); }
+
+        function sortItems() {
+            items.sort(function (a, b) { return byRating(a, b) || byDate(a, b) || byId(a, b); });
+            items.forEach(function (item) { feed.insertBefore(item, noMatch); });
+        }
+
+        function filterItems() {
+            var term = search.value.trim().toLowerCase();
+            var shown = 0;
+            items.forEach(function (item) {
+                var match = !term || (item.dataset.name || '').toLowerCase().indexOf(term) !== -1;
+                item.classList.toggle('d-none', !match);
+                if (match) shown++;
+            });
+            noMatch.classList.toggle('d-none', shown > 0);
+            count.textContent = shown + '/' + items.length;
+        }
+
+        search.addEventListener('input', filterItems);
+        ratingSort.addEventListener('change', sortItems);
+        dateSort.addEventListener('change', sortItems);
+        sortItems();
+        filterItems();
+    })();
+</script>
+
+<!-- Manage Zones: GET /api/zones/all, POST /api/zones, PATCH /api/zones/{id} -->
+<script>
+    (function () {
+        var modal = document.getElementById('zoneModal');
+        if (!modal) return;
+        var list = document.getElementById('zoneList');
+        var errorBox = document.getElementById('zoneError');
+        var nameInput = document.getElementById('zoneNameInput');
+
+        function showError(message) {
+            errorBox.textContent = message || '';
+            errorBox.classList.toggle('d-none', !message);
+        }
+
+        function request(method, url, body) {
+            return fetch(url, {
+                method: method,
+                headers: AeroCsrf.headers({ 'Content-Type': 'application/json', 'Accept': 'application/json' }),
+                body: body ? JSON.stringify(body) : undefined
+            }).then(function (res) {
+                return res.json().catch(function () { return {}; }).then(function (data) {
+                    if (!res.ok) throw new Error(data.error || ('Request failed (HTTP ' + res.status + ').'));
+                    return data;
+                });
+            });
+        }
+
+        function render(zones) {
+            list.innerHTML = '';
+            if (!zones.length) {
+                var empty = document.createElement('li');
+                empty.className = 'list-group-item av-muted av-small';
+                empty.textContent = 'No zones yet. Add the first one above.';
+                list.appendChild(empty);
+                return;
+            }
+            zones.forEach(function (zone) {
+                var item = document.createElement('li');
+                item.className = 'list-group-item d-flex justify-content-between align-items-center gap-2';
+
+                var name = document.createElement('span');
+                name.textContent = zone.name;
+                if (!zone.isActive) name.className = 'av-muted text-decoration-line-through';
+
+                var right = document.createElement('span');
+                right.className = 'd-flex align-items-center gap-2';
+                var badge = document.createElement('span');
+                badge.className = 'av-badge ' + (zone.isActive ? 'badge-approved' : 'badge-checked-out');
+                badge.textContent = zone.isActive ? 'Active' : 'Disabled';
+                var toggle = document.createElement('button');
+                toggle.type = 'button';
+                toggle.className = 'btn btn-sm ' + (zone.isActive ? 'btn-outline-danger' : 'btn-outline-secondary');
+                toggle.textContent = zone.isActive ? 'Disable' : 'Enable';
+                toggle.setAttribute('aria-label', (zone.isActive ? 'Disable ' : 'Enable ') + zone.name);
+                toggle.addEventListener('click', function () {
+                    toggle.disabled = true;
+                    request('PATCH', '/api/zones/' + zone.id, { active: !zone.isActive })
+                        .then(function () { showError(''); load(); })
+                        .catch(function (e) { toggle.disabled = false; showError(e.message); });
+                });
+
+                right.appendChild(badge);
+                right.appendChild(toggle);
+                item.appendChild(name);
+                item.appendChild(right);
+                list.appendChild(item);
+            });
+        }
+
+        function load() {
+            request('GET', '/api/zones/all').then(render).catch(function (e) { showError(e.message); });
+        }
+
+        document.getElementById('zoneAddForm').addEventListener('submit', function (event) {
+            event.preventDefault();
+            var name = nameInput.value.trim();
+            if (!name) return;
+            request('POST', '/api/zones', { name: name })
+                .then(function () { nameInput.value = ''; showError(''); load(); })
+                .catch(function (e) { showError(e.message); });
+        });
+
+        modal.addEventListener('show.bs.modal', function () { showError(''); load(); });
+    })();
+</script>
+
+<script>
+    // 📱 Keep every chart sized to its panel when a tablet rotates or the window resizes (some charts on this page don't
+    // pick up their panel's new width on their own)
+    (function () {
+        let timer = null;
+        const refit = () => { clearTimeout(timer); timer = setTimeout(() => Object.values(Chart.instances).forEach(c => c.resize()), 150); };
+        window.addEventListener('resize', refit);
+        window.matchMedia('(orientation: portrait)').addEventListener('change', refit);
+    })();
+</script>
+</body>
+</html>

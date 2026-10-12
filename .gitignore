@@ -1,0 +1,83 @@
+# =========================================================
+# AeroVisit monorepo - root .gitignore
+# =========================================================
+
+# --- SECRETS: never commit real credentials ---
+# Matches .env, *.env and any .env copy (.env.local, .env.before-recaptcha-fix, ...)
+.env
+.env.*
+*.env
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+secrets/
+# Local-only overrides, if one is ever created
+application-local.properties
+application-*.local.properties
+# NOTE: application.properties is intentionally tracked - it only holds
+# ${ENV_VAR:fallback} placeholders; the real values live in .env.
+
+# --- SECURITY: visitor data (ID photos, selfies, QR codes) ---
+uploads/*
+**/uploads/*
+!**/uploads/.gitkeep
+
+# --- Build outputs / compiled binaries ---
+target/
+bin/
+out/
+build/
+dist/
+*.class
+*.jar
+*.war
+!.mvn/wrapper/maven-wrapper.jar
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# --- Databases & logs ---
+*.db
+*.mv.db
+*.trace.db
+*.sqlite
+*.log
+logs/
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.iml
+*.iws
+*.ipr
+*.code-workspace
+.settings/
+.project
+.classpath
+.factorypath
+.sts4-cache/
+.hintrc
+
+# --- AI-assistant tooling (local only) ---
+.claude/
+.agents/
+skills-lock.json
+
+# --- Local backups & scratch copies ---
+backup-*/
+*.bak
+*.bak-*
+*.orig
+
+# --- OS generated ---
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini

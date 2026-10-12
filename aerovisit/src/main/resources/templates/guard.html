@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/shell :: head}"></th:block>
+    <title>Gate Dashboard - AeroVisit</title>
+    <script src="/js/shell.js"></script>
+</head>
+<body class="av-app">
+
+<a href="#main" class="visually-hidden-focusable">Skip to content</a>
+<th:block th:replace="~{fragments/shell :: sidebar('gate')}"></th:block>
+<th:block th:replace="~{fragments/shell :: header('Gate Dashboard')}"></th:block>
+
+<main class="av-main" id="main">
+<div class="av-workspace">
+
+    <div class="av-pagehead">
+        <div>
+            <span class="av-mono av-code">GATE-01</span>
+            <h1 class="av-pagehead-title">Gate Dashboard</h1>
+            <p class="av-pagehead-desc">Today's gate: expected arrivals, visitors inside and visitors who have left. Booking approvals and ID reviews are handled by the Director.</p>
+        </div>
+        <div class="av-pagehead-actions">
+            <a th:if="${isGuard}" href="/admin/scanner" class="btn btn-primary"><i class="bi bi-qr-code-scan"></i> Open Scanner</a>
+        </div>
+    </div>
+
+    <!-- TOOLBAR: the only three groups a guard can see -->
+    <div class="av-toolbar">
+        <nav class="av-tabs" aria-label="Gate view">
+            <a href="/guard/dashboard?tab=expected" class="av-tab" th:classappend="${tab == 'expected'} ? 'is-active'" th:attr="aria-current=${tab == 'expected'} ? 'page'">
+                <i class="bi bi-box-arrow-in-right"></i> Expected Arrivals <span class="count" th:text="'(' + ${expectedCount} + ')'">(0)</span></a>
+            <a href="/guard/dashboard?tab=inside" class="av-tab" th:classappend="${tab == 'inside'} ? 'is-active'" th:attr="aria-current=${tab == 'inside'} ? 'page'">
+                <i class="bi bi-door-open"></i> Inside Now <span class="count" th:text="'(' + ${insideCount} + ')'">(0)</span></a>
+            <a href="/guard/dashboard?tab=left" class="av-tab" th:classappend="${tab == 'left'} ? 'is-active'" th:attr="aria-current=${tab == 'left'} ? 'page'">
+                <i class="bi bi-box-arrow-right"></i> Left Today <span class="count" th:text="'(' + ${leftCount} + ')'">(0)</span></a>
+        </nav>
+        <div class="av-toolbar-meta av-mono">
+            <span>Inside <b class="text-dark" th:text="${headcountInside}">0</b> · <span th:text="${#temporals.format(today, 'EEE, MMM d')}"></span></span>
+        </div>
+    </div>
+
+    <!-- Alerts (also the result of a check-out, denial or ban made from this page) -->
+    <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
+        <i class="bi bi-check-square-fill"></i> <span th:text="${success}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+        <i class="bi bi-exclamation-triangle-fill"></i> <span th:text="${error}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+
+    <!-- Least privilege: names, reference IDs, group size and times only; no contact details, no ID photos, no approvals -->
+    <div class="av-panel overflow-hidden">
+        <div class="av-panel-head">
+            <span th:switch="${tab}">
+                <th:block th:case="'inside'"><i class="bi bi-door-open me-2"></i>Visitors Inside the Facility</th:block>
+                <th:block th:case="'left'"><i class="bi bi-box-arrow-right me-2"></i>Checked Out Today</th:block>
+                <th:block th:case="*"><i class="bi bi-box-arrow-in-right me-2"></i>Approved Arrivals for Today</th:block>
+            </span>
+            <span class="av-label">Gate operations</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-custom mb-0 av-gate-table" id="gateTable">
+                <thead>
+                    <tr>
+                        <th>Visitor</th>
+                        <th>Visit</th>
+                        <th>Status</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="visitor : ${visitors}">
+                        <td>
+                            <div class="av-person-name" th:text="${visitor.name}"></div>
+                            <div class="av-person-meta av-mono" th:text="${visitor.referenceId != null ? visitor.referenceId : 'No reference ID'}"></div>
+                            <span th:if="${visitor.masterBooking}" class="av-badge av-badge--verified mt-1">Master Booking</span>
+                            <span th:if="${visitor.groupSize > 1}" class="av-badge av-badge--info mt-1" th:text="'Group of ' + ${visitor.groupSize}"></span>
+                        </td>
+
+                        <td>
+                            <div class="av-cell-strong" th:text="${visitor.timeWindow != null ? visitor.timeWindow : 'Any time today'}"></div>
+                            <div class="av-cell-sub av-mono" th:if="${visitor.checkInTime != null}">
+                                <i class="bi bi-clock"></i> <span th:text="'In ' + ${#temporals.format(visitor.checkInTime, 'hh:mm a')}"></span>
+                                <span th:if="${visitor.checkOutTime != null}" th:text="' · Out ' + ${#temporals.format(visitor.checkOutTime, 'hh:mm a')}"></span>
+                            </div>
+                        </td>
+
+                        <td>
+                            <span th:if="${visitor.status == 'APPROVED'}" class="badge-soft badge-approved"><i class="bi bi-patch-check-fill"></i> Expected</span>
+                            <span th:if="${visitor.status == 'CHECKED-IN'}" class="badge-soft badge-checked-in">Inside</span>
+                            <span th:if="${visitor.status == 'CHECKED-OUT'}" class="badge-soft badge-checked-out">Left</span>
+                        </td>
+
+                        <td class="text-end">
+                            <div class="av-actions">
+                                <!-- APPROVED: turn the pass away today (no ban); the QR stops working -->
+                                <button th:if="${visitor.status == 'APPROVED'}" type="button" class="btn btn-sm btn-danger"
+                                        data-bs-toggle="modal" data-bs-target="#denyModal"
+                                        th:attr="data-deny-id=${visitor.id},data-deny-name=${visitor.name}">
+                                    <i class="bi bi-shield-x"></i> Deny Entry</button>
+
+                                <!-- CHECKED-IN: log the exit now, whether they are leaving or being escorted out -->
+                                <form th:if="${visitor.status == 'CHECKED-IN' and visitor.referenceId != null}" th:action="@{/admin/manual-checkin}" method="post" class="m-0"
+                                      th:attr="data-confirm-name=${visitor.name}" onsubmit="return confirm('Check out ' + this.getAttribute('data-confirm-name') + ' now? This ends the visit immediately.');">
+                                    <input type="hidden" name="referenceId" th:value="${visitor.referenceId}">
+                                    <button type="submit" class="btn btn-sm btn-outline-primary" title="Log the exit now (also used to evict)">
+                                        <i class="bi bi-box-arrow-right"></i> Check Out / Evict</button>
+                                </form>
+
+                                <!-- All three groups: the full biometric ban (needs the booking's face data) -->
+                                <button th:if="${visitor.faceEncoding != null}" type="button" class="btn btn-sm btn-outline-danger"
+                                        data-bs-toggle="modal" data-bs-target="#banModal"
+                                        th:attr="data-ban-url=@{/admin/biometric-ban/{id}(id=${visitor.id})},data-ban-name=${visitor.name}">
+                                    <i class="bi bi-person-x"></i> Ban</button>
+                                <button th:if="${visitor.faceEncoding == null}" type="button" class="btn btn-sm btn-outline-danger" disabled
+                                        title="No face data on file for this booking, so it can't be banned">
+                                    <i class="bi bi-person-x"></i> Ban</button>
+                            </div>
+                        </td>
+                    </tr>
+
+                    <tr th:if="${visitors.isEmpty()}">
+                        <td colspan="4" class="av-empty av-empty--ok" th:switch="${tab}">
+                            <i class="bi bi-check2-square"></i>
+                            <th:block th:case="'inside'"><span class="fw-semibold text-dark d-block">Nobody is inside right now.</span></th:block>
+                            <th:block th:case="'left'"><span class="fw-semibold text-dark d-block">Nobody has checked out yet today.</span></th:block>
+                            <th:block th:case="*"><span class="fw-semibold text-dark d-block">No more approved arrivals today.</span></th:block>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+</main>
+
+<!-- 🛑 DENY ENTRY: one dialog for every expected arrival, filled by the script below from the clicked button -->
+<div class="modal fade" id="denyModal" tabindex="-1" aria-labelledby="denyModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header av-modal--danger">
+                <h5 class="modal-title" id="denyModalTitle"><i class="bi bi-shield-x me-2"></i>Deny Entry</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="denyForm" action="/admin/deny-entry" method="post">
+                <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                <div class="modal-body text-start">
+                    <p class="av-small av-muted mb-3">Target: <strong class="text-dark" id="denyModalName"></strong></p>
+                    <input type="hidden" name="visitorId" id="denyVisitorId">
+                    <div class="mb-3">
+                        <label class="form-label" for="denyReason">Reason for Denial</label>
+                        <select id="denyReason" name="reason" class="form-select form-select-sm" required>
+                            <option value="" disabled selected>Select an official reason...</option>
+                            <option value="ID does not match lead booker">ID does not match lead booker</option>
+                            <option value="Expired or invalid ID presented">Expired or invalid ID presented</option>
+                            <option value="Group does not match manifest">Group does not match manifest</option>
+                            <option value="Unregistered person in group">Unregistered person in group</option>
+                            <option value="Security concern">Security concern</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="denyNotes">Guard Notes (Optional)</label>
+                        <textarea id="denyNotes" name="notes" class="form-control form-control-sm" rows="3" maxlength="400" placeholder="e.g. 2 of 4 guests had no matching ID"></textarea>
+                    </div>
+                    <p class="av-small text-danger mb-0"><i class="bi bi-exclamation-triangle me-1"></i>This is final for today's pass: the QR code stops working. It is not a ban; use Ban for that.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Deny Entry</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div th:replace="~{fragments/ban :: banDialog}"></div>
+
+<th:block th:replace="~{fragments/shell :: scripts}"></th:block>
+<th:block th:replace="~{fragments/ban :: banDialogScript}"></th:block>
+<script>
+// Deny dialog: Bootstrap passes the clicked "Deny Entry" button as relatedTarget; the name goes in as text, never HTML.
+// No visitor id until a row was chosen, so the form can't deny the wrong person.
+(function () {
+    var modal = document.getElementById('denyModal');
+    if (!modal) return;
+    var form = document.getElementById('denyForm');
+    var idInput = document.getElementById('denyVisitorId');
+    modal.addEventListener('show.bs.modal', function (event) {
+        var button = event.relatedTarget;
+        if (!button) return;
+        idInput.value = button.getAttribute('data-deny-id') || '';
+        document.getElementById('denyModalName').textContent = button.getAttribute('data-deny-name') || '';
+        document.getElementById('denyReason').selectedIndex = 0;
+        document.getElementById('denyNotes').value = '';
+    });
+    modal.addEventListener('hidden.bs.modal', function () { idInput.value = ''; });
+    form.addEventListener('submit', function (e) { if (!idInput.value) e.preventDefault(); });
+})();
+</script>
+</body>
+</html>

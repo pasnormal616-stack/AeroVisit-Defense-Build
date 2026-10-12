@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<!--
+    AeroVisit Visitor Portal fragments — shared head, floating island nav and footer.
+    Usage:
+      <head> <th:block th:replace="~{fragments/visitor :: head}"></th:block> <title>…</title> </head>
+      <body class="vp"> <th:block th:replace="~{fragments/visitor :: topnav(true)}"></th:block> …
+    nav(onHome): true on the booking page (links drive the in-page tabs), false elsewhere.
+    Immersive pages (body class "vp vp--immersive") also include, right after the nav:
+      preloader (booking page only) and backdrop — see the fragments below.
+    Slideshow photos: none are bundled, so the backdrop shows its photo-free PAF navy sky (visitor.css,
+    .vp-slide--fallback). To add photos, put JPGs in static/images/ and add one
+    <div class="vp-slide" data-src="/images/x.jpg" data-caption="…" data-kicker="…"></div> per photo below.
+-->
+<head>
+    <th:block th:fragment="head">
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+        <meta name="color-scheme" content="light dark">
+        <link rel="icon" type="image/png" href="/images/paflogo.png">
+        <script src="/js/theme.js"></script>
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+        <link rel="stylesheet" href="/styles/theme.css">
+        <link rel="stylesheet" href="/styles/visitor.css">
+        <!-- CSRF token for fetch() POSTs (read by /js/csrf.js -> AeroCsrf.headers) -->
+        <meta name="_csrf" th:if="${_csrf != null}" th:content="${_csrf.token}">
+        <meta name="_csrf_header" th:if="${_csrf != null}" th:content="${_csrf.headerName}">
+        <script src="/js/csrf.js"></script>
+    </th:block>
+</head>
+<body class="vp">
+
+<div th:fragment="topnav(onHome)" class="vp-nav-wrap">
+    <nav class="vp-nav" id="vpNav" aria-label="Main">
+        <a class="vp-brand" href="/">
+            <span class="paf-logo-plate vp-brand-logo"><img class="paf-logo" src="/images/paflogo.png" alt="Philippine Air Force Museum Logo" width="64" height="32"></span>
+        </a>
+        <!-- Booking page: no section links here (the booking panel's own tabs cover Book / Manage / Guidelines / Exhibits) -->
+        <a th:unless="${onHome}" href="/" class="vp-nav-link">Book a Visit</a>
+        <button type="button" class="vp-theme-btn theme-toggle" data-theme-toggle aria-label="Toggle dark mode">
+            <i class="bi bi-moon-stars theme-icon-light"></i>
+            <i class="bi bi-sun theme-icon-dark"></i>
+        </button>
+    </nav>
+</div>
+
+<!-- Pre-loader: radar sweep + jet silhouette. Pure markup/CSS; visitor.js dismisses it
+     after ~1.5s (CSS failsafe hides it after 4s even if scripts never run). -->
+<div th:fragment="preloader" class="vp-preloader" id="vpPreloader" role="status" aria-live="polite" aria-label="Loading AeroVisit">
+    <div class="vp-pl-inner">
+        <div class="vp-radar" aria-hidden="true">
+            <span class="vp-radar-ring r1"></span>
+            <span class="vp-radar-ring r2"></span>
+            <span class="vp-radar-ring r3"></span>
+            <span class="vp-radar-cross"></span>
+            <span class="vp-radar-sweep"></span>
+            <span class="vp-radar-blip b1"></span>
+            <span class="vp-radar-blip b2"></span>
+            <span class="vp-radar-blip b3"></span>
+            <svg class="vp-radar-jet" viewBox="0 0 64 64" focusable="false">
+                <path d="M32 3c2 0 3.2 2.6 3.2 6.4v14.2l22.3 13.1v5.4L35.2 35v11.6l6.7 5.1v4.4L32 53.3l-9.9 2.8v-4.4l6.7-5.1V35L6.5 42.1v-5.4l22.3-13.1V9.4C28.8 5.6 30 3 32 3z"/>
+            </svg>
+        </div>
+        <span class="paf-logo-plate vp-pl-logo"><img class="paf-logo" src="/images/paflogo.png" alt="Philippine Air Force Museum Logo" width="220" height="110"></span>
+        <div class="vp-pl-sub">Establishing secure channel</div>
+        <div class="vp-pl-bar"><span></span></div>
+    </div>
+</div>
+
+<!-- Immersive background slideshow with a fixed dark overlay (readability first). -->
+<div th:fragment="backdrop" class="vp-backdrop" id="vpBackdrop" aria-hidden="true">
+    <div class="vp-slide vp-slide--fallback"></div>
+    <div class="vp-backdrop-tint"></div>
+    <div class="vp-backdrop-grain"></div>
+</div>
+
+<!-- Welcome entry modal (booking page only). Fades in ~0.5s after the pre-loader lifts, once per
+     browser session (sessionStorage). "Proceed to Booking" closes it and brings the flight calendar into view. -->
+<th:block th:fragment="welcome">
+<div class="modal fade vp-welcome" id="vpWelcomeModal" tabindex="-1" aria-labelledby="vpWelcomeTitle" aria-describedby="vpWelcomeLead" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="vp-welcome-head">
+                <button type="button" class="vp-welcome-close" data-bs-dismiss="modal" aria-label="Close"><i class="bi bi-x-lg"></i></button>
+                <span class="paf-logo-plate vp-welcome-plate"><img class="paf-logo" src="/images/paflogo.png" alt="Philippine Air Force Museum Logo" width="128" height="64"></span>
+                <span class="vp-eyebrow vp-eyebrow--on-dark"><span class="dot"></span>PAF Aerospace Museum<span class="vp-welcome-base"> &middot; Villamor Air Base</span></span>
+                <h2 class="vp-welcome-title" id="vpWelcomeTitle">Welcome to the PAF Aerospace Museum Visitor Portal</h2>
+            </div>
+            <div class="vp-welcome-body">
+                <p class="vp-welcome-lead" id="vpWelcomeLead">Use this portal to schedule your visit, review museum guidelines, and access your tickets.</p>
+                <ul class="vp-welcome-list">
+                    <li><span class="ico"><i class="bi bi-calendar-check"></i></span><div><b>Schedule your visit</b><span>Pick an open date and time window on the flight calendar.</span></div></li>
+                    <li><span class="ico"><i class="bi bi-shield-check"></i></span><div><b>Review museum guidelines</b><span>Base rules and what to bring before you arrive.</span></div></li>
+                    <li><span class="ico"><i class="bi bi-qr-code"></i></span><div><b>Access your tickets</b><span>Your QR pass is emailed; manage it any time with your Reference ID.</span></div></li>
+                </ul>
+                <button type="button" class="vp-btn vp-btn--gold vp-btn--block" id="vpWelcomeProceed">
+                    Proceed to Booking <span class="vp-btn-icon"><i class="bi bi-arrow-right"></i></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+    (function () {
+        var KEY = 'aero_welcome_seen';
+        var modalEl = document.getElementById('vpWelcomeModal');
+        if (!modalEl || !window.bootstrap) return;
+        var seen = null;
+        try { seen = sessionStorage.getItem(KEY); } catch (e) { /* storage blocked: show it */ }
+        if (seen === '1') return;
+
+        var html = document.documentElement;
+        html.setAttribute('data-vp-welcome', 'pending'); // Sgt. Aero holds his greeting until this closes
+        var proceed = false;
+
+        modalEl.addEventListener('show.bs.modal', function () { document.body.classList.add('vp-welcome-open'); });
+        modalEl.addEventListener('hidden.bs.modal', function () {
+            document.body.classList.remove('vp-welcome-open');
+            html.setAttribute('data-vp-welcome', 'done');
+            document.dispatchEvent(new CustomEvent('vp:welcome-closed'));
+            if (!proceed) return;
+            // Same reveal the hero "Book a Visit" button uses: Book tab + scroll to the console
+            var tabBtn = document.getElementById('book-tab');
+            if (tabBtn) bootstrap.Tab.getOrCreateInstance(tabBtn).show();
+            var target = document.getElementById('booking');
+            if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            var heading = document.getElementById('stepTitle0');
+            if (heading && heading.offsetParent) heading.focus({ preventScroll: true });
+        });
+        document.getElementById('vpWelcomeProceed').addEventListener('click', function () {
+            proceed = true;
+            bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+        });
+
+        (window.vpWhenReady || function (cb) { cb(); })(function () {
+            setTimeout(function () {
+                try { sessionStorage.setItem(KEY, '1'); } catch (e) { /* private mode */ }
+                bootstrap.Modal.getOrCreateInstance(modalEl).show();
+            }, 500);
+        });
+    })();
+</script>
+</th:block>
+
+<th:block th:fragment="footer">
+<footer class="vp-footer vp-footer--official">
+    <div class="container">
+        <div class="vp-footer-id">
+            <span class="paf-logo-plate vp-footer-logo"><img class="paf-logo" src="/images/paflogo.png" alt="Philippine Air Force Museum Logo" width="112" height="56"></span>
+            <strong>The Official Visitor Management Portal of the PAF Aerospace Museum.</strong>
+            <span>Villamor Air Base, Pasay City, Metro Manila. <a class="vp-footer-directions" href="https://www.google.com/maps/dir/?api=1&amp;destination=Philippine+Air+Force+Aerospace+Museum,+Villamor+Air+Base,+Pasay+City" target="_blank" rel="noopener noreferrer"><i class="bi bi-geo-alt" aria-hidden="true"></i> Get directions</a></span>
+            <!-- Contact email: Director-managed on Website Content (CmsWebConfig.addFooterContent); hidden when blank -->
+            <span th:if="${contactEmail != null and !contactEmail.isEmpty()}">
+                <i class="bi bi-envelope me-1" aria-hidden="true"></i><a th:href="|mailto:${contactEmail}|" th:text="${contactEmail}">museum@example.com</a>
+            </span>
+            <!-- Social icons: only the platforms the Director saved on Website Content (CmsWebConfig.addFooterContent) -->
+            <nav class="vp-footer-social" aria-label="Official social media" th:if="${socialLinks != null and !socialLinks.isEmpty()}">
+                <a th:each="link : ${socialLinks}" th:href="${link.url}" target="_blank" rel="noopener noreferrer"
+                   th:aria-label="${'PAF Aerospace Museum on ' + link.name + ' (opens in another tab)'}"><i class="bi" th:classappend="${link.icon}" aria-hidden="true"></i></a>
+            </nav>
+        </div>
+        <div class="vp-footer-legal">
+            <span>&copy; 2026 Philippine Air Force. All Rights Reserved.</span>
+            <nav aria-label="Legal">
+                <a href="#vpPrivacyModal" role="button" data-bs-toggle="modal" data-bs-target="#vpPrivacyModal">Privacy Policy</a>
+                <span aria-hidden="true">|</span>
+                <a href="#vpTermsModal" role="button" data-bs-toggle="modal" data-bs-target="#vpTermsModal">Terms of Entry &amp; Base Regulations</a>
+            </nav>
+        </div>
+    </div>
+</footer>
+
+<!-- PRIVACY POLICY (R.A. 10173) -->
+<div class="modal fade vp-legal" id="vpPrivacyModal" tabindex="-1" aria-labelledby="vpPrivacyTitle" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header vp-legal-head">
+                <div>
+                    <span class="vp-legal-kicker">Data Privacy Act of 2012 &middot; R.A. 10173</span>
+                    <h2 class="modal-title" id="vpPrivacyTitle">Privacy Policy</h2>
+                </div>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body vp-legal-body">
+                <p class="vp-legal-meta">Last updated: October 2026</p>
+                <p>The PAF Aerospace Museum, Villamor Air Base, Pasay City, is the personal information controller for this Visitor
+                   Management Portal. Because the museum is located inside an active military installation, we collect only the
+                   information needed to verify your identity, keep the base secure and manage your visit.</p>
+
+                <h3>1. Information we collect</h3>
+                <ul>
+                    <li><b>Booking details:</b> full name, sex, age, address, affiliation, visitor type, contact number, email address,
+                        visit date and time window, purpose of visit, group size and the names of your companions.</li>
+                    <li><b>Identity photos:</b> a close-up photo of your valid ID and a selfie of you holding it.</li>
+                    <li><b>Biometric data:</b> a face template (a set of numbers computed from the face in your selfie), used only for identity verification and base security.</li>
+                    <li><b>Entry records:</b> your booking reference, gate check-in and check-out times, and the personnel who processed your entry.</li>
+                    <li><b>Feedback:</b> ratings, comments and the museum area you choose to review.</li>
+                    <li><b>CCTV images:</b> the gates, museum grounds and exhibit halls are monitored by closed-circuit television.</li>
+                </ul>
+
+                <h3>2. Why we process it</h3>
+                <ul>
+                    <li>To screen and verify visitors before they are allowed onto a military installation.</li>
+                    <li>To manage bookings, daily visitor capacity and entry at the gate, including your QR entry pass.</li>
+                    <li>To send you booking confirmations, reminders and notices about schedule changes or closures.</li>
+                    <li>To investigate security incidents and comply with lawful orders.</li>
+                    <li>To produce visitor statistics and improve the museum, using feedback and attendance data.</li>
+                </ul>
+                <p>Your photos are checked by software on museum servers: text recognition reads your name from your ID, and face
+                   matching compares the photo on your ID with your selfie to confirm that you are the ID holder (one-to-one verification).
+                   Your face template is also compared with faces barred from the base for security violations. This biometric processing
+                   takes place only on museum servers; your photos and face template are never sent to any outside service. These checks
+                   only assist our staff: every booking is reviewed and approved by authorized museum personnel before an entry pass is issued.</p>
+
+                <h3>3. Sharing and disclosure</h3>
+                <p>We do not sell, rent or share your personal data with third parties for marketing or for any purpose unrelated to
+                   your visit. Your information is disclosed only:</p>
+                <ul>
+                    <li>to Philippine Air Force security units and law enforcement agencies when required for base security, or when required by law; and</li>
+                    <li>to service providers that operate parts of this portal on our behalf: Google email services (booking emails and
+                        email verification codes) and Google Gemini (the AI chat assistant, which receives the questions you type into it).
+                        Please do not type personal information into the chat assistant.</li>
+                </ul>
+
+                <h3>4. Retention</h3>
+                <ul>
+                    <li><b>CCTV footage</b> is kept for up to 60 days, unless it is needed for an ongoing security investigation.</li>
+                    <li><b>ID photos and face templates</b> are processed temporarily and deleted automatically 30 days after the visit date,
+                        once the visit is completed, missed, rejected or cancelled. They are kept longer only as a security record: when
+                        entry was denied at the gate, or when the face is barred from the base for a security violation.</li>
+                    <li><b>Booking, entry and feedback records</b> are kept only as long as necessary for base security and visitor statistics,
+                        and are then securely disposed of in line with National Privacy Commission rules and government records-retention policies.</li>
+                </ul>
+
+                <h3>5. How we protect it</h3>
+                <p>Visitor records are accessible only to authorized museum personnel through role-based accounts with hashed passwords.
+                   Personnel handle personal data on a need-to-know basis and are bound by confidentiality.</p>
+
+                <h3>6. Your rights</h3>
+                <p>Under R.A. 10173 you have the right to be informed, to access your data, to object to processing, to have inaccurate data
+                   corrected, to have your data erased or blocked when processing is no longer lawful, to data portability, to claim damages,
+                   and to file a complaint with the National Privacy Commission (privacy.gov.ph).</p>
+                <p>To exercise these rights, contact the museum's Data Protection Officer<th:block th:if="${contactEmail != null and !contactEmail.isEmpty()}"> at
+                   <a th:href="|mailto:${contactEmail}|" th:text="${contactEmail}">museum@example.com</a> or</th:block> through the museum administration office.
+                   You can review or cancel your own booking at any time on the Manage Booking page.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="vp-btn vp-btn--primary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- TERMS OF ENTRY & BASE REGULATIONS -->
+<div class="modal fade vp-legal" id="vpTermsModal" tabindex="-1" aria-labelledby="vpTermsTitle" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header vp-legal-head">
+                <div>
+                    <span class="vp-legal-kicker">Villamor Air Base &middot; Security Regulations</span>
+                    <h2 class="modal-title" id="vpTermsTitle">Terms of Entry &amp; Base Regulations</h2>
+                </div>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body vp-legal-body">
+                <p class="vp-legal-meta">Last updated: October 2026</p>
+                <p>The PAF Aerospace Museum is inside Villamor Air Base, an active military installation. By booking a visit you agree to
+                   the following terms. Base security personnel enforce them, and their instructions must be followed at all times.</p>
+
+                <h3>1. Approved booking and entry pass</h3>
+                <p>Only visitors with an approved booking are admitted. Present your QR entry pass or Booking Reference ID at the gate on your
+                   scheduled date and time window. Bookings cannot be transferred to another person.</p>
+
+                <h3>2. Valid identification</h3>
+                <p>Every visitor must present a valid government-issued photo ID at the gate. The booking holder must present the same ID
+                   uploaded during registration, and companions must match the names listed in the group manifest. Minors must be accompanied
+                   by a responsible adult.</p>
+
+                <h3>3. Inspection of persons, bags and vehicles</h3>
+                <p>All persons, bags and vehicles entering the base are subject to inspection. Refusing an inspection is grounds for denial of entry.
+                   Large bags and backpacks are not allowed inside the museum.</p>
+
+                <h3>4. Prohibited items</h3>
+                <ul>
+                    <li>Firearms, ammunition, explosives, bladed weapons and any item that can be used as a weapon.</li>
+                    <li>Flammable materials, illegal drugs and alcoholic beverages.</li>
+                    <li>Drones and other unmanned aerial devices.</li>
+                    <li>Food and drinks inside the exhibit halls.</li>
+                </ul>
+
+                <h3>5. Restricted zones and photography</h3>
+                <p>Stay within the museum, the aircraft park and other areas open to visitors. Operational areas, flight lines and any area marked
+                   "Restricted" are strictly off-limits. Photography is allowed inside the museum and aircraft park, but not of checkpoints, base
+                   installations, security personnel or aircraft operations outside the museum area.</p>
+
+                <h3>6. Dress code and conduct</h3>
+                <ul>
+                    <li>Wear decent, appropriate attire. Sleeveless shirts, short shorts, torn clothing and slippers may be refused at the gate.</li>
+                    <li>Smoking and vaping are not allowed anywhere on the museum grounds.</li>
+                    <li>Do not touch, climb or enter any aircraft or exhibit unless museum staff allow it. Children must be supervised at all times.</li>
+                    <li>Visitors are liable for any damage they cause to exhibits or base property.</li>
+                </ul>
+
+                <h3>7. Right to refuse entry</h3>
+                <p>Base security may deny entry to, or escort out, anyone who breaks these regulations or poses a security risk. The museum may
+                   cancel bookings or close without notice for security, operational or emergency reasons; affected visitors are notified by email.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="vp-btn vp-btn--primary" data-bs-dismiss="modal">I Understand</button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+    // On Manage Booking and the success page the footer sits inside .vp-page, a stacking context below Bootstrap's
+    // backdrop, so a modal left there would open behind the dimmed overlay. Moving the modals to <body> avoids that.
+    document.querySelectorAll('.vp-legal').forEach(function (modal) { document.body.appendChild(modal); });
+</script>
+</th:block>
+
+<th:block th:fragment="scripts">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/js/visitor.js"></script>
+</th:block>
+
+</body>
+</html>

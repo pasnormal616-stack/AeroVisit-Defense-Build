@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/shell :: head}"></th:block>
+    <title>AeroVisit - Master Duty Roster</title>
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js'></script>
+    <script src="/js/shell.js"></script>
+</head>
+<body class="av-app">
+
+<a href="#main" class="visually-hidden-focusable">Skip to content</a>
+<th:block th:replace="~{fragments/shell :: sidebar('roster')}"></th:block>
+<th:block th:replace="~{fragments/shell :: header('Duty Roster')}"></th:block>
+
+<main class="av-main" id="main">
+<div class="av-workspace">
+
+    <div class="av-pagehead">
+        <div>
+            <span class="av-mono av-code">SEC-05</span>
+            <h1 class="av-pagehead-title">Master Duty Roster</h1>
+            <p class="av-pagehead-desc">Monitor and manage personnel shift schedules for the facility.</p>
+        </div>
+        <div class="av-pagehead-actions">
+            <a href="/admin" class="btn btn-light d-lg-none"><i class="bi bi-arrow-left"></i> Back to Dashboard</a>
+        </div>
+    </div>
+
+    <div class="av-toolbar">
+        <div class="av-tabs"><span class="av-tab is-active"><i class="bi bi-calendar3"></i> Month / List</span></div>
+        <div class="av-toolbar-meta av-mono">
+            <span class="av-legend av-legend--guard">Gate Guard</span>
+            <span class="av-legend av-legend--guide">Tour Guide</span>
+            <span class="av-legend av-legend--admin">Admin</span>
+        </div>
+    </div>
+
+    <!-- CALENDAR SECTION -->
+    <div class="av-panel">
+        <div class="av-panel-head"><span>Personnel Schedule</span><span class="av-label">Click a shift for details</span></div>
+        <div class="av-panel-body">
+            <div class="av-cal-scroll"><div id='guardCalendar'></div></div>
+        </div>
+    </div>
+</div>
+</main>
+
+<!-- SHIFT DETAIL MODAL -->
+<div class="modal fade" id="shiftDetailModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title mb-0"><i class="bi bi-clipboard-check me-2"></i> Shift Details</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center p-4">
+                <div class="mb-4">
+                    <p class="av-label mb-1">Assigned Personnel</p>
+                    <h4 id="modalStaffName" class="fw-bold mb-2 text-uppercase"></h4>
+                    <span id="modalStaffRole" class="av-badge av-badge--info"></span>
+                </div>
+
+                <ul class="av-kv av-detail-list">
+                    <li><span>Duty Date</span><strong id="modalDutyDate" class="av-mono"></strong></li>
+                    <li><span>Time</span><strong id="modalShiftTime" class="text-primary av-mono"></strong></li>
+                </ul>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light w-100" data-bs-dismiss="modal">Close Window</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<th:block th:replace="~{fragments/shell :: scripts}"></th:block>
+
+<script th:inline="javascript">
+    document.addEventListener('DOMContentLoaded', function() {
+
+        // 1. Pull the raw schedule data from the Java backend
+        var rawRoster = /*[[${shifts}]]*/ [];
+
+        // 2. Package it into FullCalendar events
+        var rosterEvents = rawRoster.map(function(staff) {
+
+            // Role colours mapped to the PAF palette (Ultramarine / Gold / Slate)
+            var bgColor = '#475569'; // Admin (Slate)
+            var textColor = '#ffffff';
+
+            if (staff.role === 'Gate Guard') {
+                bgColor = '#002B80'; // PAF Ultramarine
+            } else if (staff.role === 'Tour Guide') {
+                bgColor = '#8A6D12'; // PAF Gold (AA-contrast tone for white text)
+                textColor = '#ffffff';
+            }
+
+            // Shorten the shift time string for the tiny block view
+            var tinyShift = "ALL DAY";
+            if (staff.shiftTime && staff.shiftTime.includes("Morning")) tinyShift = "AM";
+            if (staff.shiftTime && staff.shiftTime.includes("Afternoon")) tinyShift = "PM";
+
+            return {
+                id: staff.id,
+                title: staff.staffName + '\n(' + tinyShift + ')',
+                start: staff.dutyDate,
+                backgroundColor: bgColor,
+                textColor: textColor,
+                borderColor: 'transparent',
+                // Safely packing the custom data
+                extendedProps: {
+                    staffName: staff.staffName,
+                    role: staff.role,
+                    dutyDate: staff.dutyDate,
+                    fullShift: staff.shiftTime
+                }
+            };
+        });
+
+        // 3. Render the Calendar
+        var calendarEl = document.getElementById('guardCalendar');
+        if (calendarEl) {
+            var calendar = new FullCalendar.Calendar(calendarEl, {
+                initialView: 'dayGridMonth',
+                headerToolbar: {
+                    left: 'prev,next today',
+                    center: 'title',
+                    right: 'dayGridMonth,listWeek'
+                },
+                events: rosterEvents,
+                height: 700,
+                contentHeight: "auto",
+
+                // 4. Trigger the Bootstrap Modal when clicked
+                eventClick: function(info) {
+                    var props = info.event.extendedProps;
+
+                    // Format the date to look nice (e.g., "Mon, Oct 12, 2026")
+                    let dateObj = new Date(props.dutyDate);
+                    let formattedDate = dateObj.toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+
+                    // Inject the packed data into the Modal HTML
+                    document.getElementById('modalStaffName').innerText = props.staffName;
+                    document.getElementById('modalStaffRole').innerText = props.role;
+                    document.getElementById('modalDutyDate').innerText = formattedDate;
+                    document.getElementById('modalShiftTime').innerText = props.fullShift;
+
+                    // Show the Modal
+                    var detailModal = new bootstrap.Modal(document.getElementById('shiftDetailModal'));
+                    detailModal.show();
+                }
+            });
+            calendar.render();
+        }
+    });
+</script>
+
+</body>
+</html>

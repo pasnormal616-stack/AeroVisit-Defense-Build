@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/visitor :: head}"></th:block>
+    <title>AeroVisit - Something Went Wrong</title>
+</head>
+<body class="vp vp--immersive">
+<!--/* Generic error page (Spring Boot's /error view). Shows only the status code and a plain message, never
+     the exception or its details (server.error.* in application.properties). Parser comment: not sent to browsers. */-->
+
+<th:block th:replace="~{fragments/visitor :: backdrop}"></th:block>
+
+<th:block th:replace="~{fragments/visitor :: topnav(false)}"></th:block>
+
+<div class="vp-page">
+    <div class="vp-page-band" aria-hidden="true"></div>
+    <main class="vp-page-main">
+        <div class="container">
+            <div class="vp-narrow">
+                <div class="vp-bezel vp-reveal">
+                    <div class="vp-bezel-core vp-card-pad text-center">
+                        <div class="vp-status-ico vp-status-ico--warn"><i class="bi bi-exclamation-triangle"></i></div>
+                        <p class="vp-foot-note" th:if="${status != null}" th:text="'Error ' + ${status}">Error</p>
+                        <th:block th:switch="${status}">
+                            <th:block th:case="413">
+                                <h1 class="vp-title-xl">File Too Large</h1>
+                                <p class="vp-lead fw-semibold">The photo you uploaded is over the 15 MB limit. Please choose a smaller image (a screenshot or a lower camera resolution works) and try again.</p>
+                            </th:block>
+                            <th:block th:case="403">
+                                <h1 class="vp-title-xl">Access Restricted</h1>
+                                <p class="vp-lead fw-semibold">You do not have permission to view this page.</p>
+                            </th:block>
+                            <th:block th:case="405">
+                                <h1 class="vp-title-xl">Page Not Available</h1>
+                                <p class="vp-lead fw-semibold">This page can't be opened directly. Please start again from the booking page.</p>
+                            </th:block>
+                            <th:block th:case="400">
+                                <h1 class="vp-title-xl">Incomplete Request</h1>
+                                <p class="vp-lead fw-semibold">Some required information was missing. Please go back and fill in the form again.</p>
+                            </th:block>
+                            <th:block th:case="*">
+                                <h1 class="vp-title-xl">Something Went Wrong</h1>
+                                <p class="vp-lead fw-semibold">The system could not complete your request. Please try again in a moment.</p>
+                            </th:block>
+                        </th:block>
+                        <p class="vp-foot-note">If this keeps happening, please contact the museum administration desk.</p>
+                        <div class="d-flex flex-wrap justify-content-center gap-2 mt-4">
+                            <a href="/" class="vp-btn vp-btn--primary">Back to Booking Page</a>
+                            <a href="/manage-booking" class="vp-btn vp-btn--ghost">Manage My Booking</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<th:block th:replace="~{fragments/visitor :: scripts}"></th:block>
+</body>
+</html>

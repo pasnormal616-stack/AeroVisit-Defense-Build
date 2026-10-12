@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/shell :: head}"></th:block>
+    <title>Banned Visitors - AeroVisit</title>
+    <script src="/js/shell.js"></script>
+</head>
+<body class="av-app">
+
+<a href="#main" class="visually-hidden-focusable">Skip to content</a>
+<th:block th:replace="~{fragments/shell :: sidebar('blacklist')}"></th:block>
+<th:block th:replace="~{fragments/shell :: header('Banned Visitors')}"></th:block>
+
+<main class="av-main" id="main">
+<div class="av-workspace">
+
+    <div class="av-pagehead">
+        <div>
+            <span class="av-mono av-code">SEC-06</span>
+            <h1 class="av-pagehead-title">Banned Visitors</h1>
+            <p class="av-pagehead-desc">Faces barred from booking. A ban follows the person's face, not their email, so a new name or email can't get around it. Ban a visitor from the dashboard's action menu.</p>
+        </div>
+        <div class="av-pagehead-actions">
+            <a href="/admin" class="btn btn-light d-lg-none"><i class="bi bi-arrow-left"></i> Back to Dashboard</a>
+        </div>
+    </div>
+
+    <!-- Alerts -->
+    <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
+        <i class="bi bi-check-square-fill"></i> <span th:text="${success}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+
+    <div class="av-toolbar">
+        <div class="av-tabs"><span class="av-tab is-active"><i class="bi bi-person-x"></i> Banned <span class="count" th:text="'(' + ${activeBanIds.size()} + ' active)'">(0)</span></span></div>
+        <div class="av-toolbar-meta av-mono">Biometric (face) bans</div>
+    </div>
+
+    <!-- SECURITY GALLERY: one card per ban, mugshot first, so a guard can match a walk-in at a glance.
+         Face vectors themselves are never shown: they are numbers, and they are biometric data. -->
+    <div class="av-panel">
+        <div class="av-panel-head av-panel-head--wrap">
+            <span><i class="bi bi-shield-lock-fill me-2"></i>Security Gallery</span>
+            <div class="av-ban-search" th:unless="${bans.isEmpty()}">
+                <i class="bi bi-search" aria-hidden="true"></i>
+                <label class="visually-hidden" for="banSearch">Search banned visitors by name</label>
+                <input type="search" id="banSearch" class="form-control form-control-sm" placeholder="Search by name..." autocomplete="off" aria-controls="banGallery">
+            </div>
+        </div>
+        <div class="av-panel-body">
+            <p class="av-small av-muted mb-3">
+                <output id="banSearchCount" aria-live="polite" th:text="${bans.size()} + ' ban(s) on file'">0 ban(s) on file</output>
+                <span th:unless="${isDirector}"> · Lifting a ban is Director only.</span>
+            </p>
+
+            <div class="av-ban-gallery" id="banGallery" th:unless="${bans.isEmpty()}">
+                <article th:each="ban : ${bans}" class="av-ban-card" th:classappend="${activeBanIds.contains(ban.id)} ? '' : 'is-expired'"
+                         th:attr="data-ban-name=${ban.name != null ? #strings.toLowerCase(ban.name) : ''}">
+                    <!-- Mugshot (the ban's own copy of the liveness selfie) or a placeholder for bans made before photos were kept -->
+                    <a th:if="${ban.imageUrl != null}" class="av-ban-photo" th:href="@{'/uploads/' + ${ban.imageUrl}}" target="_blank" rel="noopener"
+                       th:attr="aria-label='Open photo of ' + ${ban.name != null ? ban.name : 'ban #' + ban.id}">
+                        <img th:src="@{'/uploads/' + ${ban.imageUrl}}" alt="" loading="lazy">
+                    </a>
+                    <div th:unless="${ban.imageUrl != null}" class="av-ban-photo av-ban-photo--none">
+                        <i class="bi bi-person-fill" aria-hidden="true"></i><span>No photo on file</span>
+                    </div>
+
+                    <!-- Expired bans stay as a record; every check ignores them -->
+                    <span th:if="${ban.expiresAt == null}" class="av-ban-status badge-perm">Permanent</span>
+                    <span th:if="${ban.expiresAt != null and activeBanIds.contains(ban.id)}" class="av-ban-status badge-temp">Temporary</span>
+                    <span th:if="${ban.expiresAt != null and !activeBanIds.contains(ban.id)}" class="av-ban-status badge-expired">Expired</span>
+
+                    <div class="av-ban-body">
+                        <h2 th:if="${ban.name != null}" class="av-ban-name" th:text="${ban.name}"></h2>
+                        <h2 th:unless="${ban.name != null}" class="av-ban-name av-muted">Name not recorded</h2>
+                        <div class="av-ban-meta av-mono" th:text="'Ban #' + ${ban.id} + (${ban.bannedAt != null} ? ' · ' + ${#temporals.format(ban.bannedAt, 'MMM d, yyyy')} : '')"></div>
+                        <dl class="av-ban-facts">
+                            <dt>Reason</dt>
+                            <dd th:text="${ban.reason}"></dd>
+                            <dt>Expires</dt>
+                            <dd th:if="${ban.expiresAt == null}">Never</dd>
+                            <dd th:if="${ban.expiresAt != null}" class="av-mono" th:text="${(activeBanIds.contains(ban.id) ? 'Until ' : 'Ended ') + #temporals.format(ban.expiresAt, 'MMM d, yyyy')}"></dd>
+                        </dl>
+                    </div>
+
+                    <form th:if="${isDirector}" th:action="@{'/admin/bans/' + ${ban.id} + '/lift'}" method="post" class="av-ban-foot"
+                          onsubmit="return confirm('Lift this ban? This person will immediately be able to book visits again. Bookings that were revoked stay rejected.');">
+                        <button type="submit" class="av-ban-lift"><i class="bi bi-unlock"></i> Lift ban</button>
+                    </form>
+                </article>
+            </div>
+
+            <p class="av-empty mb-0" id="banNoMatch" hidden>No banned visitor matches that name.</p>
+
+            <!-- Empty State -->
+            <div th:if="${bans.isEmpty()}" class="av-empty av-empty--ok">
+                <i class="bi bi-check2-square"></i>
+                <span class="fw-semibold text-dark d-block">No visitors are banned.</span>
+                <small>The facility ban list is clear.</small>
+            </div>
+        </div>
+    </div>
+</div>
+</main>
+
+<th:block th:replace="~{fragments/shell :: scripts}"></th:block>
+<script>
+// Live search: hides the cards whose name doesn't contain what was typed (no page reload, nothing sent anywhere)
+(function () {
+    var input = document.getElementById('banSearch');
+    if (!input) return;
+    var cards = Array.prototype.slice.call(document.querySelectorAll('#banGallery .av-ban-card'));
+    var count = document.getElementById('banSearchCount');
+    var noMatch = document.getElementById('banNoMatch');
+    input.addEventListener('input', function () {
+        var q = input.value.trim().toLowerCase();
+        var shown = 0;
+        cards.forEach(function (card) {
+            var match = !q || (card.getAttribute('data-ban-name') || '').indexOf(q) !== -1;
+            card.hidden = !match;
+            if (match) shown++;
+        });
+        count.textContent = q ? 'Showing ' + shown + ' of ' + cards.length + ' ban(s)' : cards.length + ' ban(s) on file';
+        noMatch.hidden = shown > 0;
+    });
+})();
+</script>
+
+</body>
+</html>

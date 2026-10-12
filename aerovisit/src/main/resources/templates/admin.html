@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/shell :: head}"></th:block>
+    <title>AeroVisit - Command Dashboard</title>
+    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css"/>
+    <!-- Pinned (4.5.1 = the "latest" this page used until now) + SRI: a new CDN release or a tampered file can't change it -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" integrity="sha256-SERKgtTty1vsDxll+qzd4Y2cF9swY9BCq62i9wXJ9Uo=" crossorigin="anonymous"></script>
+    <script src="/js/shell.js"></script>
+</head>
+<body class="av-app"
+      th:with="navKey=${currentFilter == 'pending' ? 'approvals' : (currentFilter == 'all' ? 'audit' : 'manifest')},
+               pageTitle=${currentFilter == 'pending' ? 'Approvals Queue' : (currentFilter == 'all' ? 'Audit Log' : 'Active Visitors')}">
+
+<a href="#main" class="visually-hidden-focusable">Skip to content</a>
+<th:block th:replace="~{fragments/shell :: sidebar(${navKey})}"></th:block>
+<th:block th:replace="~{fragments/shell :: header(${pageTitle})}"></th:block>
+
+<main class="av-main" id="main">
+<div class="av-workspace">
+
+    <!-- PAGE HEAD -->
+    <div class="av-pagehead">
+        <div>
+            <span class="av-mono av-code" th:text="${navKey == 'approvals' ? 'OPS-02' : (navKey == 'audit' ? 'OPS-03' : 'OPS-01')}">OPS-01</span>
+            <h1 class="av-pagehead-title" th:text="${pageTitle}">Active Visitors</h1>
+            <p class="av-pagehead-desc">Welcome, <span class="text-capitalize fw-semibold" th:text="${loggedInUser}">User</span>. Live civilian manifest and base operational picture.</p>
+        </div>
+        <div class="av-pagehead-actions">
+            <a th:if="${isGuard}" href="/admin/scanner" class="btn btn-primary"><i class="bi bi-qr-code-scan"></i> Open Scanner</a>
+        </div>
+    </div>
+
+    <!-- TOOLBAR: manifest filters -->
+    <div class="av-toolbar">
+        <nav class="av-tabs" aria-label="Manifest filter">
+            <a href="/admin?filter=today" class="av-tab" th:classappend="${currentFilter == 'today' || currentFilter == null} ? 'is-active'"><i class="bi bi-calendar-day"></i> Today's Manifest</a>
+            <a href="/admin?filter=pending" class="av-tab" th:classappend="${currentFilter == 'pending'} ? 'is-active'"><i class="bi bi-hourglass-split"></i> Pending Approval</a>
+            <a href="/admin?filter=all" class="av-tab" th:classappend="${currentFilter == 'all'} ? 'is-active'"><i class="bi bi-database"></i> Entire Database</a>
+        </nav>
+        <div class="av-toolbar-meta av-mono">
+            <span>Occupancy <b class="text-dark" th:text="${currentOccupancy} + '/' + ${todayMaxCapacity}">0/100</b></span>
+        </div>
+    </div>
+
+    <!-- Alerts -->
+    <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
+        <i class="bi bi-check-square-fill"></i> <span th:text="${success}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+        <i class="bi bi-exclamation-triangle-fill"></i> <span th:text="${error}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+
+    <!-- OPERATIONS ROW: Daily Capacity Tracker + Live Base Occupancy, right above the Civilian Manifest -->
+    <div class="row g-4 mb-4">
+        <div class="col-xl-8">
+            <!-- DAILY CAPACITY TRACKER: seats left per time window on any date (same count as the public calendar) -->
+            <div class="av-panel h-100 mb-0">
+                <div class="av-panel-head">
+                    <span><i class="bi bi-people me-2"></i>Daily Capacity Tracker</span>
+                    <form action="/admin" method="get" class="d-flex align-items-center gap-2 mb-0">
+                        <input type="hidden" name="filter" th:value="${currentFilter}">
+                        <input type="hidden" name="sort" th:value="${sort}">
+                        <input type="hidden" name="dateFilter" th:if="${dateFilter != null}" th:value="${dateFilter}">
+                        <label class="av-label mb-0" for="capacityDate">Date</label>
+                        <input type="date" id="capacityDate" name="capacityDate" class="form-control form-control-sm av-mono"
+                               th:value="${targetDate}">
+                        <button type="submit" class="btn btn-sm btn-primary">View</button>
+                    </form>
+                </div>
+                <div class="av-panel-body">
+                    <div class="row g-3" th:if="${not #lists.isEmpty(dailyCapacity)}">
+                        <div class="col-sm-6 col-lg-4" th:each="c : ${dailyCapacity}">
+                            <div class="av-stat h-100" th:classappend="${c.remaining == 0} ? 'av-stat--full'">
+                                <div class="av-stat-top">
+                                    <span class="av-label" th:text="${c.window}"></span>
+                                    <span th:if="${c.remaining == 0}" class="badge-soft badge-rejected">FULL</span>
+                                </div>
+                                <p class="av-stat-value av-mono">
+                                    <span th:text="${c.remaining}"></span><span class="av-stat-of" th:text="' / ' + ${c.maxCapacity}"></span>
+                                </p>
+                                <div class="av-stat-meta av-cell-sub">seats remaining</div>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="av-empty mb-0" th:if="${#lists.isEmpty(dailyCapacity)}" th:text="'No booking slots are open on ' + ${#temporals.format(targetDate, 'EEE, MMM d, yyyy')} + '.'">No booking slots are open on this date.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-xl-4">
+            <!-- Live Occupancy -->
+            <div class="av-panel av-occupancy">
+                <div class="av-panel-head"><span><i class="bi bi-broadcast me-2"></i>Live Base Occupancy</span><span class="av-label">Real-time</span></div>
+                <div class="av-panel-body">
+                    <div class="av-gauge">
+                        <canvas id="capacityGaugeMain"></canvas>
+                        <div class="av-gauge-readout">
+                            <div class="now" th:text="${currentOccupancy}">0</div>
+                            <div class="max">of <span th:text="${todayMaxCapacity}">100</span> capacity</div>
+                        </div>
+                    </div>
+                    <p class="av-label mb-0">Current tracked personnel inside the facility</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- DATA TABLE SECTION -->
+    <div class="av-panel overflow-hidden">
+        <div class="av-panel-head av-panel-head--wrap">
+            <span><i class="bi bi-person-lines-fill me-2"></i>Civilian Manifest</span>
+            <!-- Manifest filters: sort (FIFO) + visit date. Carries the tab and the tracker date so changing one keeps the rest -->
+            <form action="/admin" method="get" id="manifestFilters" class="av-manifest-filters">
+                <span class="av-label" th:text="${currentFilter == 'pending' ? 'Filter: pending approval' : (currentFilter == 'all' ? 'Filter: entire database' : 'Filter: today')}">Filter: today</span>
+                <input type="hidden" name="filter" th:value="${currentFilter}">
+                <input type="hidden" name="capacityDate" th:value="${targetDate}">
+                <select name="sort" class="form-select form-select-sm w-auto" onchange="this.form.submit()" aria-label="Sort visitors">
+                    <option value="asc" th:selected="${sort == 'asc'}">Oldest First (FIFO)</option>
+                    <option value="desc" th:selected="${sort == 'desc'}">Newest First</option>
+                </select>
+                <span class="av-filter-group" th:if="${currentFilter != 'today'}">
+                    <label class="av-label mb-0" for="dateFilter">Visit date</label>
+                    <input type="date" id="dateFilter" name="dateFilter" class="form-control form-control-sm av-mono w-auto"
+                           th:value="${dateFilter}">
+                    <button type="submit" class="btn btn-sm btn-primary">Apply</button>
+                    <a th:if="${dateFilter != null}" th:href="@{/admin(filter=${currentFilter},sort=${sort},capacityDate=${targetDate})}"
+                       class="btn btn-sm btn-light" title="Show every visit date">Clear</a>
+                </span>
+            </form>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-custom mb-0" id="visitorTable">
+                <thead>
+                    <tr>
+                        <th class="ps-4">Civilian Profile</th>
+                        <th th:if="${currentFilter == 'pending'}">Requested On</th>
+                        <th th:if="${currentFilter != 'pending'}">Submitted</th>
+                        <th>Clearance Details</th>
+                        <th>Verification</th>
+                        <th>Live Status</th>
+                        <th class="text-end pe-4">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="visitor : ${listVisitors}">
+                        <!-- Civilian Profile -->
+                        <td class="ps-4">
+                            <div class="av-person">
+                                <div class="av-idchip">ID<b th:text="${visitor.id}"></b></div>
+                                <div>
+                                    <div class="av-person-name">
+                                        <span th:text="${visitor.name}"></span>
+                                        <span class="av-badge av-badge--new ms-1" th:if="${visitor.status == 'PENDING' and visitor.createdAt != null and visitor.createdAt.isAfter(#temporals.createNow().minusHours(24))}">NEW</span>
+                                        <span class="av-badge av-badge--tag ms-1" th:if="${visitor.visitorType != null}" th:text="${visitor.visitorType}"></span>
+                                        <!-- OCR name match: Tesseract read both names on the ID (green), or it didn't (yellow).
+                                             Shown for every booking, Master Bookings included (zero-trust KYC). -->
+                                        <span th:if="${visitor.ocrNameMatch}" class="av-badge av-badge--ok ms-1" title="Tesseract read this visitor's first and last name on their ID">
+                                            <i class="bi bi-patch-check-fill me-1" aria-hidden="true"></i>ID Name Verified</span>
+                                        <span th:unless="${visitor.ocrNameMatch}" class="av-badge av-badge--warn ms-1" title="The name was not read automatically from the ID (unclear photo or older booking): check it by eye in View KYC">
+                                            <i class="bi bi-exclamation-triangle-fill me-1" aria-hidden="true"></i>Name Unverified</span>
+                                    </div>
+                                    <div class="av-person-meta" th:if="${visitor.age != null and visitor.sex != null}" th:text="${visitor.sex} + ', ' + ${visitor.age} + ' yrs old'"></div>
+                                    <div class="av-person-meta" th:text="${visitor.email} + ' • ' + ${visitor.contactNumber != null ? visitor.contactNumber : visitor.phone}"></div>
+                                </div>
+                            </div>
+                        </td>
+
+                        <!-- Requested On (waitlist is first come, first served) -->
+                        <td th:if="${currentFilter == 'pending'}">
+                            <div class="av-cell-strong av-mono" th:if="${visitor.createdAt != null}" th:text="${#temporals.format(visitor.createdAt, 'MMM d, hh:mm a')}"></div>
+                            <div class="av-cell-sub" th:if="${visitor.createdAt == null}">Not recorded</div>
+                        </td>
+
+                        <!-- Submitted (Today's Manifest and Entire Database; the Pending tab shows the same time as Requested On) -->
+                        <td th:if="${currentFilter != 'pending'}">
+                            <div class="av-cell-strong av-mono" th:if="${visitor.createdAt != null}" th:text="${#temporals.format(visitor.createdAt, 'MMM d, hh:mm a')}"></div>
+                            <div class="av-cell-sub" th:if="${visitor.createdAt == null}">N/A</div>
+                        </td>
+
+                        <!-- Clearance Details -->
+                        <td>
+                            <div class="av-cell-strong av-mono" th:text="${visitor.visitDate}"></div>
+                            <div class="av-cell-sub mb-1" th:if="${visitor.affiliation != null}">
+                                <i class="bi bi-building me-1"></i><span th:text="${visitor.affiliation}"></span>
+                            </div>
+                            <span class="av-badge av-badge--tag" th:text="${#strings.replace(#strings.toLowerCase(visitor.purpose), '_', ' ')}"></span>
+                            <span th:if="${visitor.specialConsideration != 'Not Applicable' and visitor.specialConsideration != null}" class="av-badge av-badge--warn ms-1" th:text="${visitor.specialConsideration}"></span>
+                            <span th:if="${visitor.groupSize > 1}" class="av-badge av-badge--info ms-1" th:text="'+' + ${visitor.groupSize - 1} + ' Guests'"></span>
+                            <div th:if="${visitor.masterBooking}" class="av-justification">
+                                <div class="av-justification-label"><i class="bi bi-file-earmark-text me-1"></i>Event Justification</div>
+                                <div th:if="${not #strings.isEmpty(visitor.eventJustification)}" class="av-justification-text" th:text="${visitor.eventJustification}"></div>
+                                <div th:if="${#strings.isEmpty(visitor.eventJustification)}" class="av-justification-text av-justification-text--missing">No justification provided.</div>
+                            </div>
+                        </td>
+
+                        <td>
+                            <!-- One button: the shared #kycModal shows the ID close-up and the selfie side by side -->
+                            <button th:if="${not #strings.isEmpty(visitor.idImageUrl) or not #strings.isEmpty(visitor.idCardImageUrl)}"
+                                    type="button" class="av-doc-link av-doc-btn" data-bs-toggle="modal" data-bs-target="#kycModal"
+                                    th:attr="data-kyc-name=${visitor.name},data-kyc-card=${visitor.idCardImageUrl},data-kyc-selfie=${visitor.idImageUrl}">
+                                <i class="bi bi-person-vcard"></i> View KYC
+                            </button>
+                            <span th:if="${#strings.isEmpty(visitor.idImageUrl) and #strings.isEmpty(visitor.idCardImageUrl)}" class="av-cell-sub">
+                                <i class="bi bi-exclamation-circle"></i> Pending ID
+                            </span>
+                        </td>
+
+                        <td>
+                            <span th:if="${visitor.status == 'PENDING' or visitor.status == 'PENDING_MANUAL_REVIEW'}" class="badge-soft badge-pending">Pending Review</span>
+                            <span th:if="${visitor.status == 'APPROVED'}" class="badge-soft badge-approved"><i class="bi bi-patch-check-fill"></i> Approved</span>
+                            <span th:if="${visitor.status == 'REJECTED'}" class="badge-soft badge-rejected">Rejected</span>
+                            <span th:if="${visitor.status == 'CANCELLED_OVERRIDE'}" class="badge-soft badge-rejected">Cancelled (Override)</span>
+                            <span th:if="${visitor.status == 'CANCELLED_BY_VISITOR'}" class="badge-soft badge-rejected">Cancelled by Visitor</span>
+                            <span th:if="${visitor.status == 'CANCELLED'}" class="badge-soft badge-rejected">Cancelled (Closure)</span>
+                            <span th:if="${visitor.status == 'CHECKED-IN'}" class="badge-soft badge-checked-in">Checked In</span>
+                            <span th:if="${visitor.status == 'CHECKED-OUT'}" class="badge-soft badge-checked-out">Checked Out</span>
+                            <span th:if="${visitor.status == 'NO_SHOW'}" class="badge-soft badge-checked-out">No-Show</span>
+                            <span th:if="${visitor.status == 'DENIED_ENTRY'}" class="badge-soft badge-rejected"><i class="bi bi-shield-x"></i> Entry Denied</span>
+                            <div th:if="${visitor.status == 'DENIED_ENTRY' and visitor.entryDeniedAt != null}" class="av-cell-sub av-mono mt-1">
+                                <i class="bi bi-clock"></i> <span th:text="${#temporals.format(visitor.entryDeniedAt, 'hh:mm a')} + ' by ' + ${visitor.entryDeniedBy}"></span>
+                                <div th:text="${visitor.entryDenialReason}"></div>
+                            </div>
+
+                            <div th:if="${(visitor.status == 'CHECKED-IN' or visitor.status == 'CHECKED-OUT') and visitor.checkedInBy != null}" class="av-cell-sub av-mono mt-1">
+                                <i class="bi bi-clock"></i> <span th:text="${#temporals.format(visitor.checkInTime, 'hh:mm a')}"></span>
+                                <span th:if="${visitor.checkOutTime != null}" th:text="' - ' + ${#temporals.format(visitor.checkOutTime, 'hh:mm a')}"></span>
+                                <!-- Gate Guard on the duty roster when the QR was scanned (recorded at check-in) -->
+                                <div><i class="bi bi-person-badge"></i> <span th:text="'Scanned by ' + ${visitor.checkedInBy}"></span></div>
+                            </div>
+                        </td>
+
+                        <td class="text-end pe-4">
+                            <div class="av-actions">
+                                <th:block th:if="${visitor.status == 'PENDING' or visitor.status == 'PENDING_MANUAL_REVIEW'}">
+                                    <form th:action="@{'/admin/approve/' + ${visitor.id}}" method="post" class="m-0">
+                                        <button type="submit" class="btn btn-sm btn-outline-success" title="Approve">Approve</button>
+                                    </form>
+                                    <!-- ⚠️ DIRECTOR OVERRIDE: approves past the slot's capacity (Master Bookings already skip the check) -->
+                                    <form th:if="${isDirector and !visitor.masterBooking}" th:action="@{'/admin/approve-override/' + ${visitor.id}}" method="post" class="m-0"
+                                          onsubmit="return confirm('Force Approve skips the capacity check and can overbook this time slot. Continue?');">
+                                        <button type="submit" class="btn btn-sm btn-warning" title="Approve even if the time slot is full (Director override)"><i class="bi bi-exclamation-triangle-fill me-1"></i>Force Approve</button>
+                                    </form>
+                                    <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" th:data-bs-target="'#rejectModal' + ${visitor.id}" title="Reject">Reject</button>
+                                </th:block>
+                                <button th:if="${visitor.status == 'CHECKED-IN' and visitor.visitDate != null and visitor.visitDate.equals(#temporals.createToday())}"
+                                        type="button" class="btn btn-sm btn-danger" data-bs-toggle="modal" th:data-bs-target="'#denyModal' + ${visitor.id}" title="Void check-in and deny entry">Deny Entry</button>
+
+                                <div class="dropdown">
+                                    <button class="btn btn-sm btn-light p-1" type="button" data-bs-toggle="dropdown" aria-label="Open action menu" title="More options"><i class="bi bi-three-dots-vertical"></i></button>
+                                    <ul class="dropdown-menu dropdown-menu-end">
+                                        <!-- 🧬 The only ban: by face (biometric), so a new name or email can't get around it -->
+                                        <li th:if="${visitor.faceEncoding != null}">
+                                            <!-- Opens the shared #banModal (reason + 30 days / 6 months / permanent) -->
+                                            <button type="button" class="dropdown-item text-danger" data-bs-toggle="modal" data-bs-target="#banModal"
+                                                    th:attr="data-ban-url=@{/admin/biometric-ban/{id}(id=${visitor.id})},data-ban-name=${visitor.name}">
+                                                <i class="bi bi-person-x me-2"></i> Ban Visitor</button>
+                                        </li>
+                                        <li th:if="${visitor.faceEncoding == null}">
+                                            <span class="dropdown-item disabled" title="No face data on file for this booking (older booking, no face found, or removed by the 30-day purge): reject it instead">
+                                                <i class="bi bi-person-x me-2"></i> Ban Visitor (no face data)</span>
+                                        </li>
+                                        <li th:if="${isDirector}">
+                                            <form th:action="@{'/admin/delete/' + ${visitor.id}}" method="post" class="m-0" onsubmit="return confirm('Delete this record?');">
+                                                <button type="submit" class="dropdown-item text-danger"><i class="bi bi-trash me-2"></i> Delete</button>
+                                            </form>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <div class="modal fade" th:id="'rejectModal' + ${visitor.id}" tabindex="-1" aria-hidden="true">
+                                <div class="modal-dialog">
+                                    <div class="modal-content">
+                                        <div class="modal-header av-modal--danger">
+                                            <h5 class="modal-title"><i class="bi bi-shield-exclamation me-2"></i>Reject Registration</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                        </div>
+                                        <form action="/admin/reject-visitor" method="post">
+                                            <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                            <div class="modal-body text-start">
+                                                <p class="av-small av-muted mb-3">Target: <strong class="text-dark" th:text="${visitor.name}"></strong></p>
+                                                <input type="hidden" name="id" th:value="${visitor.id}">
+
+                                                <div class="mb-3">
+                                                    <label class="form-label" th:for="'presetReason' + ${visitor.id}">Primary Reason for Rejection</label>
+                                                    <select th:id="'presetReason' + ${visitor.id}" name="presetReason" class="form-select form-select-sm" required>
+                                                        <option value="" disabled selected>Select an official reason...</option>
+                                                        <option value="ID image is too blurry or unreadable">ID image is too blurry or unreadable</option>
+                                                        <option value="Name on ID does not match registration">Name on ID does not match registration</option>
+                                                        <option value="Expired ID presented">Expired ID presented</option>
+                                                        <option value="Invalid ID type (Must be Government or School issued)">Invalid ID type (Must be Government or School issued)</option>
+                                                        <option value="Security clearance failed">Security clearance failed</option>
+                                                        <option value="Capacity Reached">Capacity Reached - Please choose another date</option>
+                                                        <option value="Other">Other (Specify in notes below)</option>
+                                                    </select>
+                                                </div>
+
+                                                <div class="mb-3">
+                                                    <label class="form-label" th:for="'additionalNotes' + ${visitor.id}">Administrative Notes / Compliance Instructions</label>
+                                                    <textarea th:id="'additionalNotes' + ${visitor.id}" name="additionalNotes" class="form-control form-control-sm" rows="3" placeholder="Type specific instructions here... (Optional)"></textarea>
+                                                </div>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                                <button type="submit" class="btn btn-sm btn-danger">Send Rejection Alert</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 🛑 GATE DENIAL: voids today's check-in when the IDs presented fail verification -->
+                            <div th:if="${visitor.status == 'CHECKED-IN'}" class="modal fade" th:id="'denyModal' + ${visitor.id}" tabindex="-1" aria-hidden="true">
+                                <div class="modal-dialog">
+                                    <div class="modal-content">
+                                        <div class="modal-header av-modal--danger">
+                                            <h5 class="modal-title"><i class="bi bi-shield-x me-2"></i>Void Check-In / Deny Entry</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                        </div>
+                                        <form action="/admin/deny-entry" method="post">
+                                            <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                            <div class="modal-body text-start">
+                                                <p class="av-small av-muted mb-3">Target: <strong class="text-dark" th:text="${visitor.name}"></strong>
+                                                    <span th:if="${visitor.groupSize > 1}" th:text="'(group of ' + ${visitor.groupSize} + ')'"></span></p>
+                                                <input type="hidden" name="visitorId" th:value="${visitor.id}">
+                                                <div class="mb-3">
+                                                    <label class="form-label" th:for="'denyReason' + ${visitor.id}">Reason for Denial</label>
+                                                    <select th:id="'denyReason' + ${visitor.id}" name="reason" class="form-select form-select-sm" required>
+                                                        <option value="" disabled selected>Select an official reason...</option>
+                                                        <option value="Group does not match manifest">Group does not match manifest</option>
+                                                        <option value="Unregistered person in group">Unregistered person in group</option>
+                                                        <option value="ID does not match lead booker">ID does not match lead booker</option>
+                                                        <option value="Expired or invalid ID presented">Expired or invalid ID presented</option>
+                                                        <option value="Security concern">Security concern</option>
+                                                    </select>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label" th:for="'denyNotes' + ${visitor.id}">Guard Notes (Optional)</label>
+                                                    <textarea th:id="'denyNotes' + ${visitor.id}" name="notes" class="form-control form-control-sm" rows="3" maxlength="400" placeholder="e.g. 2 of 4 guests had no matching ID"></textarea>
+                                                </div>
+                                                <p class="av-small text-danger mb-0"><i class="bi bi-exclamation-triangle me-1"></i>This is final: the QR code stops working and the booking cannot be re-approved.</p>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                                <button type="submit" class="btn btn-sm btn-danger">Deny Entry</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+</main>
+
+<!-- 🪪 KYC VIEWER: one modal for every row, filled by the script below from the clicked "View KYC" button.
+     Images load only when it opens (a per-row modal would download every visitor's photos with the page). -->
+<div class="modal fade" id="kycModal" tabindex="-1" aria-labelledby="kycModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="kycModalTitle"><i class="bi bi-person-vcard me-2"></i>KYC Documents: <span id="kycModalName"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="av-kyc-grid">
+                    <figure class="av-kyc-shot">
+                        <figcaption>Step 1: ID card close-up</figcaption>
+                        <a id="kycCardLink" class="av-kyc-frame d-none" target="_blank" rel="noopener noreferrer" title="Open full size in a new tab">
+                            <img id="kycCardImg" alt="Close-up photo of the visitor's ID card">
+                        </a>
+                        <p id="kycCardMissing" class="av-kyc-missing d-none">No ID close-up on file (a booking made before two-step capture, or removed by the 30-day purge).</p>
+                    </figure>
+                    <figure class="av-kyc-shot">
+                        <figcaption>Step 2: Liveness selfie holding the ID</figcaption>
+                        <a id="kycSelfieLink" class="av-kyc-frame d-none" target="_blank" rel="noopener noreferrer" title="Open full size in a new tab">
+                            <img id="kycSelfieImg" alt="Selfie of the visitor holding their ID">
+                        </a>
+                        <p id="kycSelfieMissing" class="av-kyc-missing d-none">No selfie on file.</p>
+                    </figure>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 🧬 BAN VISITOR dialog (shared with the Guard Dashboard) -->
+<div th:replace="~{fragments/ban :: banDialog}"></div>
+
+<th:block th:replace="~{fragments/shell :: scripts}"></th:block>
+<th:block th:replace="~{fragments/ban :: banDialogScript}"></th:block>
+<script>
+// KYC viewer: Bootstrap passes the clicked "View KYC" button as relatedTarget. File names are UUIDs from the server;
+// they are still URL-encoded, and the visitor name goes in with textContent (never as HTML).
+(function () {
+    var modal = document.getElementById('kycModal');
+    if (!modal) return;
+    function show(kind, file) {
+        var link = document.getElementById('kyc' + kind + 'Link');
+        var img = document.getElementById('kyc' + kind + 'Img');
+        var missing = document.getElementById('kyc' + kind + 'Missing');
+        if (file) {
+            var url = '/uploads/' + encodeURIComponent(file);
+            img.src = url;
+            link.href = url;
+        } else {
+            img.removeAttribute('src');
+            link.removeAttribute('href');
+        }
+        link.classList.toggle('d-none', !file);
+        missing.classList.toggle('d-none', !!file);
+    }
+    modal.addEventListener('show.bs.modal', function (event) {
+        var button = event.relatedTarget;
+        if (!button) return;
+        document.getElementById('kycModalName').textContent = button.getAttribute('data-kyc-name') || '';
+        show('Card', button.getAttribute('data-kyc-card'));
+        show('Selfie', button.getAttribute('data-kyc-selfie'));
+    });
+    // Drop the photos on close, so the next visitor's viewer never flashes the previous one
+    modal.addEventListener('hidden.bs.modal', function () {
+        show('Card', null);
+        show('Selfie', null);
+    });
+})();
+</script>
+<script type="text/javascript" src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script type="text/javascript" src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+<script type="text/javascript" src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+
+<script th:inline="javascript">
+    /*<![CDATA[*/
+    $(document).ready(function() {
+        $('#visitorTable').DataTable({
+            "pageLength": 10,
+            "ordering": false,
+            "info": true,
+            "dom": '<"d-flex justify-content-between align-items-center p-3 border-bottom"f>rt<"d-flex justify-content-between p-3"ip>',
+            "language": {
+                "search": "",
+                "searchPlaceholder": "Search records...",
+                "emptyTable": "No visitors found for this filter."
+            }
+        });
+
+        // Clean up DataTable search input styling
+        $('.dataTables_filter input').addClass('form-control form-control-sm');
+    });
+
+    var loggedInUser = /*[[${loggedInUser}]]*/ 'none';
+
+    // Colours resolve from theme tokens (theme.css) and re-apply on theme toggle (shell.js).
+    var C = AeroShell.color;
+    var GRID = { color: C('--chart-grid') };
+
+    // RENDER MAIN OCCUPANCY GAUGE (Visible to all)
+    var liveOccupancy = /*[[${currentOccupancy}]]*/ 0;
+    var maxCapacity = /*[[${todayMaxCapacity}]]*/ 100;
+    var emptySpace = Math.max(0, maxCapacity - liveOccupancy);
+    var utilizationRate = (maxCapacity > 0) ? (liveOccupancy / maxCapacity) * 100 : 0;
+    var gaugeColor = '--chart-1';                          // Nominal: PAF ultramarine
+    if (utilizationRate > 85) gaugeColor = '--chart-3';    // Critical: PAF red
+    else if (utilizationRate > 50) gaugeColor = '--chart-2'; // Elevated: PAF gold
+
+    var ctxMainGauge = document.getElementById('capacityGaugeMain');
+    if(ctxMainGauge) {
+        new Chart(ctxMainGauge.getContext('2d'), {
+            type: 'doughnut',
+            data: {
+                labels: ['Occupied', 'Available'],
+                datasets: [{
+                    data: [liveOccupancy, emptySpace],
+                    backgroundColor: [C(gaugeColor), C('--chart-grid')],
+                    avColors: { backgroundColor: [gaugeColor, '--chart-grid'] },
+                    borderWidth: 0,
+                    hoverOffset: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                circumference: 180,
+                rotation: -90,
+                cutout: '80%',
+                plugins: { legend: { display: false }, tooltip: { enabled: true } }
+            }
+        });
+    }
+
+    /*]]>*/
+</script>
+
+</body>
+</html>

@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/shell :: head}"></th:block>
+    <title>AeroVisit - System Access</title>
+</head>
+<body class="av-app">
+
+<main class="av-auth">
+    <div class="av-auth-top">
+        <span class="paf-logo-plate av-auth-logo"><img class="paf-logo" src="/images/paflogo.png" alt="Philippine Air Force Museum Logo" width="260" height="130"></span>
+    </div>
+
+    <section class="av-auth-panel">
+        <button type="button" class="av-iconbtn theme-toggle av-theme-corner" data-theme-toggle aria-label="Toggle dark mode">
+            <i class="bi bi-moon-stars theme-icon-light"></i>
+            <i class="bi bi-sun theme-icon-dark"></i>
+        </button>
+
+        <h2>Log in</h2>
+        <p class="av-auth-sub">Continue to the PAF Aerospace Museum admin.</p>
+
+        <div th:if="${param.error}" class="error-msg" role="alert">
+            <i class="bi bi-exclamation-triangle-fill"></i> Invalid credentials. Access denied.
+        </div>
+
+        <form th:action="@{/login}" method="post">
+            <div class="av-field">
+                <!-- Staff accounts: "director" or "guard"; the role comes from the account itself -->
+                <label class="form-label-custom" for="username">Staff Username</label>
+                <input type="text" id="username" name="username" class="form-control-custom" placeholder="director or guard" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+            </div>
+
+            <div class="av-field">
+                <label class="form-label-custom" for="password">Password</label>
+                <input type="password" id="password" name="password" class="form-control-custom" placeholder="Enter your password" autocomplete="current-password" required>
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100 mt-2">Log in</button>
+        </form>
+    </section>
+
+    <p class="av-auth-foot">Authorised personnel only. All sessions are logged. &middot; <a href="/">Back to visitor portal</a></p>
+</main>
+
+</body>
+</html>

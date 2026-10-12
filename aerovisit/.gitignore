@@ -1,0 +1,64 @@
+# --- Project Specifics ---
+target/
+bin/
+out/
+build/
+HELP.md
+
+# --- SECURITY: DO NOT UPLOAD VISITOR DATA ---
+/uploads/*
+!/uploads/.gitkeep
+# This ensures personal IDs and QR codes stay on your laptop only.
+
+# --- DATABASE FILES ---
+*.db
+*.mv.db
+*.trace.db
+*.lock.db
+/data/
+# Prevents your local test data from overwriting other environments.
+
+# --- STS / Eclipse ---
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+# --- IntelliJ IDEA ---
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+# --- NetBeans ---
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+# --- VS Code ---
+.vscode/
+*.code-workspace
+
+# --- OS Generated ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# --- SECRETS: never commit real credentials ---
+.env
+*.env
+!.env.example
+
+# --- Log Files ---
+*.log
+logs/

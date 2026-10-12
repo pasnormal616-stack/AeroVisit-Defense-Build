@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    </head>
+    <body>
+    <!-- THIS IS THE FRAGMENT WE WILL INJECT -->
+    <div th:fragment="chatbotFragment">
+        
+        <!-- Chatbot styling lives in /styles/visitor.css (section 11) -->
+
+        <!-- Chatbot UI HTML -->
+        <!-- Sgt. Aero floating badge: drag to move, it snaps to the nearest side edge; a clean tap still runs toggleChat() -->
+        <button id="chat-toggle-btn" type="button" onclick="toggleChat()" aria-label="Open Sgt. Aero, your AI museum guide" title="Sgt. Aero — AI Advisor"><span class="aero-fab-sweep" aria-hidden="true"></span><i class="bi bi-chat-square-dots"></i></button>
+
+        <!-- First-visit greeting bubble (once per browser session) -->
+        <div id="aero-greet" class="aero-greet" role="status" hidden>
+            <button type="button" class="aero-greet-msg" id="aero-greet-msg">
+                <span class="aero-greet-name">Sgt. Aero</span>
+                Greetings! I'm Sgt. Aero, your PAF Aerospace Museum guide. Tap here for assistance!
+            </button>
+            <button type="button" class="aero-greet-close" id="aero-greet-close" aria-label="Dismiss greeting">&#10005;</button>
+        </div>
+
+        <div id="chat-window">
+            <div class="chat-header">AeroVisit AI Advisor
+                <button type="button" id="chat-voice-btn" class="chat-voice-btn" onclick="toggleVoice()" aria-pressed="false" aria-label="Turn AI voice on" title="Voice off"><i class="bi bi-volume-mute"></i></button>
+                <button type="button" id="chat-close-btn" class="chat-close-btn" onclick="closeChat()" aria-label="Close the AI Advisor" title="Close"><i class="bi bi-x-lg"></i></button>
+            </div>
+            <div id="chat-body">
+                <div class="chat-msg msg-bot">Hello! I'm your virtual guide. Ask me about booking, rules, or PAF trivia!</div>
+            </div>
+            <!-- 📍 Directions: Google Maps uses the visitor's own location; nothing about it reaches this site or the AI -->
+            <div class="chat-quick">
+                <a class="chat-directions" id="chat-directions" href="https://www.google.com/maps/dir/?api=1&amp;destination=Philippine+Air+Force+Aerospace+Museum,+Villamor+Air+Base,+Pasay+City" target="_blank" rel="noopener noreferrer"><i class="bi bi-geo-alt" aria-hidden="true"></i> Get directions to the museum</a>
+            </div>
+            <div class="chat-input-area">
+                <input type="text" id="chatInput" placeholder="Type a message..." aria-label="Message the AI Advisor" onkeypress="handleEnter(event)">
+                <button type="button" id="chat-mic-btn" class="chat-icon-btn" onclick="toggleMic()" aria-pressed="false" aria-label="Speak your message" title="Speak"><i class="bi bi-mic"></i></button>
+                <button type="button" onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+
+        <!-- Chatbot JavaScript Brain -->
+        <script>
+            // 🔥 NEW: Generate or retrieve a unique Session ID for this visitor's browser
+            function getSessionId() {
+                let sessionId = localStorage.getItem('aero_session_id');
+                if (!sessionId) {
+                    sessionId = 'SGT-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+                    localStorage.setItem('aero_session_id', sessionId);
+                }
+                return sessionId;
+            }
+
+            function toggleChat() {
+                const chatWin = document.getElementById('chat-window');
+                chatWin.style.display = chatWin.style.display === 'flex' ? 'none' : 'flex';
+            }
+
+            // Header X: hides the window the same way the badge's toggleChat() does, and stops any listening/speaking
+            function closeChat() {
+                document.getElementById('chat-window').style.display = 'none';
+                if (isListening && recognition) recognition.abort();
+                setMicState(false);
+                if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+                const fab = document.getElementById('chat-toggle-btn');
+                if (fab) fab.focus();
+            }
+
+            function handleEnter(e) {
+                if(e.key === 'Enter') sendMessage();
+            }
+
+            function appendMessage(sender, text, isThinking = false) {
+                const body = document.getElementById('chat-body');
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'chat-msg ' + (sender === 'user' ? 'msg-user' : 'msg-bot');
+                
+                if (isThinking) {
+                    msgDiv.id = 'thinking-bubble';
+                    msgDiv.innerHTML = '<span class="typing-indicator">Thinking...</span>';
+                } else {
+                    msgDiv.innerText = text;
+                }
+                
+                body.appendChild(msgDiv);
+                body.scrollTop = body.scrollHeight; // Auto-scroll to bottom
+            }
+
+            // Web Speech API for the J.A.R.V.I.S voice effect (Upgraded for Local Accent)
+            function speakText(text) {
+                if (!voiceEnabled) return; // AI voice is controlled by the header speaker toggle
+                if ('speechSynthesis' in window) {
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    
+                    // Get all available voices on the user's browser/device
+                    const voices = window.speechSynthesis.getVoices();
+                    
+                    // Look for a Filipino, Tagalog, or Philippine-English voice
+                    const localVoice = voices.find(voice => 
+                        voice.lang.includes('fil') || 
+                        voice.lang.includes('PH') || 
+                        voice.name.includes('Tagalog') || 
+                        voice.name.includes('Filipino')
+                    );
+
+                    // If a local voice is found, assign it to Sgt. Aero
+                    if (localVoice) {
+                        utterance.voice = localVoice;
+                    }
+
+                    utterance.rate = 0.95; // Slightly slower for a clear, commanding tone
+                    utterance.pitch = 0.9; // Slightly deeper pitch
+                    
+                    window.speechSynthesis.speak(utterance);
+                }
+            }
+
+            // --- Voice controls (Web Speech API) ---
+            let voiceEnabled = false; // AI voice is OFF by default
+
+            function toggleVoice() {
+                voiceEnabled = !voiceEnabled;
+                const btn = document.getElementById('chat-voice-btn');
+                btn.setAttribute('aria-pressed', voiceEnabled);
+                btn.setAttribute('aria-label', voiceEnabled ? 'Turn AI voice off' : 'Turn AI voice on');
+                btn.title = voiceEnabled ? 'Voice on' : 'Voice off';
+                btn.querySelector('i').className = voiceEnabled ? 'bi bi-volume-up' : 'bi bi-volume-mute';
+                if ('speechSynthesis' in window) {
+                    if (voiceEnabled) window.speechSynthesis.getVoices(); // warm up the voice list (Chrome loads it async)
+                    else window.speechSynthesis.cancel();                 // stop mid-sentence when muted
+                }
+            }
+
+            const SpeechRecognitionApi = window.SpeechRecognition || window.webkitSpeechRecognition;
+            let recognition = null;
+            let isListening = false;
+            let micBaseText = '';
+
+            function setMicState(listening) {
+                isListening = listening;
+                const btn = document.getElementById('chat-mic-btn');
+                btn.classList.toggle('is-listening', listening);
+                btn.setAttribute('aria-pressed', listening);
+                btn.setAttribute('aria-label', listening ? 'Stop listening' : 'Speak your message');
+                btn.querySelector('i').className = listening ? 'bi bi-mic-fill' : 'bi bi-mic';
+            }
+
+            const MIC_BLOCKED_MESSAGE = 'Microphone access is blocked. Please ensure you have granted permission and are using a secure (HTTPS) connection.';
+
+            // Browsers only allow the microphone on HTTPS (or localhost); a phone opening http://<laptop-ip> is refused
+            function micBlocked() {
+                setMicState(false);
+                appendMessage('bot', MIC_BLOCKED_MESSAGE);
+            }
+
+            function toggleMic() {
+                if (window.isSecureContext === false || !recognition) { micBlocked(); return; }
+                if (isListening) { recognition.stop(); return; }
+                if ('speechSynthesis' in window) window.speechSynthesis.cancel(); // keep the mic from picking up the AI voice
+                micBaseText = document.getElementById('chatInput').value.trim();
+                try {
+                    recognition.start();
+                    setMicState(true);
+                } catch (e) {
+                    if (e && e.name === 'InvalidStateError') return; // already starting: the next onend/onerror settles the button
+                    micBlocked(); // e.g. NotAllowedError thrown straight away by mobile browsers
+                }
+            }
+
+            if (SpeechRecognitionApi) {
+                recognition = new SpeechRecognitionApi();
+                recognition.lang = 'en-PH';
+                recognition.interimResults = true; // text appears live while speaking
+                recognition.continuous = false;    // stops after a pause
+
+                recognition.onresult = (event) => {
+                    let transcript = '';
+                    for (let i = 0; i < event.results.length; i++) transcript += event.results[i][0].transcript;
+                    document.getElementById('chatInput').value = (micBaseText ? micBaseText + ' ' : '') + transcript;
+                };
+                recognition.onerror = (event) => {
+                    // Any error ends this listening session: stop the red pulse now, don't wait for onend (not every browser sends it)
+                    setMicState(false);
+                    if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+                        appendMessage('bot', MIC_BLOCKED_MESSAGE);
+                    } else if (event.error === 'audio-capture') {
+                        appendMessage('bot', 'No microphone was found on this device. Please type your message instead.');
+                    } else if (event.error === 'network') {
+                        appendMessage('bot', 'Voice input needs an internet connection. Please type your message instead.');
+                    }
+                    // 'no-speech' and 'aborted' just reset the button quietly
+                };
+                recognition.onend = () => {
+                    setMicState(false);
+                    document.getElementById('chatInput').focus();
+                };
+            } else if (window.isSecureContext === false) {
+                // Some mobile browsers hide speech recognition on plain HTTP: keep the button so a tap explains why
+            } else {
+                document.getElementById('chat-mic-btn').hidden = true; // e.g. Firefox has no speech recognition
+            }
+
+            function sendMessage() {
+                const inputField = document.getElementById('chatInput');
+                const text = inputField.value.trim();
+                if (!text) return;
+
+                // 1. Show user message
+                appendMessage('user', text);
+                inputField.value = '';
+
+                // 2. Show thinking animation
+                appendMessage('bot', '', true);
+
+                // 3. Send to Java Backend via GET
+                // 🔥 NEW: Append the unique session ID to the URL
+                const userSession = getSessionId();
+                fetch(`/api/chatbot/ask?message=${encodeURIComponent(text)}&session_id=${userSession}`)
+                .then(response => response.json())
+                .then(data => {
+                    // Remove thinking bubble
+                    document.getElementById('thinking-bubble').remove();
+                    
+                    // Simulate a slight delay for the "wow factor" before showing answer
+                    setTimeout(() => {
+                        appendMessage('bot', data.reply);
+                        speakText(data.reply); // Read it out loud!
+                    }, 500); 
+                })
+                .catch(err => {
+                    document.getElementById('thinking-bubble').remove();
+                    appendMessage('bot', "System error. My connection to the base is disrupted.");
+                });
+            }
+        </script>
+
+        <!-- Sgt. Aero badge: drag + edge-snap, and the first-visit greeting. Leaves the chat logic above untouched. -->
+        <script>
+            (function () {
+                var fab = document.getElementById('chat-toggle-btn');
+                var chatWin = document.getElementById('chat-window');
+                var greet = document.getElementById('aero-greet');
+                if (!fab || !chatWin) return;
+
+                var EDGE = 20;           // gap to the screen edge (matches the original right/bottom: 20px)
+                var TOP_GUARD = 84;      // keep clear of the floating nav island
+                var GAP = 14;            // badge <-> chat window / greeting
+                var DRAG_THRESHOLD = 6;  // px of travel before a press counts as a drag
+                var POS_KEY = 'aero_fab_pos', GREET_KEY = 'aero_greet_seen';
+
+                function readStore(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
+                function writeStore(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* private mode */ } }
+                function vw() { return document.documentElement.clientWidth; }
+                function vh() { return document.documentElement.clientHeight; }
+                function size() { return fab.offsetWidth; }
+                function clampY(y) { return Math.min(Math.max(y, TOP_GUARD), vh() - size() - EDGE); }
+                function clampX(x) { return Math.min(Math.max(x, 0), vw() - size()); }
+                function edgeX(side) { return side === 'left' ? EDGE : vw() - size() - EDGE; }
+
+                var pos = null; // { side, x, y } once the badge has been moved; null = CSS default (bottom-right)
+
+                function box() {
+                    if (!pos) { var r = fab.getBoundingClientRect(); return { x: r.left, y: r.top, side: 'right' }; }
+                    return pos;
+                }
+
+                function place(x, y) {
+                    fab.classList.add('is-placed');
+                    fab.style.setProperty('--fab-x', x + 'px');
+                    fab.style.setProperty('--fab-y', y + 'px');
+                }
+
+                // Keep the chat window on the badge's side and above/below it, so it never covers the badge
+                function syncWindow() {
+                    if (!pos) return;
+                    var below = pos.y + size() / 2 < vh() / 2;
+                    chatWin.classList.add('is-anchored');
+                    chatWin.classList.toggle('is-left', pos.side === 'left');
+                    chatWin.classList.toggle('is-below', below);
+                    chatWin.style.setProperty('--chat-anchor', (below ? pos.y + size() + GAP : vh() - pos.y + GAP) + 'px');
+                }
+
+                function snapTo(side, y, animate) {
+                    pos = { side: side, x: edgeX(side), y: clampY(y) };
+                    fab.classList.toggle('is-snapping', !!animate);
+                    place(pos.x, pos.y);
+                    syncWindow();
+                    positionGreeting();
+                    writeStore(POS_KEY, JSON.stringify({ side: pos.side, y: pos.y }));
+                }
+
+                // Restore the spot the visitor dragged it to earlier in this session
+                try {
+                    var saved = JSON.parse(readStore(POS_KEY));
+                    if (saved && (saved.side === 'left' || saved.side === 'right')) snapTo(saved.side, +saved.y || 0, false);
+                } catch (e) { /* ignore bad data */ }
+
+                /* ---------- Drag (mouse + touch via Pointer Events) ---------- */
+                var drag = null, suppressClickUntil = 0;
+
+                fab.addEventListener('pointerdown', function (e) {
+                    if (e.button !== 0) return;
+                    var b = box();
+                    drag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, ox: b.x, oy: b.y, moved: false };
+                });
+
+                fab.addEventListener('pointermove', function (e) {
+                    if (!drag || e.pointerId !== drag.id) return;
+                    var dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+                    if (!drag.moved) {
+                        if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+                        drag.moved = true;
+                        try { fab.setPointerCapture(drag.id); } catch (err) { /* pointer already gone */ }
+                        fab.classList.remove('is-snapping');
+                        fab.classList.add('is-dragging');
+                        if (greet) greet.classList.add('is-parked');
+                    }
+                    place(clampX(drag.ox + dx), Math.min(Math.max(drag.oy + dy, 0), vh() - size()));
+                });
+
+                function endDrag(e) {
+                    if (!drag || e.pointerId !== drag.id) return;
+                    var d = drag; drag = null;
+                    if (!d.moved) return; // plain tap: let the click through to toggleChat()
+                    suppressClickUntil = Date.now() + 400;
+                    fab.classList.remove('is-dragging');
+                    var x = clampX(d.ox + e.clientX - d.sx), y = d.oy + e.clientY - d.sy;
+                    snapTo(x + size() / 2 < vw() / 2 ? 'left' : 'right', y, true);
+                    setTimeout(function () { if (greet) greet.classList.remove('is-parked'); }, 420);
+                }
+                fab.addEventListener('pointerup', endDrag);
+                fab.addEventListener('pointercancel', endDrag);
+                fab.addEventListener('transitionend', function (e) {
+                    if (e.target === fab && e.propertyName === 'translate') fab.classList.remove('is-snapping');
+                });
+
+                // Capture phase runs before the inline onclick, so a drag release never opens the chat
+                document.addEventListener('click', function (e) {
+                    if (!fab.contains(e.target)) return;
+                    if (Date.now() < suppressClickUntil) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return;
+                    }
+                    hideGreeting(); // clean tap: chat is opening (or closing), the greeting has done its job
+                }, true);
+
+                window.addEventListener('resize', function () {
+                    if (pos) snapTo(pos.side, pos.y, false);
+                    else positionGreeting();
+                });
+
+                /* ---------- Proactive greeting (first visit per session) ---------- */
+                function positionGreeting() {
+                    if (!greet || greet.hidden) return;
+                    var b = box(), left = b.side === 'left';
+                    greet.classList.toggle('is-left', left);
+                    greet.style.setProperty('--greet-y', (b.y + size() / 2) + 'px');
+                    greet.style.setProperty('--greet-x', (left ? b.x + size() + GAP : vw() - b.x + GAP) + 'px');
+                }
+
+                function showGreeting() {
+                    if (!greet || readStore(GREET_KEY) === '1' || chatWin.style.display === 'flex') return;
+                    writeStore(GREET_KEY, '1');
+                    greet.hidden = false;
+                    positionGreeting();
+                    void greet.offsetWidth; // commit the hidden state so the entrance animates
+                    greet.classList.add('is-in');
+                }
+
+                function hideGreeting() {
+                    if (!greet || greet.hidden) return;
+                    greet.classList.remove('is-in');
+                    setTimeout(function () { greet.hidden = true; }, 260);
+                }
+
+                if (greet) {
+                    document.getElementById('aero-greet-close').addEventListener('click', hideGreeting);
+                    document.getElementById('aero-greet-msg').addEventListener('click', function () {
+                        hideGreeting();
+                        if (chatWin.style.display !== 'flex') toggleChat();
+                        document.getElementById('chatInput').focus();
+                    });
+
+                    // Wait for the radar pre-loader to lift; if the welcome modal is up, greet after it closes instead
+                    (window.vpWhenReady || function (cb) { cb(); })(function () {
+                        if (document.documentElement.getAttribute('data-vp-welcome') === 'pending') {
+                            document.addEventListener('vp:welcome-closed', function () { setTimeout(showGreeting, 1500); }, { once: true });
+                        } else {
+                            setTimeout(showGreeting, 1800);
+                        }
+                    });
+                }
+            })();
+        </script>
+    </div>
+</body>
+</html>

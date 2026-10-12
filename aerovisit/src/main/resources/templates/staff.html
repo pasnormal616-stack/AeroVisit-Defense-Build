@@ -1,0 +1,1285 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/shell :: head}"></th:block>
+    <title>AeroVisit - Schedule & Capacity Command</title>
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js'></script>
+    <script src="/js/shell.js"></script>
+</head>
+<body class="av-app">
+
+<a href="#main" class="visually-hidden-focusable">Skip to content</a>
+<th:block th:replace="~{fragments/shell :: sidebar('staff')}"></th:block>
+<th:block th:replace="~{fragments/shell :: header('Slots & Staff')}"></th:block>
+
+<main class="av-main" id="main">
+<div class="av-workspace">
+
+    <div class="av-pagehead">
+        <div>
+            <span class="av-mono av-code">CMD-07</span>
+            <h1 class="av-pagehead-title">Schedule &amp; Capacity</h1>
+            <p class="av-pagehead-desc">Manage operational booking windows and personnel assignments.</p>
+        </div>
+        <div class="av-pagehead-actions">
+            <form action="/admin/staff/publish-roster" method="post"
+                  onsubmit="return confirm('Publish the duty roster?\n\nEvery officer with an email on file will be sent their upcoming shifts.');">
+                <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                <button type="submit" class="btn btn-primary"><i class="bi bi-send"></i> Publish Roster &amp; Notify Staff</button>
+            </form>
+            <a href="/admin" class="btn btn-light d-lg-none"><i class="bi bi-arrow-left"></i> Back to Dashboard</a>
+        </div>
+    </div>
+
+    <!-- TOOLBAR: 3 Tabs -->
+    <div class="av-toolbar">
+        <ul class="nav av-tabs" id="commandTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="slots-tab" data-bs-toggle="tab" data-bs-target="#slots" type="button" role="tab" aria-controls="slots" aria-selected="true"><i class="bi bi-calendar-check"></i>Public Booking Slots</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="roster-tab" data-bs-toggle="tab" data-bs-target="#roster" type="button" role="tab" aria-controls="roster" aria-selected="false"><i class="bi bi-shield-check"></i>Master Duty Roster</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="directory-tab" data-bs-toggle="tab" data-bs-target="#directory" type="button" role="tab" aria-controls="directory" aria-selected="false"><i class="bi bi-person-badge"></i>Staff Directory</button>
+            </li>
+        </ul>
+        <div class="av-toolbar-meta av-mono">
+            <span class="av-legend av-legend--guard">AM</span>
+            <span class="av-legend av-legend--guide">PM</span>
+            <span class="av-legend av-legend--ok">Full day</span>
+        </div>
+    </div>
+
+    <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
+        <i class="bi bi-check-square-fill"></i> <span th:text="${success}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+        <i class="bi bi-exclamation-triangle-fill"></i> <span th:text="${error}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    <div th:if="${info}" class="alert alert-primary alert-dismissible fade show" role="alert">
+        <i class="bi bi-info-circle-fill"></i> <span th:text="${info}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+
+    <div class="tab-content" id="commandTabsContent">
+
+        <!-- SLOTS TAB -->
+        <div class="tab-pane fade show active" id="slots" role="tabpanel" aria-labelledby="slots-tab">
+            <!-- EMERGENCY CLOSURE ("red button"): locks a date and cancels + emails its visitors -->
+            <div class="av-panel av-panel--alert mb-4">
+                <div class="av-panel-head">
+                    <span><i class="bi bi-exclamation-octagon-fill me-2"></i>Emergency Closure</span>
+                    <span class="av-label">Cancels all approved and pending bookings for the date</span>
+                </div>
+                <div class="av-panel-body">
+                    <div class="row g-4">
+                        <div class="col-lg-7">
+                            <form action="/admin/slots/closure/execute" method="post"
+                                  onsubmit="return confirm('Declare an EMERGENCY CLOSURE for ' + this.closureDate.value + '?\n\nEvery approved and pending booking on that date will be CANCELLED and each visitor will be emailed. This cannot be undone.');">
+                                <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                <div class="av-field-row">
+                                    <div class="av-field">
+                                        <label class="form-label-custom" for="closureDate">Closure Date</label>
+                                        <input type="date" id="closureDate" name="closureDate" class="form-control-custom" required
+                                               th:min="${#temporals.format(#temporals.createToday(), 'yyyy-MM-dd')}">
+                                    </div>
+                                    <div class="av-field">
+                                        <label class="form-label-custom" for="closureReason">Reason (shown to visitors)</label>
+                                        <input type="text" id="closureReason" name="reason" class="form-control-custom" maxlength="255" required
+                                               placeholder="e.g. Typhoon Signal No. 3">
+                                    </div>
+                                </div>
+                                <button type="submit" class="btn btn-danger w-100"><i class="bi bi-exclamation-octagon me-1"></i>Declare Emergency Closure</button>
+                            </form>
+                        </div>
+                        <div class="col-lg-5">
+                            <div class="form-label-custom">Upcoming Closures</div>
+                            <table class="table table-sm mb-0 align-middle" th:if="${not #lists.isEmpty(upcomingClosures)}">
+                                <tbody>
+                                    <tr th:each="c : ${upcomingClosures}">
+                                        <td class="av-mono text-nowrap" th:text="${#temporals.format(c.closureDate, 'EEE, MMM d, yyyy')}"></td>
+                                        <td th:text="${c.reason}"></td>
+                                        <td class="text-end">
+                                            <form th:action="@{/admin/slots/closure/{id}/delete(id=${c.id})}" method="post"
+                                                  onsubmit="return confirm('Reopen this date for public booking?\n\nBookings already cancelled by the closure will stay cancelled.');">
+                                                <button type="submit" class="btn btn-sm btn-light text-danger p-1" title="Reopen date" aria-label="Reopen date"><i class="bi bi-unlock"></i> Reopen</button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <p class="av-hint mb-0" th:if="${#lists.isEmpty(upcomingClosures)}">No closures declared.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4">
+                <div class="col-lg-4">
+                    <div class="av-panel h-100 mb-0">
+                        <div class="av-panel-head"><span><i class="bi bi-gear me-2"></i>Bulk Slot Generator</span></div>
+                        <div class="av-panel-body">
+                            <form action="/admin/slots/add" method="post">
+                                <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                <div class="av-field-row">
+                                    <div class="av-field">
+                                        <label class="form-label-custom" for="bulkStartDate">Start Date</label>
+                                        <input type="date" id="bulkStartDate" name="startDate" class="form-control-custom" required>
+                                    </div>
+                                    <div class="av-field">
+                                        <label class="form-label-custom" for="bulkEndDate">End Date</label>
+                                        <input type="date" id="bulkEndDate" name="endDate" class="form-control-custom" required>
+                                    </div>
+                                </div>
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="bulkTimeWindow">Time Window</label>
+                                    <select id="bulkTimeWindow" name="timeWindow" class="form-control-custom" required>
+                                        <option th:each="w : ${timeWindows}" th:value="${w.label}" th:text="${w.label}"></option>
+                                        <option th:if="${#lists.isEmpty(timeWindows)}" value="" disabled selected>Add a time window below first</option>
+                                    </select>
+                                </div>
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="bulkMaxCapacity">Daily Max Capacity</label>
+                                    <input type="number" id="bulkMaxCapacity" name="maxCapacity" class="form-control-custom" value="100" min="1" required>
+                                </div>
+                                <div class="form-check av-field">
+                                    <input class="form-check-input" type="checkbox" name="excludeWeekends" id="excludeWeekends" value="true" checked>
+                                    <label class="form-check-label" for="excludeWeekends">Exclude Weekends</label>
+                                </div>
+                                <div class="av-well">
+                                    <label class="form-label-custom" for="blackoutPicker"><i class="bi bi-calendar-x me-1"></i> Skip Dates (Holidays)</label>
+                                    <div class="input-group mb-2">
+                                        <input type="date" id="blackoutPicker" class="form-control-custom" aria-label="Select holiday date to skip">
+                                        <button type="button" class="btn btn-outline-danger" onclick="addBlackoutDate()">Add</button>
+                                    </div>
+                                    <div id="blackoutBadges" class="d-flex flex-wrap gap-2"></div>
+                                    <small class="av-hint mt-2"><i class="bi bi-info-circle me-1"></i> Holidays are skipped for this run only. Dates that already have slots stay open — delete them from the calendar to close them.</small>
+                                    <input type="hidden" name="excludeDates" id="hiddenExcludeDates">
+                                </div>
+                                <button type="submit" class="btn-primary-custom w-100"><i class="bi bi-rocket-takeoff"></i>Generate Schedule</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-lg-8">
+                    <div class="av-panel h-100 mb-0">
+                        <div class="av-panel-head"><span>Active Museum Schedule</span><span class="av-label">Click a block for details</span></div>
+                        <div class="av-panel-body">
+                            <div class="av-cal-scroll"><div id='slotsCalendar'></div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- OPERATING TIME WINDOWS (Director-editable; listed in the Bulk Slot Generator above) -->
+            <div class="av-panel mt-4 mb-0">
+                <div class="av-panel-head">
+                    <span><i class="bi bi-clock-history me-2"></i>Operating Time Windows</span>
+                    <span class="av-label">Offered by the Bulk Slot Generator</span>
+                </div>
+                <div class="table-responsive-custom">
+                    <table class="table table-hover table-sm mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Name</th>
+                                <th>Start</th>
+                                <th>End</th>
+                                <th>Label shown to visitors</th>
+                                <th class="text-end">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:each="w : ${timeWindows}">
+                                <td><input type="text" name="name" class="form-control-custom" maxlength="40" required th:value="${w.name}" th:attr="form=|tw-edit-${w.id}|" aria-label="Time window name"></td>
+                                <td><input type="time" name="startTime" class="form-control-custom" required th:value="${w.startTime}" th:attr="form=|tw-edit-${w.id}|" aria-label="Start time"></td>
+                                <td><input type="time" name="endTime" class="form-control-custom" required th:value="${w.endTime}" th:attr="form=|tw-edit-${w.id}|" aria-label="End time"></td>
+                                <td class="av-mono" th:text="${w.label}"></td>
+                                <td class="text-end">
+                                    <div class="d-inline-flex gap-1">
+                                        <form th:id="|tw-edit-${w.id}|" th:action="@{/admin/slots/windows/{id}/update(id=${w.id})}" method="post">
+                                            <button type="submit" class="btn btn-sm btn-light text-primary p-1" title="Save changes" aria-label="Save time window"><i class="bi bi-check2"></i></button>
+                                        </form>
+                                        <form th:action="@{/admin/slots/windows/{id}/delete(id=${w.id})}" method="post" onsubmit="return confirm('Remove this time window? Booking slots already generated with it stay open.');">
+                                            <button type="submit" class="btn btn-sm btn-light text-danger p-1" title="Remove time window" aria-label="Remove time window"><i class="bi bi-trash"></i></button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr th:if="${#lists.isEmpty(timeWindows)}">
+                                <td colspan="5" class="av-empty">No time windows yet. Add one below.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="av-panel-body">
+                    <form th:action="@{/admin/slots/windows/add}" method="post" class="row g-3 align-items-end">
+                        <div class="col-md-4">
+                            <label class="form-label-custom" for="twName">Name</label>
+                            <input type="text" id="twName" name="name" class="form-control-custom" maxlength="40" placeholder="e.g. Twilight Tour" required>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label-custom" for="twStart">Start Time</label>
+                            <input type="time" id="twStart" name="startTime" class="form-control-custom" required>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label-custom" for="twEnd">End Time</label>
+                            <input type="time" id="twEnd" name="endTime" class="form-control-custom" required>
+                        </div>
+                        <div class="col-md-2">
+                            <button type="submit" class="btn-primary-custom w-100"><i class="bi bi-plus-lg"></i>Add Window</button>
+                        </div>
+                    </form>
+                    <small class="av-hint mt-2"><i class="bi bi-info-circle me-1"></i> Changes apply to slots you generate afterwards. Existing slots and bookings keep the label they were created with.</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- ROSTER TAB -->
+        <div class="tab-pane fade" id="roster" role="tabpanel" aria-labelledby="roster-tab">
+            <div class="row g-4">
+
+                <div class="col-lg-8">
+                    <div class="av-panel h-100 mb-0">
+                        <div class="av-panel-head">
+                            <span>Master Duty Roster</span>
+                            <div class="d-flex align-items-center flex-wrap gap-3">
+                                <span class="av-legend av-legend--open">Museum open</span>
+                                <span class="av-label">Click a date block to view staff details</span>
+                                <button type="button" class="btn btn-sm btn-danger" data-bs-toggle="modal" data-bs-target="#clearRosterModal"><i class="bi bi-calendar-x"></i>Clear Date Range</button>
+                            </div>
+                        </div>
+                        <div class="av-panel-body">
+                            <div class="av-cal-scroll"><div id='rosterCalendar'></div></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-lg-4">
+
+                    <div class="av-panel av-panel--accent">
+                        <div class="av-panel-head"><span><i class="bi bi-robot me-2"></i>AI Roster Generator</span></div>
+                        <div class="av-panel-body">
+                            <p class="av-small av-muted mb-3">
+                                Generate a multi-day staff schedule based on predictive models. You can edit names before deploying.
+                            </p>
+                            <form action="/admin/staff/ai-preview" method="post">
+                                <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                <div class="av-field-row">
+                                    <div class="av-field">
+                                        <label class="form-label-custom" for="aiStartDate">Start Date</label>
+                                        <input type="date" id="aiStartDate" name="startDate" class="form-control-custom" required>
+                                    </div>
+                                    <div class="av-field">
+                                        <label class="form-label-custom" for="aiEndDate">End Date</label>
+                                        <input type="date" id="aiEndDate" name="endDate" class="form-control-custom" required>
+                                    </div>
+                                </div>
+
+                                <div class="av-well">
+                                    <label class="form-label-custom" for="aiBlackoutPicker"><i class="bi bi-calendar-x me-1"></i> Skip Holidays</label>
+                                    <div class="input-group">
+                                        <input type="date" id="aiBlackoutPicker" class="form-control-custom" aria-label="Select AI holiday date to skip">
+                                        <button type="button" class="btn btn-outline-danger" onclick="addAiBlackoutDate()">Add</button>
+                                    </div>
+                                    <div id="aiBlackoutBadges" class="d-flex flex-wrap gap-2 mt-2"></div>
+                                    <input type="hidden" name="excludeDates" id="hiddenAiExcludeDates">
+                                </div>
+
+                                <div class="form-check av-field">
+                                    <input class="form-check-input" type="checkbox" id="aiExcludeWeekends" name="excludeWeekends" value="true" checked>
+                                    <label class="form-check-label" for="aiExcludeWeekends">Exclude Weekends</label>
+                                </div>
+
+                                <small class="av-hint mb-3"><i class="bi bi-info-circle me-1"></i> AI will automatically skip dates with no public booking slots.</small>
+
+                                <button type="submit" class="btn-primary-custom w-100">
+                                    <i class="bi bi-magic"></i> Ask AI &amp; Preview Roster
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <div class="av-panel">
+                        <div class="av-panel-head"><span>Assign Manual Duty</span></div>
+                        <div class="av-panel-body">
+                            <form action="/admin/staff/add" method="post">
+                                <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="staffName">Staff Name</label>
+                                    <select id="staffName" class="form-control-custom" name="staffName" required>
+                                        <option value="⚠️ OPEN SHIFT (AI)">-- Leave Unassigned (Open Shift) --</option>
+                                        <optgroup label="Official Staff Roster">
+                                            <option th:each="emp : ${employees}" th:value="${emp.name}" th:text="${emp.name} + ' (' + ${emp.role} + ')'"></option>
+                                        </optgroup>
+                                    </select>
+                                </div>
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="staffRole">Role</label>
+                                    <select id="staffRole" class="form-control-custom" name="role" required>
+                                        <option value="Gate Guard">Gate Guard</option>
+                                        <option value="Tour Guide">Tour Guide</option>
+                                        <option value="Admin">Admin</option>
+                                    </select>
+                                </div>
+
+                                <div class="av-field-row">
+                                    <div class="av-field">
+                                        <label class="form-label-custom" for="rosterStartDate">Start Date</label>
+                                        <input type="date" class="form-control-custom av-input-target" name="startDate" id="rosterStartDate" required>
+                                    </div>
+                                    <div class="av-field">
+                                        <label class="form-label-custom" for="rosterEndDate">End Date</label>
+                                        <input type="date" class="form-control-custom av-input-target" name="endDate" id="rosterEndDate" required>
+                                    </div>
+                                </div>
+
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="shiftTime">Shift Time</label>
+                                    <select id="shiftTime" class="form-control-custom" name="shiftTime" required>
+                                        <!-- 🧭 Only the configured time windows (ManagementController.windowShiftOptions), like the AI preview -->
+                                        <option th:each="opt : ${shiftOptions}" th:value="${opt}" th:text="${opt}"></option>
+                                    </select>
+                                </div>
+
+                                <div class="form-check av-field">
+                                    <input class="form-check-input" type="checkbox" name="excludeWeekends" id="staffExcludeWeekends" value="true" checked>
+                                    <label class="form-check-label" for="staffExcludeWeekends">Exclude Weekends</label>
+                                </div>
+
+                                <small class="av-hint mb-3"><i class="bi bi-info-circle me-1"></i> Shifts can only be scheduled on dates that are open for visit.</small>
+
+                                <button type="submit" class="btn-primary-custom av-btn--ink w-100">Assign Staff Member</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Tabular Quick Edit & Bulk Remove List -->
+                    <div class="av-panel mb-0">
+                        <div class="av-panel-head">
+                            <span><i class="bi bi-list-task me-2"></i>Shift Directory</span>
+                            <button id="bulkDeleteBtn" type="button" class="btn btn-sm btn-danger d-none" onclick="executeBulkDelete()">
+                                <i class="bi bi-trash"></i>Delete Selected
+                            </button>
+                        </div>
+                        <div class="av-panel-body pb-0">
+                            <input type="text" id="shiftSearch" class="form-control form-control-sm w-auto mb-3" placeholder="Search by name, date, or role..." aria-label="Search the Shift Directory" autocomplete="off">
+                        </div>
+                        <div class="table-responsive-custom">
+                            <table class="table table-hover table-sm mb-0 align-middle text-center">
+                                <thead class="table-light sticky-top">
+                                    <tr>
+                                        <th class="av-w-5"><input class="form-check-input" type="checkbox" id="selectAllShifts" onclick="toggleAllShifts(this)" aria-label="Select all shifts"></th>
+                                        <th class="av-w-25">Date</th>
+                                        <th class="av-w-35">Personnel</th>
+                                        <th class="av-w-20">Shift</th>
+                                        <th class="av-w-15">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="shiftDirectoryBody">
+                                    <tr th:each="sched : ${schedules}">
+                                        <td><input class="form-check-input shift-checkbox" type="checkbox" th:value="${sched.id}" onchange="checkBulkBtn()" aria-label="Select shift"></td>
+                                        <td class="av-mono av-cell-strong" th:text="${#temporals.format(sched.dutyDate, 'MM/dd/yyyy')}"></td>
+                                        <td class="text-start ps-2">
+                                            <div class="fw-bold text-primary av-truncate" th:text="${sched.staffName}"></div>
+                                            <div class="av-cell-sub" th:text="${sched.role}"></div>
+                                        </td>
+                                        <td>
+                                            <span th:if="${#strings.contains(sched.shiftTime, 'Morning')}" class="av-badge av-badge--am">AM</span>
+                                            <span th:if="${#strings.contains(sched.shiftTime, 'Afternoon')}" class="av-badge av-badge--pm">PM</span>
+                                            <span th:if="${#strings.contains(sched.shiftTime, 'Full')}" class="av-badge av-badge--day">All Day</span>
+                                        </td>
+                                        <td>
+                                            <div class="d-inline-flex gap-1">
+                                                <button class="btn btn-sm btn-light text-primary p-1" title="Edit Shift" aria-label="Edit shift" th:attr="onclick=|openEditModal('${sched.id}', '${sched.staffName}', '${sched.role}', '${sched.dutyDate}', '${sched.shiftTime}')|"><i class="bi bi-pencil"></i></button>
+                                                <button type="button" class="btn btn-sm btn-light text-danger p-1" title="Remove Shift" aria-label="Remove shift" th:attr="onclick=|fastDeleteShift('${sched.id}', this)|"><i class="bi bi-trash"></i></button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    <tr th:if="${#lists.isEmpty(schedules)}">
+                                        <td colspan="5" class="av-empty">No staff assigned yet.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <p id="shiftNoMatch" class="av-empty mb-0" hidden>No shifts match your search.</p>
+                        </div>
+                        <div class="av-panel-body d-flex justify-content-between align-items-center py-2">
+                            <span id="shiftPageInfo" class="av-label av-mono" aria-live="polite">Page 1 of 1</span>
+                            <nav aria-label="Shift Directory pages">
+                                <ul class="pagination pagination-sm mb-0">
+                                    <li class="page-item"><button type="button" class="page-link" id="shiftPrev">Previous</button></li>
+                                    <li class="page-item"><button type="button" class="page-link" id="shiftNext">Next</button></li>
+                                </ul>
+                            </nav>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <!-- STAFF DIRECTORY TAB -->
+        <div class="tab-pane fade" id="directory" role="tabpanel" aria-labelledby="directory-tab">
+            <div class="row g-4">
+                <div class="col-lg-4">
+                    <div class="av-panel h-100 mb-0">
+                        <div class="av-panel-head"><span>Add Museum Employee</span></div>
+                        <div class="av-panel-body">
+                            <form action="/admin/employee/add" method="post">
+                                <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="newEmployeeName">Full Name / Rank</label>
+                                    <input type="text" id="newEmployeeName" name="name" class="form-control-custom" placeholder="e.g. Sgt. Reyes" required aria-label="Full Name or Rank">
+                                </div>
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="newEmployeeRole">Primary Role</label>
+                                    <input type="text" id="newEmployeeRole" name="role" list="roleOptions" class="form-control-custom" maxlength="255" required aria-label="Primary Role" placeholder="Pick or type a role, e.g. Museum Curator" autocomplete="off">
+                                    <!-- Suggestions only: any role can be typed. Only these have automated duties (gate guard on duty, tour guide emails). -->
+                                    <datalist id="roleOptions">
+                                        <option value="Gate Guard"></option>
+                                        <option value="Tour Guide"></option>
+                                        <option value="Admin"></option>
+                                    </datalist>
+                                    <small class="av-hint">Gate Guard and Tour Guide get automatic gate and check-in duties; any other role is for records.</small>
+                                </div>
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="newEmployeeEmail">Email (for roster notifications)</label>
+                                    <input type="email" id="newEmployeeEmail" name="email" class="form-control-custom" maxlength="255" placeholder="e.g. reyes@example.com" autocomplete="off">
+                                </div>
+                                <!-- SHIFT TEMPLATE: the AI Roster Generator suggests this officer for shifts on these days -->
+                                <div class="av-field" role="group" aria-labelledby="newEmployeeDaysLabel">
+                                    <div class="form-label-custom" id="newEmployeeDaysLabel">Working Days</div>
+                                    <div class="d-flex flex-wrap column-gap-3">
+                                        <div class="form-check"><input class="form-check-input" type="checkbox" name="workingDays" id="workDayMon" value="MONDAY"><label class="form-check-label" for="workDayMon">Mon</label></div>
+                                        <div class="form-check"><input class="form-check-input" type="checkbox" name="workingDays" id="workDayTue" value="TUESDAY"><label class="form-check-label" for="workDayTue">Tue</label></div>
+                                        <div class="form-check"><input class="form-check-input" type="checkbox" name="workingDays" id="workDayWed" value="WEDNESDAY"><label class="form-check-label" for="workDayWed">Wed</label></div>
+                                        <div class="form-check"><input class="form-check-input" type="checkbox" name="workingDays" id="workDayThu" value="THURSDAY"><label class="form-check-label" for="workDayThu">Thu</label></div>
+                                        <div class="form-check"><input class="form-check-input" type="checkbox" name="workingDays" id="workDayFri" value="FRIDAY"><label class="form-check-label" for="workDayFri">Fri</label></div>
+                                        <div class="form-check"><input class="form-check-input" type="checkbox" name="workingDays" id="workDaySat" value="SATURDAY"><label class="form-check-label" for="workDaySat">Sat</label></div>
+                                        <div class="form-check"><input class="form-check-input" type="checkbox" name="workingDays" id="workDaySun" value="SUNDAY"><label class="form-check-label" for="workDaySun">Sun</label></div>
+                                    </div>
+                                </div>
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="newEmployeeShift">Default Shift</label>
+                                    <select id="newEmployeeShift" name="defaultShift" class="form-control-custom">
+                                        <option value="">-- No template (assign manually) --</option>
+                                        <option th:each="w : ${timeWindows}" th:value="${w.name}" th:text="${w.label}"></option>
+                                    </select>
+                                    <small class="av-hint"><i class="bi bi-info-circle me-1"></i> With working days and a default shift set, the AI Roster Generator suggests this officer for matching shifts.</small>
+                                </div>
+                                <button type="submit" class="btn-primary-custom w-100"><i class="bi bi-person-plus-fill"></i>Add to Official Roster</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-lg-8">
+                    <div class="av-panel h-100 mb-0">
+                        <div class="av-panel-head"><span>Official Museum Personnel</span></div>
+                        <table class="table table-custom mb-0">
+                            <thead>
+                                <tr>
+                                    <th class="ps-4">Officer Name</th>
+                                    <th>Designated Role</th>
+                                    <th>Shift Template</th>
+                                    <th class="text-end pe-4">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr th:each="emp : ${employees}">
+                                    <td class="ps-4">
+                                        <div class="av-cell-strong" th:text="${emp.name}"></div>
+                                        <div class="av-cell-sub" th:text="${#strings.isEmpty(emp.email) ? 'No email on file' : emp.email}"></div>
+                                    </td>
+                                    <td><span class="av-badge av-badge--info" th:text="${emp.role}"></span></td>
+                                    <td>
+                                        <th:block th:if="${!#strings.isEmpty(emp.workingDaysLabel) and !#strings.isEmpty(emp.defaultShift)}">
+                                            <div class="av-mono" th:text="${emp.workingDaysLabel}"></div>
+                                            <div class="av-cell-sub" th:text="${emp.defaultShift}"></div>
+                                        </th:block>
+                                        <span class="av-cell-sub" th:unless="${!#strings.isEmpty(emp.workingDaysLabel) and !#strings.isEmpty(emp.defaultShift)}">Not set</span>
+                                    </td>
+                                    <td class="text-end pe-4">
+                                        <button type="button" class="btn btn-sm btn-light text-primary p-1" title="Edit" aria-label="Edit employee" onclick="openEmployeeModal(this)"
+                                                th:data-id="${emp.id}" th:data-name="${emp.name}" th:data-role="${emp.role}" th:data-email="${emp.email}"
+                                                th:data-days="${emp.workingDays}" th:data-shift="${emp.defaultShift}"><i class="bi bi-pencil"></i></button>
+                                        <form th:action="@{/admin/employee/delete/{id}(id=${emp.id})}" method="post" class="d-inline m-0">
+                                            <button type="submit" class="btn btn-sm btn-light text-danger p-1" title="Remove" aria-label="Remove employee"><i class="bi bi-person-dash"></i></button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                <tr th:if="${#lists.isEmpty(employees)}">
+                                    <td colspan="4" class="av-empty">No official employees added yet. Add them on the left.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+</main>
+
+<!-- CALENDAR DAY DETAIL MODAL -->
+<div class="modal fade" id="dailyRosterModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title mb-0" id="dailyRosterTitle"><i class="bi bi-calendar-day me-2"></i>Daily Shift Roster</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0">
+                <table class="table table-hover mb-0 text-center align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th class="ps-4">Personnel</th>
+                            <th>Designated Role</th>
+                            <th>Shift Schedule</th>
+                            <th class="pe-4">Quick Edit</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dailyRosterBody">
+                        <!-- Populated dynamically via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- AI STAGING MODAL -->
+<div class="modal fade" id="aiPreviewModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+        <form action="/admin/staff/ai-deploy" method="post" class="modal-content av-modal-tall">
+            <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+
+            <div class="modal-header">
+                <h5 class="modal-title mb-0"><i class="bi bi-robot me-2"></i>AI Roster Preview &amp; Edit</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+
+            <div class="modal-body av-modal-well p-4">
+                <th:block th:each="entry : ${groupedShifts}">
+                    <div class="av-panel av-day-group mb-0">
+                        <div class="av-panel-head">
+                            <span><i class="bi bi-calendar-event me-2"></i><span th:text="${#temporals.format(entry.key, 'EEEE, MMMM dd, yyyy')}"></span></span>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0 align-middle text-center">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Role Requirement</th>
+                                        <th>Assign Personnel</th>
+                                        <th>Shift Time</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr th:each="shift : ${entry.value}">
+                                        <input type="hidden" name="dutyDates" th:value="${shift.dutyDate}">
+                                        <input type="hidden" name="roles" th:value="${shift.role}">
+
+                                        <td class="fw-bold text-primary" th:text="${shift.role}"></td>
+
+                                        <td class="av-w-35">
+                                            <select class="form-select form-select-sm" name="staffNames" aria-label="Assign Officer Name">
+                                                <option value="⚠️ OPEN SHIFT (AI)">-- Leave Unassigned (Open Shift) --</option>
+                                                <optgroup label="Official Staff Roster">
+                                                    <option th:each="staff : ${activeStaff}" th:value="${staff.name}" th:text="${staff.name} + ' (' + ${staff.role} + ')'" th:selected="${staff.name == shift.staffName}"></option>
+                                                </optgroup>
+                                            </select>
+                                        </td>
+
+                                        <td class="av-w-30">
+                                            <select class="form-select form-select-sm" name="shiftTimes" aria-label="Shift Time">
+                                                <!-- 🧭 Only the configured time windows (ManagementController.windowShiftOptions) -->
+                                                <option th:each="opt : ${shiftOptions}" th:value="${opt}" th:text="${opt}" th:selected="${shift.shiftTime == opt}"></option>
+                                                <option th:if="${shift.shiftTime != null and !#lists.contains(shiftOptions, shift.shiftTime)}"
+                                                        th:value="${shift.shiftTime}" th:text="${shift.shiftTime}" selected></option>
+                                            </select>
+                                        </td>
+
+                                        <td>
+                                            <button type="button" class="btn btn-sm btn-light text-danger p-1" onclick="this.closest('tr').remove()" title="Delete Shift" aria-label="Delete shift"><i class="bi bi-trash"></i></button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </th:block>
+
+                <div th:if="${#maps.isEmpty(groupedShifts)}" class="av-empty">
+                    No shifts generated. Check your dates and holiday settings.
+                </div>
+
+            </div>
+
+            <div class="modal-footer d-flex justify-content-between">
+                <span class="av-label"><i class="bi bi-info-circle me-1"></i> Review the AI's plan. Names are suggested from staff shift templates; change them or delete rows you don't need before deploying.</span>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Discard Plan</button>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-calendar-check"></i>Deploy Roster to Calendar</button>
+                </div>
+            </div>
+
+        </form>
+    </div>
+</div>
+
+<!-- Edit Staff Schedule Modal -->
+<div class="modal fade" id="editStaffModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title mb-0"><i class="bi bi-pencil-square me-2"></i>Edit Shift Assignment</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form action="/admin/staff/update" method="post">
+                <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                <div class="modal-body p-4 text-start">
+
+                    <input type="hidden" id="editStaffId" name="id">
+
+                    <div class="av-field">
+                        <label class="form-label-custom" for="editStaffName">Staff Name</label>
+                        <select id="editStaffName" name="staffName" class="form-control-custom" required>
+                            <option value="⚠️ OPEN SHIFT (AI)">-- Leave Unassigned (Open Shift) --</option>
+                            <optgroup label="Official Staff Roster">
+                                <option th:each="emp : ${employees}" th:value="${emp.name}" th:text="${emp.name} + ' (' + ${emp.role} + ')'"></option>
+                            </optgroup>
+                        </select>
+                        <small class="av-hint">Pick an officer from the staff roster to fill an open AI shift.</small>
+                    </div>
+
+                    <div class="av-field">
+                        <label class="form-label-custom" for="editStaffRole">Role</label>
+                        <select id="editStaffRole" name="role" class="form-control-custom" required>
+                            <option value="Gate Guard">Gate Guard</option>
+                            <option value="Tour Guide">Tour Guide</option>
+                            <option value="Admin">Admin</option>
+                        </select>
+                    </div>
+
+                    <div class="av-field-row">
+                        <div class="av-field">
+                            <label class="form-label-custom" for="editStaffDate">Date</label>
+                            <input type="date" id="editStaffDate" name="dutyDate" class="form-control-custom" required>
+                        </div>
+                        <div class="av-field">
+                            <label class="form-label-custom" for="editShiftTime">Shift Time</label>
+                            <select id="editShiftTime" name="shiftTime" class="form-control-custom" required>
+                                <!-- 🧭 Only the configured time windows; openEditModal keeps a shift's older value selectable -->
+                                <option th:each="opt : ${shiftOptions}" th:value="${opt}" th:text="${opt}"></option>
+                            </select>
+                        </div>
+                    </div>
+
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-sm btn-primary">Save Updates</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Museum Employee Modal (filled by openEmployeeModal from the Staff Directory row) -->
+<div class="modal fade" id="editEmployeeModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title mb-0"><i class="bi bi-person-gear me-2"></i>Edit Museum Employee</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="editEmployeeForm" action="/admin/staff" method="post">
+                <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                <div class="modal-body p-4 text-start">
+                    <div class="av-field">
+                        <label class="form-label-custom" for="editEmployeeName">Full Name / Rank</label>
+                        <input type="text" id="editEmployeeName" name="name" class="form-control-custom" required>
+                        <small class="av-hint">Renaming also updates this officer's active duty shifts.</small>
+                    </div>
+                    <div class="av-field">
+                        <label class="form-label-custom" for="editEmployeeRole">Primary Role</label>
+                        <input type="text" id="editEmployeeRole" name="role" list="roleOptions" class="form-control-custom" maxlength="255" required placeholder="Pick or type a role" autocomplete="off">
+                    </div>
+                    <div class="av-field">
+                        <label class="form-label-custom" for="editEmployeeEmail">Email (for roster notifications)</label>
+                        <input type="email" id="editEmployeeEmail" name="email" class="form-control-custom" maxlength="255" autocomplete="off">
+                    </div>
+                    <div class="av-field" role="group" aria-labelledby="editEmployeeDaysLabel">
+                        <div class="form-label-custom" id="editEmployeeDaysLabel">Working Days</div>
+                        <div class="d-flex flex-wrap column-gap-3">
+                            <div class="form-check"><input class="form-check-input" type="checkbox" name="workingDays" id="editWorkDayMon" value="MONDAY"><label class="form-check-label" for="editWorkDayMon">Mon</label></div>
+                            <div class="form-check"><input class="form-check-input" type="checkbox" name="workingDays" id="editWorkDayTue" value="TUESDAY"><label class="form-check-label" for="editWorkDayTue">Tue</label></div>
+                            <div class="form-check"><input class="form-check-input" type="checkbox" name="workingDays" id="editWorkDayWed" value="WEDNESDAY"><label class="form-check-label" for="editWorkDayWed">Wed</label></div>
+                            <div class="form-check"><input class="form-check-input" type="checkbox" name="workingDays" id="editWorkDayThu" value="THURSDAY"><label class="form-check-label" for="editWorkDayThu">Thu</label></div>
+                            <div class="form-check"><input class="form-check-input" type="checkbox" name="workingDays" id="editWorkDayFri" value="FRIDAY"><label class="form-check-label" for="editWorkDayFri">Fri</label></div>
+                            <div class="form-check"><input class="form-check-input" type="checkbox" name="workingDays" id="editWorkDaySat" value="SATURDAY"><label class="form-check-label" for="editWorkDaySat">Sat</label></div>
+                            <div class="form-check"><input class="form-check-input" type="checkbox" name="workingDays" id="editWorkDaySun" value="SUNDAY"><label class="form-check-label" for="editWorkDaySun">Sun</label></div>
+                        </div>
+                    </div>
+                    <div class="av-field">
+                        <label class="form-label-custom" for="editEmployeeShift">Default Shift</label>
+                        <select id="editEmployeeShift" name="defaultShift" class="form-control-custom">
+                            <option value="">-- No template (assign manually) --</option>
+                            <option th:each="w : ${timeWindows}" th:value="${w.name}" th:text="${w.label}"></option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-sm btn-primary">Save Updates</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Clear Date Range Modal: deletes every active shift between two dates -->
+<div class="modal fade" id="clearRosterModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title mb-0"><i class="bi bi-calendar-x me-2"></i>Clear Date Range</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form action="/admin/staff/clear-roster" method="post"
+                  onsubmit="return confirm('Delete EVERY shift from ' + this.startDate.value + ' to ' + this.endDate.value + '?\n\nThis includes shifts you assigned by hand and cannot be undone.');">
+                <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                <div class="modal-body p-4 text-start">
+                    <div class="av-field-row">
+                        <div class="av-field">
+                            <label class="form-label-custom" for="clearStartDate">Start Date</label>
+                            <input type="date" id="clearStartDate" name="startDate" class="form-control-custom" required>
+                        </div>
+                        <div class="av-field">
+                            <label class="form-label-custom" for="clearEndDate">End Date</label>
+                            <input type="date" id="clearEndDate" name="endDate" class="form-control-custom" required>
+                        </div>
+                    </div>
+                    <small class="av-hint"><i class="bi bi-info-circle me-1"></i> Removes all shifts on the roster between these dates, both included. Archived shifts and public booking slots are not affected.</small>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-sm btn-danger">Clear Shifts</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Existing Slot Modal -->
+<div class="modal fade" id="slotModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title mb-0">Schedule Details</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center p-4">
+                <h6 id="modalSlotDate" class="text-primary fw-bold mb-3"></h6>
+                <p class="mb-3 pb-3 border-bottom av-mono"><i class="bi bi-clock me-1"></i> <span id="modalSlotTime"></span></p>
+                <p class="av-label mb-1">Max Capacity Allocation</p>
+                <p id="modalSlotCapacity" class="av-slot-readout"></p>
+            </div>
+            <div class="modal-footer">
+                <form action="/admin/staff" method="post" id="modalSlotDeleteForm" class="w-100 m-0">
+                    <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                    <button type="submit" id="modalSlotDeleteBtn" class="btn btn-danger btn-sm w-100">Remove This Slot</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<th:block th:replace="~{fragments/shell :: scripts}"></th:block>
+
+<script th:inline="javascript">
+
+    // Event colours mapped to the PAF palette (theme.css). Semantics unchanged.
+    var AV_COLORS = { am: '#002B80', pm: '#8A6D12', fullDay: '#15803D', neutral: '#0B0F19', alert: '#C41F1E' };
+
+    let rawRoster = [];
+    let rosterCalendar;
+
+    function toggleAllShifts(masterCheckbox) {
+        let shifts = document.querySelectorAll('#shiftDirectoryBody tr:not([hidden]) .shift-checkbox');
+        shifts.forEach(cb => { cb.checked = masterCheckbox.checked; });
+        checkBulkBtn();
+    }
+
+    function checkBulkBtn() {
+        let anyChecked = document.querySelectorAll('.shift-checkbox:checked').length > 0;
+        let btn = document.getElementById('bulkDeleteBtn');
+        if(anyChecked) {
+            btn.classList.remove('d-none');
+        } else {
+            btn.classList.add('d-none');
+            document.getElementById('selectAllShifts').checked = false;
+        }
+    }
+
+    function executeBulkDelete() {
+        let checkedBoxes = document.querySelectorAll('.shift-checkbox:checked');
+        let ids = Array.from(checkedBoxes).map(cb => cb.value);
+        if(ids.length === 0) return;
+
+        if(!confirm(`Are you sure you want to delete ${ids.length} selected shift(s)?`)) return;
+
+        fetch('/admin/staff/ajax-bulk-delete', {
+            method: 'POST',
+            headers: AeroCsrf.headers({ 'Content-Type': 'application/x-www-form-urlencoded' }),
+            body: 'ids=' + encodeURIComponent(ids.join(','))
+        })
+        .then(r => { if (!r.ok) throw new Error(r.status); }) // rows only disappear once the server really deleted them
+        .then(() => {
+            checkedBoxes.forEach(cb => {
+                let id = cb.value;
+                let row = cb.closest('tr');
+                if(row) {
+                    row.style.transition = "opacity 0.3s";
+                    row.style.opacity = "0";
+                    setTimeout(() => row.remove(), 300);
+                }
+                updateCalendarAfterDelete(id);
+            });
+            setTimeout(() => checkBulkBtn(), 350);
+        })
+        .catch(() => alert('The selected shifts could not be deleted. Please refresh the page and try again.'));
+    }
+
+    function fastDeleteShift(id, buttonElement) {
+        fetch('/admin/staff/ajax-delete/' + id, { method: 'POST', headers: AeroCsrf.headers() })
+        .then(r => { if (!r.ok) throw new Error(r.status); })
+        .then(() => {
+            let row = buttonElement.closest('tr');
+            if(row) {
+                row.style.transition = "opacity 0.3s";
+                row.style.opacity = "0";
+                setTimeout(() => row.remove(), 300);
+            }
+
+            let dirCheckbox = document.querySelector(`.shift-checkbox[value='${id}']`);
+            if(dirCheckbox) {
+                let dirRow = dirCheckbox.closest('tr');
+                if(dirRow) {
+                    dirRow.style.transition = "opacity 0.3s";
+                    dirRow.style.opacity = "0";
+                    setTimeout(() => dirRow.remove(), 300);
+                }
+            }
+
+            setTimeout(() => {
+                updateCalendarAfterDelete(id);
+                checkBulkBtn();
+            }, 300);
+        })
+        .catch(() => alert('The shift could not be deleted. Please refresh the page and try again.'));
+    }
+
+    function updateCalendarAfterDelete(shiftId) {
+        if(!rosterCalendar || !rawRoster) return;
+
+        let shiftIndex = rawRoster.findIndex(s => s.id == shiftId);
+        if(shiftIndex === -1) return;
+
+        let shiftDate = rawRoster[shiftIndex].dutyDate;
+        rawRoster.splice(shiftIndex, 1);
+
+        let remainingShifts = rawRoster.filter(s => s.dutyDate === shiftDate);
+        let calendarEvent = rosterCalendar.getEventById('summary-' + shiftDate);
+
+        if(calendarEvent) {
+            if(remainingShifts.length === 0) {
+                calendarEvent.remove();
+
+                var dailyModalEl = document.getElementById('dailyRosterModal');
+                if (dailyModalEl && dailyModalEl.classList.contains('show')) {
+                    var dailyModal = bootstrap.Modal.getInstance(dailyModalEl);
+                    if(dailyModal) dailyModal.hide();
+                }
+            } else {
+                let openCount = remainingShifts.filter(s => s.staffName.includes("OPEN SHIFT")).length;
+                let titleText = '👥 ' + remainingShifts.length + ' Assigned';
+                let bgColor = AV_COLORS.fullDay;
+
+                if (openCount > 0) {
+                    titleText = '⚠️ ' + openCount + ' Open Shifts';
+                    bgColor = AV_COLORS.alert;
+                }
+
+                calendarEvent.setProp('title', titleText);
+                calendarEvent.setProp('backgroundColor', bgColor);
+                calendarEvent.setExtendedProp('shifts', remainingShifts);
+            }
+        }
+    }
+
+    function openEditModal(id, name, role, date, shift) {
+        var dailyModalEl = document.getElementById('dailyRosterModal');
+        if (dailyModalEl.classList.contains('show')) {
+            var dailyModal = bootstrap.Modal.getInstance(dailyModalEl);
+            dailyModal.hide();
+        }
+
+        document.getElementById('editStaffId').value = id;
+        // Names typed in before the dropdown existed may not be on the roster; keep them selectable so the form stays valid
+        let nameSelect = document.getElementById('editStaffName');
+        nameSelect.querySelectorAll('option[data-legacy]').forEach(o => o.remove());
+        if (name && ![...nameSelect.options].some(o => o.value === name)) {
+            let legacy = new Option(name + ' (not on roster)', name);
+            legacy.dataset.legacy = 'true';
+            nameSelect.insertBefore(legacy, nameSelect.querySelector('optgroup'));
+        }
+        nameSelect.value = name;
+        document.getElementById('editStaffRole').value = role;
+        document.getElementById('editStaffDate').value = date;
+
+        let select = document.getElementById('editShiftTime');
+        select.querySelectorAll('option[data-legacy]').forEach(o => o.remove());
+        if ([...select.options].some(o => o.value === shift)) select.value = shift;
+        else if (shift) {
+            // A shift saved before its time window changed or was removed: keep it exactly, so saving doesn't silently move it
+            let windowShift = new Option(shift, shift);
+            windowShift.dataset.legacy = 'true';
+            select.add(windowShift);
+            select.value = shift;
+        }
+        else select.selectedIndex = 0;
+
+        setTimeout(() => {
+            var editModal = new bootstrap.Modal(document.getElementById('editStaffModal'));
+            editModal.show();
+        }, 300);
+    }
+
+    // Staff Directory: fill the Edit Museum Employee modal from the clicked row's data-* attributes
+    function openEmployeeModal(btn) {
+        var d = btn.dataset;
+        document.getElementById('editEmployeeForm').action = '/admin/employee/edit/' + d.id;
+        document.getElementById('editEmployeeName').value = d.name || '';
+        document.getElementById('editEmployeeRole').value = d.role || '';
+        document.getElementById('editEmployeeEmail').value = d.email || '';
+        var days = (d.days || '').split(',');
+        document.querySelectorAll('#editEmployeeForm input[name="workingDays"]').forEach(cb => { cb.checked = days.includes(cb.value); });
+        // A default shift whose time window was later renamed or deleted stays visible instead of being cleared on save
+        var shiftSelect = document.getElementById('editEmployeeShift');
+        shiftSelect.querySelectorAll('option[data-legacy]').forEach(o => o.remove());
+        if (d.shift && ![...shiftSelect.options].some(o => o.value === d.shift)) {
+            var legacyShift = new Option(d.shift + ' (no longer a time window)', d.shift);
+            legacyShift.dataset.legacy = 'true';
+            shiftSelect.add(legacyShift);
+        }
+        shiftSelect.value = d.shift || '';
+        new bootstrap.Modal(document.getElementById('editEmployeeModal')).show();
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+
+        var isPreview = /*[[${previewMode != null ? previewMode : false}]]*/ false;
+        if(isPreview) {
+            var previewModal = new bootstrap.Modal(document.getElementById('aiPreviewModal'));
+            previewModal.show();
+        }
+
+        var rawSlots = /*[[${bookingSlots}]]*/ [];
+        var slotEvents = rawSlots.map(function(slot) {
+            var shortTime = "Full Day";
+            var blockColor = AV_COLORS.fullDay;
+
+            if(slot.timeWindow) {
+                if(slot.timeWindow.includes("Morning")) {
+                    shortTime = "AM";
+                    blockColor = AV_COLORS.am;
+                } else if(slot.timeWindow.includes("Afternoon")) {
+                    shortTime = "PM";
+                    blockColor = AV_COLORS.pm;
+                }
+            }
+            return {
+                id: slot.id,
+                title: shortTime + ' | ' + slot.maxCapacity + ' Cap',
+                start: slot.slotDate,
+                backgroundColor: blockColor,
+                extendedProps: {
+                    capacity: slot.maxCapacity,
+                    timeWindow: slot.timeWindow || 'Full Day (08:00 AM - 05:00 PM)'
+                }
+            };
+        });
+
+        var slotsCalendarEl = document.getElementById('slotsCalendar');
+        if (slotsCalendarEl) {
+            var slotsCalendar = new FullCalendar.Calendar(slotsCalendarEl, {
+                initialView: 'dayGridMonth',
+                headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,listWeek' },
+                events: slotEvents,
+                height: 550,
+                eventClick: function(info) {
+                    let dateObj = new Date(info.event.start);
+                    let formattedDate = dateObj.toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' });
+
+                    document.getElementById('modalSlotDate').innerText = formattedDate;
+                    document.getElementById('modalSlotTime').innerText = info.event.extendedProps.timeWindow;
+                    document.getElementById('modalSlotCapacity').innerText = info.event.extendedProps.capacity + " Visitors";
+
+                    var deleteForm = document.getElementById('modalSlotDeleteForm');
+                    if(deleteForm) { deleteForm.action = '/admin/slots/delete/' + info.event.id; }
+
+                    var myModal = new bootstrap.Modal(document.getElementById('slotModal'));
+                    myModal.show();
+                }
+            });
+            slotsCalendar.render();
+        }
+
+        // Dates with at least one public booking slot, as 'YYYY-MM-DD'; shaded on the roster calendar
+        var openDates = new Set(/*[[${openDates}]]*/ []);
+
+        rawRoster = /*[[${schedules}]]*/ [];
+        var shiftsByDate = {};
+
+        rawRoster.forEach(function(staff) {
+            if(!shiftsByDate[staff.dutyDate]) shiftsByDate[staff.dutyDate] = [];
+            shiftsByDate[staff.dutyDate].push(staff);
+        });
+
+        var rosterEvents = Object.keys(shiftsByDate).map(function(date) {
+            var shifts = shiftsByDate[date];
+            var openCount = shifts.filter(s => s.staffName.includes("OPEN SHIFT")).length;
+
+            var titleText = '👥 ' + shifts.length + ' Assigned';
+            var bgColor = AV_COLORS.neutral;
+
+            if (openCount > 0) {
+                titleText = '⚠️ ' + openCount + ' Open Shifts';
+                bgColor = AV_COLORS.alert;
+            } else if (shifts.length > 0) {
+                bgColor = AV_COLORS.fullDay;
+            }
+
+            return {
+                id: 'summary-' + date,
+                title: titleText,
+                start: date,
+                backgroundColor: bgColor,
+                extendedProps: {
+                    date: date,
+                    shifts: shifts
+                }
+            };
+        });
+
+        var rosterCalendarEl = document.getElementById('rosterCalendar');
+
+        if (rosterCalendarEl) {
+            rosterCalendar = new FullCalendar.Calendar(rosterCalendarEl, {
+                initialView: 'dayGridMonth',
+                headerToolbar: { left: 'prev,next', center: 'title', right: 'today' },
+                events: rosterEvents,
+                height: 550,
+
+                dayCellClassNames: function(arg) {
+                    var d = arg.date;
+                    var iso = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+                    return openDates.has(iso) ? ['av-open-day'] : [];
+                },
+
+                eventClick: function(info) {
+                    let shifts = info.event.extendedProps.shifts;
+                    let dateObj = new Date(info.event.start);
+                    dateObj.setMinutes(dateObj.getMinutes() + dateObj.getTimezoneOffset());
+                    let dateStr = dateObj.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+                    document.getElementById('dailyRosterTitle').innerText = 'Duty Roster - ' + dateStr;
+
+                    let tbody = document.getElementById('dailyRosterBody');
+                    tbody.innerHTML = '';
+
+                    shifts.forEach(shift => {
+                        let isWarning = shift.staffName.includes("OPEN SHIFT");
+                        let nameColor = isWarning ? 'text-danger' : 'text-primary';
+
+                        tbody.innerHTML += `
+                            <tr>
+                                <td class="fw-bold ${nameColor} ps-4 text-start">${shift.staffName}</td>
+                                <td><span class="av-badge av-badge--tag">${shift.role}</span></td>
+                                <td class="av-mono">${shift.shiftTime}</td>
+                                <td class="pe-4">
+                                    <button class="btn btn-sm btn-light text-primary p-1 me-1" aria-label="Edit shift" onclick="openEditModal('${shift.id}', '${shift.staffName}', '${shift.role}', '${shift.dutyDate}', '${shift.shiftTime}')"><i class="bi bi-pencil"></i></button>
+                                    <button class="btn btn-sm btn-light text-danger p-1" aria-label="Remove shift" onclick="fastDeleteShift('${shift.id}', this)"><i class="bi bi-trash"></i></button>
+                                </td>
+                            </tr>
+                        `;
+                    });
+
+                    var dailyModal = new bootstrap.Modal(document.getElementById('dailyRosterModal'));
+                    dailyModal.show();
+                },
+
+                dateClick: function(info) {
+                    let startInput = document.getElementById('rosterStartDate');
+                    let endInput = document.getElementById('rosterEndDate');
+
+                    startInput.value = info.dateStr;
+                    endInput.value = info.dateStr;
+
+                    startInput.style.boxShadow = '0 0 0 3px rgba(210, 175, 57, 0.6)';
+                    endInput.style.boxShadow = '0 0 0 3px rgba(210, 175, 57, 0.6)';
+                    setTimeout(() => {
+                        startInput.style.boxShadow = 'none';
+                        endInput.style.boxShadow = 'none';
+                    }, 500);
+                }
+            });
+        }
+
+        var rosterTab = document.getElementById('roster-tab');
+        if (rosterTab) {
+            rosterTab.addEventListener('shown.bs.tab', function () {
+                if(rosterCalendar) { rosterCalendar.render(); }
+            });
+        }
+
+    });
+
+    let blackoutDates = [];
+    function addBlackoutDate() {
+        let picker = document.getElementById('blackoutPicker');
+        let dateVal = picker.value;
+        if(dateVal && !blackoutDates.includes(dateVal)) {
+            blackoutDates.push(dateVal);
+            updateBlackoutUI('hiddenExcludeDates', 'blackoutBadges', blackoutDates);
+        }
+        picker.value = '';
+    }
+
+    let aiBlackoutDates = [];
+    function addAiBlackoutDate() {
+        let picker = document.getElementById('aiBlackoutPicker');
+        let dateVal = picker.value;
+        if(dateVal && !aiBlackoutDates.includes(dateVal)) {
+            aiBlackoutDates.push(dateVal);
+            updateBlackoutUI('hiddenAiExcludeDates', 'aiBlackoutBadges', aiBlackoutDates);
+        }
+        picker.value = '';
+    }
+
+    function removeBlackout(dateStr, isAi) {
+        if(isAi) {
+            aiBlackoutDates = aiBlackoutDates.filter(d => d !== dateStr);
+            updateBlackoutUI('hiddenAiExcludeDates', 'aiBlackoutBadges', aiBlackoutDates);
+        } else {
+            blackoutDates = blackoutDates.filter(d => d !== dateStr);
+            updateBlackoutUI('hiddenExcludeDates', 'blackoutBadges', blackoutDates);
+        }
+    }
+
+    function updateBlackoutUI(hiddenId, badgeContainerId, dateArray) {
+        dateArray.sort();
+        document.getElementById(hiddenId).value = dateArray.join(',');
+        let container = document.getElementById(badgeContainerId);
+        let isAi = hiddenId === 'hiddenAiExcludeDates';
+        if (dateArray.length === 0) {
+            container.innerHTML = '<span class="av-small av-muted">No holidays added.</span>';
+            return;
+        }
+        container.innerHTML = dateArray.map(date => {
+            // 'T00:00:00' forces local-time parsing; a bare 'YYYY-MM-DD' is parsed as UTC and can shift a day
+            let label = new Date(date + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+            return `<span class="av-chip-remove" title="${date}">
+                        ${label}
+                        <button type="button" class="av-chip-x" aria-label="Remove holiday ${label}" onclick="removeBlackout('${date}', ${isAi})"><i class="bi bi-x-circle"></i></button>
+                    </span>`;
+        }).join('');
+    }
+
+    // Commit a picked-but-not-added holiday on submit, and let Enter add it instead of submitting the form
+    [ ['/admin/slots/add', 'blackoutPicker', addBlackoutDate],
+     ['/admin/staff/ai-preview', 'aiBlackoutPicker', addAiBlackoutDate] ].forEach(([action, pickerId, add]) => {
+        const form = document.querySelector(`form[action="${action}"]`);
+        const picker = document.getElementById(pickerId);
+        if (form && picker) {
+            form.addEventListener('submit', () => { if (picker.value) add(); });
+            picker.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+        }
+    });
+
+    // Keep holiday pickers within the selected start/end range
+    [ ['bulkStartDate', 'bulkEndDate', 'blackoutPicker'],
+     ['aiStartDate', 'aiEndDate', 'aiBlackoutPicker'] ].forEach(([s, e, p]) => {
+        const start = document.getElementById(s), end = document.getElementById(e), picker = document.getElementById(p);
+        if (!start || !end || !picker) return;
+        const sync = () => { picker.min = start.value || ''; picker.max = end.value || ''; };
+        start.addEventListener('change', sync);
+        end.addEventListener('change', sync);
+    });
+
+    updateBlackoutUI('hiddenExcludeDates', 'blackoutBadges', blackoutDates);
+    updateBlackoutUI('hiddenAiExcludeDates', 'aiBlackoutBadges', aiBlackoutDates);
+</script>
+
+<!-- Shift Directory: live search + pagination (5 rows per page) -->
+<script>
+    (function () {
+        var body = document.getElementById('shiftDirectoryBody');
+        if (!body) return;
+        var PAGE_SIZE = 5;
+        var search = document.getElementById('shiftSearch');
+        var prev = document.getElementById('shiftPrev');
+        var next = document.getElementById('shiftNext');
+        var info = document.getElementById('shiftPageInfo');
+        var noMatch = document.getElementById('shiftNoMatch');
+        var page = 1;
+
+        function shiftRows() {
+            // Only real shift rows (the "No staff assigned yet." row has no checkbox)
+            return Array.prototype.filter.call(body.rows, function (r) { return r.querySelector('.shift-checkbox'); });
+        }
+
+        function clearSelection() {
+            // Bulk delete must only ever act on rows the user can see
+            body.querySelectorAll('.shift-checkbox:checked').forEach(function (cb) { cb.checked = false; });
+            if (typeof checkBulkBtn === 'function') checkBulkBtn();
+        }
+
+        function render() {
+            var term = search.value.trim().toLowerCase();
+            var rows = shiftRows();
+            var matches = rows.filter(function (r) { return r.textContent.replace(/\s+/g, ' ').toLowerCase().indexOf(term) !== -1; });
+            var pages = Math.max(1, Math.ceil(matches.length / PAGE_SIZE));
+            if (page > pages) page = pages;
+            var start = (page - 1) * PAGE_SIZE;
+            rows.forEach(function (r) { r.hidden = true; });
+            matches.slice(start, start + PAGE_SIZE).forEach(function (r) { r.hidden = false; });
+
+            info.textContent = 'Page ' + page + ' of ' + pages + ' · ' + matches.length + (matches.length === 1 ? ' shift' : ' shifts');
+            noMatch.hidden = !(term && matches.length === 0);
+            prev.disabled = page <= 1;
+            next.disabled = page >= pages;
+            prev.parentElement.classList.toggle('disabled', prev.disabled);
+            next.parentElement.classList.toggle('disabled', next.disabled);
+        }
+
+        search.addEventListener('keyup', function () { page = 1; clearSelection(); render(); });
+        search.addEventListener('search', function () { page = 1; clearSelection(); render(); });
+        prev.addEventListener('click', function () { if (page > 1) { page--; clearSelection(); render(); } });
+        next.addEventListener('click', function () { page++; clearSelection(); render(); });
+
+        // Rows removed by the delete buttons: recount pages and refill the current page
+        new MutationObserver(render).observe(body, { childList: true });
+
+        render();
+    })();
+</script>
+
+</body>
+</html>
