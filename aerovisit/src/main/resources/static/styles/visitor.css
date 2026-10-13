@@ -468,10 +468,10 @@ html.vp-cam-open { overflow: hidden; scrollbar-gutter: auto; }
 }
 .vp-cam-close:hover { background: rgba(0, 0, 0, 0.75); }
 .vp-cam-close:focus-visible { outline: 3px solid var(--paf-gold); outline-offset: 2px; }
-/* The instruction: a floating pill, bottom centre (within thumb reach, clear of the face guide) */
+/* The instruction: a floating pill, top centre under the Cancel button (16px + 44px + 12px gap) */
 .vp-cam-prompt {
     position: absolute; z-index: 2; left: 50%;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+    top: calc(env(safe-area-inset-top, 0px) + 72px);
     transform: translateX(-50%);
     width: max-content; max-width: calc(100vw - 32px);
     margin: 0; padding: 14px 24px;
@@ -490,6 +490,17 @@ html.vp-cam-open { overflow: hidden; scrollbar-gutter: auto; }
     .vp-cam, .vp-cam.is-open { transition: none; }
     .vp-cam-prompt.is-new, .vp-liveness-thumb { animation: none; }
 }
+/* Pre-selfie tip: covers the stage, sits under the Cancel button (z-index 2) so Cancel still works */
+.vp-cam-intro {
+    position: absolute; inset: 0; z-index: 1;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+    padding: 24px; text-align: center;
+    background: rgba(0, 20, 60, 0.94); color: #FFFFFF;
+}
+.vp-cam-intro[hidden] { display: none; }
+.vp-cam-intro-icon { font-size: 3rem; color: var(--paf-gold); }
+.vp-cam-intro-text { max-width: 28ch; margin: 0; font-family: var(--font-display); font-size: clamp(1.125rem, 4.5vw, 1.5rem); font-weight: 700; line-height: 1.35; }
+.vp-cam.is-intro .vp-cam-prompt { display: none; }
 /* Selfie tip under the camera box: the portal's gold note, tighter so it stays with the capture controls */
 .vp .vp-upload .vp-cam-tip { margin: 12px 0; padding: 12px 14px; gap: 10px; }
 .vp-cam-tip-icon { font-size: 1.1rem; line-height: 1.3; }

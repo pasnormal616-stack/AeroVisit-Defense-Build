@@ -247,6 +247,17 @@
                                             </div>
                                         </div>
 
+                                        <div class="vp-field">
+                                            <label for="specialSelect" class="form-label">Special Consideration <span class="req">*</span></label>
+                                            <select id="specialSelect" class="form-select" th:field="*{specialConsideration}" required>
+                                                <option value="" disabled selected>Choose...</option>
+                                                <option value="PWD">PWD</option>
+                                                <option value="Senior Citizen">Senior Citizen</option>
+                                                <option value="Others">Others</option>
+                                                <option value="Not Applicable">Not Applicable</option>
+                                            </select>
+                                        </div>
+
                                         <!-- 📧 EMAIL VERIFICATION (replaced reCAPTCHA): POST /otp/send + /otp/verify (OtpController).
                                              The code box has no name: /save checks the verified email on the server.
                                              Until verified it carries a custom validity error, so Next/Submit stop here (visitor.js). -->
@@ -259,17 +270,6 @@
                                                 <button type="button" class="vp-btn vp-btn--primary" id="otpVerifyBtn" disabled>Verify</button>
                                             </div>
                                             <div class="form-text" id="otpStatus" aria-live="polite">We will email a 6-digit code to confirm this address. It expires in 5 minutes.</div>
-                                        </div>
-
-                                        <div class="vp-field">
-                                            <label for="specialSelect" class="form-label">Special Consideration <span class="req">*</span></label>
-                                            <select id="specialSelect" class="form-select" th:field="*{specialConsideration}" required>
-                                                <option value="" disabled selected>Choose...</option>
-                                                <option value="PWD">PWD</option>
-                                                <option value="Senior Citizen">Senior Citizen</option>
-                                                <option value="Others">Others</option>
-                                                <option value="Not Applicable">Not Applicable</option>
-                                            </select>
                                         </div>
                                     </div>
                                     <div class="vp-step-actions">
@@ -385,6 +385,12 @@
                                                     </div>
                                                     <button type="button" class="vp-cam-close" id="livenessCloseBtn"><i class="bi bi-x-lg"></i> Cancel</button>
                                                     <p class="vp-cam-prompt" id="livenessPrompt" aria-live="polite">Starting camera…</p>
+                                                    <!-- Pre-selfie tip: the camera stays off until "Start selfie" (Cancel stays above it) -->
+                                                    <div class="vp-cam-intro" id="livenessIntro" hidden>
+                                                        <i class="bi bi-phone vp-cam-intro-icon" aria-hidden="true"></i>
+                                                        <p class="vp-cam-intro-text">For best results, please lift your phone to eye level like taking a selfie.</p>
+                                                        <button type="button" class="vp-btn vp-btn--gold" id="livenessIntroBtn"><i class="bi bi-camera-video"></i> Start selfie</button>
+                                                    </div>
                                                 </div>
                                             </div>
                                             <!-- Selfie tip, shown with the camera box and with the fallback inputs (both end in a selfie) -->
@@ -1052,6 +1058,9 @@
     var status = document.getElementById('livenessStatus');
     var modal = document.getElementById('livenessModal');
     var closeBtn = document.getElementById('livenessCloseBtn');
+    var intro = document.getElementById('livenessIntro');
+    var introBtn = document.getElementById('livenessIntroBtn');
+    var introDone = false; // set by "Start selfie", used up by the next step-2 start
     var guide = document.getElementById('livenessGuide');
 
     // MediaPipe Face Landmarker (478-point face mesh), downloaded only when the visitor starts the camera
@@ -1112,11 +1121,23 @@
 
     function closeModal(focusTarget) {
         if (!modal.classList.contains('is-open')) return;
+        hideIntro();
         modal.classList.remove('is-open');
         document.documentElement.classList.remove('vp-cam-open');
         var target = focusTarget || returnFocus;
         if (target && target.focus && !target.classList.contains('d-none')) target.focus({ preventScroll: true });
     }
+
+    // Before the selfie: full-screen eye-level tip; the camera stays off until the visitor taps "Start selfie"
+    function showIntro() {
+        stopCamera(); // the step-1 back camera, if it is still running
+        openModal();
+        modal.classList.add('is-intro');
+        intro.hidden = false;
+        tell('Lift your phone to eye level, then tap Start selfie.');
+        introBtn.focus({ preventScroll: true });
+    }
+    function hideIntro() { intro.hidden = true; modal.classList.remove('is-intro'); }
 
     function cancel() {
         if (modal.classList.contains('is-done')) { closeModal(retakeBtn); return; } // photo already taken
@@ -1446,6 +1467,8 @@
 
     // Step 1 if the ID close-up is still missing, otherwise straight to the selfie (e.g. after Cancel in step 2)
     function startCamera() {
+        if (hasFile(cardInput) && !introDone) { showIntro(); return; } // step 2: eye-level tip first
+        introDone = false;
         stopCamera();
         var mine = session;
         var stale = new Error('stale');
@@ -1877,10 +1900,11 @@
 
     startBtn.addEventListener('click', startCamera);
     closeBtn.addEventListener('click', cancel);
-    // Escape backs out; Tab stays on the Cancel button (the only control in the dialog)
+    introBtn.addEventListener('click', function () { hideIntro(); introDone = true; startCamera(); });
+    // Escape backs out; Tab stays inside the dialog (Cancel, plus "Start selfie" while the tip shows)
     modal.addEventListener('keydown', function (e) {
         if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-        else if (e.key === 'Tab') { e.preventDefault(); closeBtn.focus(); }
+        else if (e.key === 'Tab') { e.preventDefault(); (intro.hidden || document.activeElement === introBtn ? closeBtn : introBtn).focus(); }
     });
     retakeBtn.addEventListener('click', function () { clearCapture(); startCamera(); });
 
