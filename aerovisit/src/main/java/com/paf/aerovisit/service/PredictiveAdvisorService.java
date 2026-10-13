@@ -27,6 +27,16 @@ public class PredictiveAdvisorService {
     // Reusing a single HttpClient is much faster for microservice communication
     private final HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
 
+    // Shared secret for the AI service (AI_INTERNAL_KEY on both services); blank (local dev, tests) = not sent
+    @org.springframework.beans.factory.annotation.Value("${aerovisit.ai.internal-key:}")
+    String internalKey = "";
+
+    // Every call to the AI service starts here: address, time limit and the shared-secret header
+    private HttpRequest.Builder aiRequest(String url) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(url)).timeout(timeout);
+        return internalKey == null || internalKey.isBlank() ? builder : builder.header("X-Internal-Key", internalKey);
+    }
+
     // --- DATA FUSION PREDICTION ENGINE ---
     public MuseumPrediction fetchTurnoutPrediction(int dayOfWeek, String weatherCondition, int preBooked) {
         try {
@@ -34,7 +44,7 @@ public class PredictiveAdvisorService {
                          + "&weather=" + weatherCondition.replace(" ", "%20")
                          + "&pre_booked=" + preBooked;
             
-            HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).timeout(timeout).GET().build();
+            HttpRequest request = aiRequest(url).GET().build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() == 200) {
@@ -65,11 +75,11 @@ public class PredictiveAdvisorService {
             String encodedText = URLEncoder.encode(feedbackText, StandardCharsets.UTF_8);
             String url = apiBaseUrl + "/analyze?text=" + encodedText;
             
-            HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).timeout(timeout).GET().build();
+            HttpRequest request = aiRequest(url).GET().build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() == 200) {
-                return new JSONObject(response.body()); 
+                return new JSONObject(response.body());
             }
         } catch (Exception e) {
             System.err.println("NLP AI Offline: " + e.getMessage());
@@ -82,7 +92,7 @@ public class PredictiveAdvisorService {
         try {
             // 🔒 Same JSON POST contract as AiAdvisorService: the chat text never goes in the URL
             String body = new JSONObject().put("message", message).put("session_id", sessionId).toString();
-            HttpRequest request = HttpRequest.newBuilder().uri(URI.create(apiBaseUrl + "/chat")).timeout(timeout)
+            HttpRequest request = aiRequest(apiBaseUrl + "/chat")
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8)).build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
@@ -101,9 +111,7 @@ public class PredictiveAdvisorService {
         try {
             String url = apiBaseUrl + "/retrain";
             // The retrain endpoint is a POST request according to your Python file
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .timeout(timeout)
+            HttpRequest request = aiRequest(url)
                     .POST(HttpRequest.BodyPublishers.noBody())
                     .build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());

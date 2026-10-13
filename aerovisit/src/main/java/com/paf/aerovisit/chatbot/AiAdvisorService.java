@@ -27,9 +27,7 @@ public class AiAdvisorService {
             // 🔒 PRIVACY: the chat text travels in a POST body, never in the URL, so it can't end up in access/proxy logs
             // ⏱️ Never wait on the Python service forever: a hung call would hold a server thread (thread exhaustion)
             HttpClient client = HttpClient.newBuilder().connectTimeout(timeout).build();
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(chatEndpoint))
-                    .timeout(timeout)
+            HttpRequest request = aiRequest(chatEndpoint)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(chatBody(userMessage, sessionId), StandardCharsets.UTF_8))
                     .build();
@@ -46,6 +44,9 @@ public class AiAdvisorService {
                 }
                 
                 return jsonResponse.getString("reply");
+            } else if (response.statusCode() == 429) {
+                // 🚦 The AI service's own limit (per chat session / all chats per minute)
+                return "Sgt. Aero is answering a lot of questions right now. Please try again in a minute.";
             } else {
                 return "Comm link degraded. Command server returned code: " + response.statusCode();
             }
@@ -73,6 +74,16 @@ public class AiAdvisorService {
     @org.springframework.beans.factory.annotation.Value("${aerovisit.ai.base-url:" + API_BASE_URL + "}")
     void setApiBaseUrl(String baseUrl) {
         chatEndpoint = baseUrl + "/chat";
+    }
+
+    // Shared secret for the AI service (AI_INTERNAL_KEY on both services); blank (local dev, tests) = not sent
+    @org.springframework.beans.factory.annotation.Value("${aerovisit.ai.internal-key:}")
+    String internalKey = "";
+
+    // Every call to the AI service starts here: address, time limit and the shared-secret header
+    private HttpRequest.Builder aiRequest(String url) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(url)).timeout(timeout);
+        return internalKey == null || internalKey.isBlank() ? builder : builder.header("X-Internal-Key", internalKey);
     }
 
     // ⏱️ Connect + response limit for the Python service; past it the visitor gets the "away from the comms terminal" reply

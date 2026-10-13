@@ -2,9 +2,13 @@
 
 No Gemini key, MySQL, BERT model or internet needed: those modules are replaced with small fakes before main.py loads.
 """
+import os
 import sys
 import types
 import unittest
+
+# These tests send many messages from one session: main.py's rate limits stay off here (test_rate_limits covers them)
+os.environ.setdefault("RATE_LIMITS_ENABLED", "false")
 
 
 # --- Fakes installed before importing main.py ---------------------------------------------------------------

@@ -26,7 +26,8 @@ public class OtpService {
     static final Duration VERIFIED_TTL = Duration.ofMinutes(30);   // time to finish the form after verifying
     static final int MAX_ATTEMPTS = 5;                              // wrong guesses before the code is burned
     static final int MAX_SENDS_PER_EMAIL = 5;                       // per rolling hour: no inbox bombing
-    static final int MAX_SENDS_PER_CLIENT = 10;                     // per rolling hour: one IP can't spray addresses
+    static final int MAX_SENDS_PER_CLIENT = 30;                     // per rolling hour: one IP can't spray addresses
+                                                                    // (30, not 10: a school or venue Wi-Fi shares one IP)
     static final Duration SEND_WINDOW = Duration.ofHours(1);
     private static final int MAX_TRACKED = 10_000;                  // past this, stale entries are swept
 

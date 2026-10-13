@@ -48,6 +48,7 @@
             <span class="av-legend av-legend--guard">AM</span>
             <span class="av-legend av-legend--guide">PM</span>
             <span class="av-legend av-legend--ok">Full day</span>
+            <span class="av-legend av-legend--admin">Other window</span>
         </div>
     </div>
 
@@ -805,7 +806,7 @@
 <script th:inline="javascript">
 
     // Event colours mapped to the PAF palette (theme.css). Semantics unchanged.
-    var AV_COLORS = { am: '#002B80', pm: '#8A6D12', fullDay: '#15803D', neutral: '#0B0F19', alert: '#C41F1E' };
+    var AV_COLORS = { am: '#002B80', pm: '#8A6D12', fullDay: '#15803D', custom: '#475569', neutral: '#0B0F19', alert: '#C41F1E' };
 
     let rawRoster = [];
     let rosterCalendar;
@@ -991,23 +992,22 @@
         }
 
         var rawSlots = /*[[${bookingSlots}]]*/ [];
+        // The three standard windows keep their short labels (AM / PM / Full Day, as in the page legend); any other,
+        // admin-defined window (e.g. "Midnight (00:00 - 04:00)") shows its exact text in slate. No window = Full Day.
         var slotEvents = rawSlots.map(function(slot) {
-            var shortTime = "Full Day";
-            var blockColor = AV_COLORS.fullDay;
+            var windowText = (slot.timeWindow && slot.timeWindow.trim()) ? slot.timeWindow.trim() : 'Full Day';
+            var label = windowText;
+            var blockColor = AV_COLORS.custom;
+            if (windowText.includes("Morning")) { label = "AM"; blockColor = AV_COLORS.am; }
+            else if (windowText.includes("Afternoon")) { label = "PM"; blockColor = AV_COLORS.pm; }
+            else if (windowText.includes("Full Day")) { label = "Full Day"; blockColor = AV_COLORS.fullDay; }
+            var custom = blockColor === AV_COLORS.custom;
 
-            if(slot.timeWindow) {
-                if(slot.timeWindow.includes("Morning")) {
-                    shortTime = "AM";
-                    blockColor = AV_COLORS.am;
-                } else if(slot.timeWindow.includes("Afternoon")) {
-                    shortTime = "PM";
-                    blockColor = AV_COLORS.pm;
-                }
-            }
             return {
                 id: slot.id,
-                title: shortTime + ' | ' + slot.maxCapacity + ' Cap',
+                title: label + (custom ? '\n' : ' | ') + slot.maxCapacity + ' Cap', // long custom text: capacity on its own line
                 start: slot.slotDate,
+                allDay: true,
                 backgroundColor: blockColor,
                 extendedProps: {
                     capacity: slot.maxCapacity,

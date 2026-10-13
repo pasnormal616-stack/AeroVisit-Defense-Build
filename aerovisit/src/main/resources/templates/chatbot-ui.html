@@ -89,26 +89,48 @@
                 body.scrollTop = body.scrollHeight; // Auto-scroll to bottom
             }
 
-            // Web Speech API for the J.A.R.V.I.S voice effect (Upgraded for Local Accent)
+            // Clean English voices, best first (Chrome / macOS & iOS / Windows names). The replies are English only
+            // (main.py), so a Filipino voice is never picked: it spelled English text out letter by letter.
+            const PREFERRED_VOICES = ['Google UK English Male', 'Daniel', 'Google US English', 'Samantha',
+                                      'Microsoft Guy', 'Microsoft Ryan', 'Microsoft David', 'Microsoft Mark'];
+
+            function pickEnglishVoice() {
+                const voices = window.speechSynthesis.getVoices();
+                for (const name of PREFERRED_VOICES) {
+                    const match = voices.find(v => v.name.startsWith(name));
+                    if (match) return match;
+                }
+                return voices.find(v => /^en[-_](GB|US)$/i.test(v.lang))   // any UK / US voice
+                    || voices.find(v => /^en\b/i.test(v.lang))              // any English voice
+                    || null;                                                // none: the browser default
+            }
+
+            // What the voice reads: no markdown symbols (so it never says "asterisk") and no emojis
+            function speechText(text) {
+                return text
+                    // (no "[" directly before "(" in these patterns: Thymeleaf would read it as an inline expression)
+                    .replace(/\[\s*([^\]]+?)\s*\]\(.*?\)/g, '$1')                          // [label](url) -> label
+                    .replace(/[*_#`~>|]+/g, ' ')                                           // markdown symbols
+                    .replace(/[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}️‍⃣]/gu, '') // emojis, flags, joiners
+                    .replace(/\s+/g, ' ')
+                    .replace(/ ([.,!?;:])/g, '$1')                                          // "Base ." -> "Base."
+                    .trim();
+            }
+
+            // Web Speech API for the J.A.R.V.I.S voice effect
             function speakText(text) {
                 if (!voiceEnabled) return; // AI voice is controlled by the header speaker toggle
                 if ('speechSynthesis' in window) {
-                    const utterance = new SpeechSynthesisUtterance(text);
-                    
-                    // Get all available voices on the user's browser/device
-                    const voices = window.speechSynthesis.getVoices();
-                    
-                    // Look for a Filipino, Tagalog, or Philippine-English voice
-                    const localVoice = voices.find(voice => 
-                        voice.lang.includes('fil') || 
-                        voice.lang.includes('PH') || 
-                        voice.name.includes('Tagalog') || 
-                        voice.name.includes('Filipino')
-                    );
+                    const spoken = speechText(text);
+                    if (!spoken) return;
+                    const utterance = new SpeechSynthesisUtterance(spoken);
 
-                    // If a local voice is found, assign it to Sgt. Aero
-                    if (localVoice) {
-                        utterance.voice = localVoice;
+                    const voice = pickEnglishVoice();
+                    if (voice) {
+                        utterance.voice = voice;
+                        utterance.lang = voice.lang;
+                    } else {
+                        utterance.lang = 'en-US';
                     }
 
                     utterance.rate = 0.95; // Slightly slower for a clear, commanding tone

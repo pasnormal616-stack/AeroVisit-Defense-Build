@@ -648,10 +648,6 @@
 
             maxAllowedForSelectedDate = slot.remaining;
             document.getElementById('groupSizeInput').setAttribute('max', slot.remaining);
-
-            if (window.innerWidth < 992) {
-                document.getElementById('formCard').scrollIntoView({ behavior: 'smooth' });
-            }
         }
 
         // A day without a time yet: relock the form, as on first load (visitor.js resets the summary and Continue)

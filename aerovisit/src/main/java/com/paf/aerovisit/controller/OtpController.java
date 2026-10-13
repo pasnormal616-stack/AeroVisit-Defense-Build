@@ -2,7 +2,6 @@ package com.paf.aerovisit.controller;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Set;
 
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -12,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.paf.aerovisit.security.ClientIp;
 import com.paf.aerovisit.service.OtpService;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -20,8 +20,6 @@ import jakarta.servlet.http.HttpServletRequest;
 @RestController
 @RequestMapping("/otp")
 public class OtpController {
-
-    private static final Set<String> LOOPBACK = Set.of("127.0.0.1", "0:0:0:0:0:0:0:1", "::1");
 
     private final OtpService otpService;
 
@@ -69,16 +67,8 @@ public class OtpController {
         return builder.body(body);
     }
 
-    // Same rule as ChatRateLimiter.clientKey: behind ngrok (loopback) the LAST X-Forwarded-For hop is the real
-    // visitor, since that one is added by the proxy; earlier hops are browser-supplied and could be faked.
+    // The shared client-IP rule (ClientIp): behind a proxy, the LAST X-Forwarded-For hop, never a browser-supplied one
     static String clientKey(HttpServletRequest request) {
-        String remote = request.getRemoteAddr();
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (remote != null && LOOPBACK.contains(remote) && forwarded != null && !forwarded.isBlank()) {
-            String[] hops = forwarded.split(",");
-            String proxyAdded = hops[hops.length - 1].trim();
-            if (!proxyAdded.isEmpty()) return proxyAdded;
-        }
-        return remote == null ? "unknown" : remote;
+        return ClientIp.of(request);
     }
 }

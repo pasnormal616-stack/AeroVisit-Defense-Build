@@ -61,9 +61,19 @@ public class KycService {
     @org.springframework.beans.factory.annotation.Value("${aerovisit.ai.base-url:" + API_BASE_URL + "}")
     String apiBaseUrl = API_BASE_URL;
 
+    // Shared secret for the AI service (AI_INTERNAL_KEY on both services); blank (local dev, tests) = not sent
+    @org.springframework.beans.factory.annotation.Value("${aerovisit.ai.internal-key:}")
+    String internalKey = "";
+
     // Two photos, card search + two face searches: a few seconds at most; past this the booking goes to manual review
     static final Duration TIMEOUT = Duration.ofSeconds(20);
     Duration timeout = TIMEOUT; // tests shorten this
+
+    // Every call to the AI service starts here: address, time limit and the shared-secret header
+    private HttpRequest.Builder aiRequest(String url) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(url)).timeout(timeout);
+        return internalKey == null || internalKey.isBlank() ? builder : builder.header("X-Internal-Key", internalKey);
+    }
 
     private final HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
     private final OcrService ocrService;
@@ -138,7 +148,7 @@ public class KycService {
                     .put("high_res_id_image", Base64.getEncoder().encodeToString(idCardPhoto))
                     .put("liveness_image", Base64.getEncoder().encodeToString(livenessSelfie))
                     .toString();
-            HttpRequest request = HttpRequest.newBuilder().uri(URI.create(apiBaseUrl + "/kyc/verify")).timeout(timeout)
+            HttpRequest request = aiRequest(apiBaseUrl + "/kyc/verify")
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8)).build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());

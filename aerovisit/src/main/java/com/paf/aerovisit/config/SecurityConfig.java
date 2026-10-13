@@ -4,6 +4,7 @@ import java.security.SecureRandom;
 import java.util.Base64;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -16,14 +17,32 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.csrf.CsrfFilter;
+
+import com.paf.aerovisit.security.RateLimitFilter;
 
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
+    // 🚦 The rate-limit filter: a bean so tests can switch it off, registered only inside the security chain below
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public RateLimitFilter rateLimitFilter(@Value("${aerovisit.ratelimit.enabled:true}") boolean enabled) {
+        return new RateLimitFilter(enabled, System::nanoTime);
+    }
+
+    @Bean
+    public FilterRegistrationBean<RateLimitFilter> rateLimitFilterRegistration(RateLimitFilter filter) {
+        FilterRegistrationBean<RateLimitFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false); // not a second time as a plain servlet filter
+        return registration;
+    }
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http, RateLimitFilter rateLimitFilter) throws Exception {
         http
+            // 🚦 Before CSRF and the login form: refused requests never reach either (see RateLimitFilter)
+            .addFilterBefore(rateLimitFilter, CsrfFilter.class)
             // 🛡️ CSRF ON: every POST / PUT / PATCH / DELETE must carry the session's token (hidden "_csrf" field in forms,
             // X-CSRF-TOKEN header in fetch calls, read from the <meta> tags). One exception: the public booking upload
             // /save. Its multipart body is not parsed yet when this filter runs (an over-size photo would turn into a 403

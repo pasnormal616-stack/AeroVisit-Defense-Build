@@ -3,9 +3,10 @@ package com.paf.aerovisit.chatbot;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.Deque;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
+
+import com.paf.aerovisit.security.ClientIp;
 
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -15,8 +16,6 @@ final class ChatRateLimiter {
 
     // Past this many tracked clients, idle ones (no request inside the window) are dropped before adding more
     static final int MAX_TRACKED_CLIENTS = 10_000;
-
-    private static final Set<String> LOOPBACK = Set.of("127.0.0.1", "0:0:0:0:0:0:0:1", "::1");
 
     private final int limit;
     private final long windowNanos;
@@ -72,17 +71,9 @@ final class ChatRateLimiter {
         });
     }
 
-    // Who is asking: the connecting IP. Behind a local reverse proxy (ngrok's agent connects from 127.0.0.1) every
-    // visitor would share one IP, so for loopback connections the LAST X-Forwarded-For entry is used: the one the
-    // proxy itself added. Earlier entries are whatever the browser sent and could be faked to dodge the limit.
+    // Who is asking: the shared client-IP rule (ClientIp: behind a proxy, the LAST X-Forwarded-For hop, never a
+    // browser-supplied one)
     static String clientKey(HttpServletRequest request) {
-        String remote = request.getRemoteAddr();
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (remote != null && LOOPBACK.contains(remote) && forwarded != null && !forwarded.isBlank()) {
-            String[] hops = forwarded.split(",");
-            String proxyAdded = hops[hops.length - 1].trim();
-            if (!proxyAdded.isEmpty()) return proxyAdded;
-        }
-        return remote == null ? "unknown" : remote;
+        return ClientIp.of(request);
     }
 }

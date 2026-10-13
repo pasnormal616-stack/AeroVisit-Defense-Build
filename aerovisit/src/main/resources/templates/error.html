@@ -38,6 +38,10 @@
                                 <h1 class="vp-title-xl">Incomplete Request</h1>
                                 <p class="vp-lead fw-semibold">Some required information was missing. Please go back and fill in the form again.</p>
                             </th:block>
+                            <th:block th:case="429">
+                                <h1 class="vp-title-xl">Too Many Attempts</h1>
+                                <p class="vp-lead fw-semibold">You have tried this too many times in a short period. Please wait a minute, then go back and try again.</p>
+                            </th:block>
                             <th:block th:case="*">
                                 <h1 class="vp-title-xl">Something Went Wrong</h1>
                                 <p class="vp-lead fw-semibold">The system could not complete your request. Please try again in a moment.</p>

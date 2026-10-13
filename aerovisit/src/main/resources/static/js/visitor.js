@@ -248,7 +248,12 @@
         // React to the original booking code without modifying it.
         if (wrapper && 'MutationObserver' in window) {
             new MutationObserver(function () {
-                if (!unlocked()) { reached = 0; current = 1; go(0, { force: true }); }
+                // Relocked: back to step 1. Already there (e.g. the calendar's day picker clearing an earlier time)?
+                // Then only reset progress: go() would scroll to #booking and undo the scroll to the time list.
+                if (!unlocked()) {
+                    reached = 0;
+                    if (current !== 0) { current = 1; go(0, { force: true }); }
+                }
                 refreshSummary();
                 render();
             }).observe(wrapper, { attributes: true, attributeFilter: ['class'] });
