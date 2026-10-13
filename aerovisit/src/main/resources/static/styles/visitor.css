@@ -554,6 +554,38 @@ html.vp-cam-open { overflow: hidden; scrollbar-gutter: auto; }
 }
 .vp .fc .fc-event:hover { filter: brightness(1.08); box-shadow: 0 0 0 2px var(--bg-raised), 0 0 0 4px var(--paf-gold); }
 .vp .fc .fc-event-main { color: #FFFFFF; }
+/* Two-step date -> time picker: a status dot on bookable days, the windows as large buttons under the calendar */
+.vp .fc .vp-day-pick { cursor: pointer; }
+.vp .fc .vp-day-pick:hover .fc-daygrid-day-frame { background: var(--bezel-shell); }
+.vp .fc .vp-day-pick:focus-visible { outline: 3px solid var(--paf-gold); outline-offset: -3px; }
+.vp .fc .vp-day-pick.is-picked .fc-daygrid-day-frame { background: var(--primary); }
+.vp .fc .vp-day-pick.is-picked .fc-daygrid-day-number { color: #FFFFFF !important; }
+.vp-day-dot { display: block; width: 8px; height: 8px; margin: 2px auto 6px; border-radius: 50%; background: var(--sw); }
+.vp-day-dot.is-open { --sw: #15803D; } .vp-day-dot.is-low { --sw: #B45309; } .vp-day-dot.is-full { --sw: var(--paf-red); }
+.vp .vp-day-pick.is-picked .vp-day-dot { box-shadow: 0 0 0 2px #FFFFFF; }
+
+.vp-times { margin-top: 16px; padding: 16px; border-radius: var(--vp-radius-lg); border: 1px solid var(--border-subtle); background: var(--bg-raised); }
+.vp .vp-times-title { margin: 0; font-family: var(--font-display); font-size: 1.125rem; font-weight: 800; color: var(--text); }
+.vp-times-date { margin: 2px 0 12px; font-size: 0.875rem; color: var(--text-muted); }
+.vp-times-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.vp-time-btn {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    min-height: 72px; padding: 12px 16px;
+    border: 1.5px solid var(--border); border-radius: var(--vp-radius-md);
+    background: var(--bg-surface); color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.vp-time-btn b { font-size: 1rem; }
+.vp-time-btn small { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted); }
+.vp-time-seats { font-size: 0.75rem; font-weight: 600; color: var(--success-ink); }
+.vp-time-seats.is-low { color: #B45309; }
+:root[data-theme="dark"] .vp-time-seats.is-low { color: #FBBF24; }
+.vp-time-btn:disabled .vp-time-seats { color: var(--text-muted); }
+.vp-time-btn:hover:not(:disabled) { border-color: var(--primary); }
+.vp-time-btn:focus-visible { outline: 3px solid var(--paf-gold); outline-offset: 2px; }
+.vp-time-btn[aria-pressed="true"] { border-color: var(--primary); background: var(--primary); color: #FFFFFF; }
+.vp-time-btn[aria-pressed="true"] small, .vp-time-btn[aria-pressed="true"] .vp-time-seats { color: rgba(255, 255, 255, 0.85); }
+.vp-time-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+@media (max-width: 575.98px) { .vp-times-grid { grid-template-columns: 1fr; } }
 
 /* --------------------------------------------------------------------------
    9. Secondary tabs (manage, guidelines, exhibits)

@@ -1,14 +1,18 @@
 /*
  * AeroVisit theme controller — shared by Admin, Guard and Visitor portals.
  * Loaded synchronously in <head> so the correct palette is applied before first paint.
- * Persists the operator's choice in localStorage and keeps every open tab in sync.
+ * Persists the choice in localStorage and keeps every open tab of the same portal in sync.
  */
 (function () {
-    var KEY = 'aerovisit-theme';
+    // One key per portal, so a visitor's toggle never changes the staff dashboards in the same browser (or back).
+    // Staff pages (fragments/shell) all live under /admin, /guard and /login; everything else is the visitor portal.
+    var STAFF = /^\/(admin|guard|login)(\/|$)/.test(location.pathname);
+    var KEY = STAFF ? 'staff_theme' : 'visitor_theme';
+    var LEGACY_KEY = 'aerovisit-theme'; // the old shared key: read once as a fallback so nobody loses their choice
     var root = document.documentElement;
 
     function read() {
-        try { return localStorage.getItem(KEY); } catch (e) { return null; }
+        try { return localStorage.getItem(KEY) || localStorage.getItem(LEGACY_KEY); } catch (e) { return null; }
     }
     function write(value) {
         try { localStorage.setItem(KEY, value); } catch (e) { /* private mode: session-only */ }

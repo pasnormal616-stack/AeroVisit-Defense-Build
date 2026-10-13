@@ -66,14 +66,14 @@ class GuestListUploadSafetyTest {
         byte[] bytes = template();
         // UTF-8 byte-order mark, so Excel opens names like "Peña" correctly
         assertThat(bytes).startsWith((byte) 0xEF, (byte) 0xBB, (byte) 0xBF);
-        assertThat(new String(bytes, StandardCharsets.UTF_8)).contains("\"Guest Name (Last, First MI)\"");
+        assertThat(new String(bytes, StandardCharsets.UTF_8)).contains("Last Name,First Name,Middle Name");
 
         // the blank template imports as nothing...
         List<String> names = new ArrayList<>();
         assertThat(VisitorPortalController.addMasterManifestNames(names, null, upload("guest-list-template.csv", bytes)))
             .startsWith("Guest list upload: no guest names were found");
-        // ...and filled in (as Excel saves it), only the guests are read
-        byte[] filled = (new String(bytes, StandardCharsets.UTF_8) + "\"Dela Cruz, Juan P.\"\r\n\"Santos, Maria L.\"\r\n").getBytes(StandardCharsets.UTF_8);
+        // ...and filled in (as Excel saves it, one name part per column), only the guests are read
+        byte[] filled = (new String(bytes, StandardCharsets.UTF_8) + "Dela Cruz,Juan,P.\r\nSantos,Maria,L.\r\n").getBytes(StandardCharsets.UTF_8);
         assertThat(VisitorPortalController.addMasterManifestNames(names, null, upload("guest-list-template.csv", filled))).isNull();
         assertThat(names).containsExactly("Dela Cruz, Juan P.", "Santos, Maria L.");
     }

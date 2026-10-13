@@ -132,6 +132,12 @@
                                             <span class="sw-low">15 seats or fewer</span>
                                             <span class="sw-full">Fully booked</span>
                                         </div>
+                                        <!-- STEP 1b: time windows of the picked day (Calendly-style); built by the calendar script -->
+                                        <div class="vp-times d-none" id="timePicker">
+                                            <h3 class="vp-times-title" id="timePickerTitle">Select a Time</h3>
+                                            <p class="vp-times-date" id="timePickerDate"></p>
+                                            <div class="vp-times-grid" id="timePickerList" role="group" aria-labelledby="timePickerTitle"></div>
+                                        </div>
                                     </div>
                                     <div class="col-lg-4">
                                         <div class="vp-summary" aria-live="polite">
@@ -155,7 +161,7 @@
                                 </div>
                             </div>
                             <div class="vp-step-actions">
-                                <span class="vp-hint"><i class="bi bi-info-circle me-1"></i>Green and orange slots are open for booking.</span>
+                                <span class="vp-hint"><i class="bi bi-info-circle me-1"></i>Pick a day with a green or orange dot, then a time.</span>
                                 <button type="button" class="vp-btn vp-btn--primary" id="stepNext0" data-step-next disabled>
                                     Continue <span class="vp-btn-icon"><i class="bi bi-arrow-right"></i></span>
                                 </button>
@@ -327,7 +333,7 @@
                                                     <a href="/downloads/guest-list-template.csv" download="guest-list-template.csv" class="vp-btn vp-btn--ghost mb-2" id="csvTemplateLink">
                                                         <i class="bi bi-download me-1"></i>Download Template (.csv)</a>
                                                     <input type="file" id="companionCsvInput" class="form-control" name="companionCsv" accept=".csv,.txt,text/csv,text/plain" disabled>
-                                                    <div class="form-text">Open the template in Excel, type one guest per row under the header (Last, First MI), then save it as CSV. A header row such as &ldquo;Name&rdquo; is skipped. Max 256 KB.</div>
+                                                    <div class="form-text">Open the template in Excel, fill in one guest per row under Last Name, First Name and Middle Name (Middle Name may be left blank), then save it as CSV. Max 256 KB.</div>
                                                     <div class="form-text fw-semibold" id="csvSummary" aria-live="polite"></div>
                                                 </div>
                                             </div>
@@ -573,82 +579,135 @@
     var maxAllowedForSelectedDate = 0;
     var isMasterMode = false;
 
-    // Availability colours mapped to the PAF palette (theme.css). Semantics unchanged.
-    var AV_SLOT = { open: '#15803D', low: '#B45309', full: '#C41F1E' };
-
     document.addEventListener('DOMContentLoaded', function() {
         var rawSlots = /*[[${calendarSlots}]]*/ [];
-        var calendarEvents = rawSlots.map(function(slot) {
-            var isFull = slot.remaining <= 0;
-            var isAlmostFull = slot.remaining > 0 && slot.remaining <= 15;
-            var bgColor = AV_SLOT.open;
-
-            var shortTime = "Day";
-            if (slot.timeWindow) {
-                if (slot.timeWindow.includes("Morning")) shortTime = "☀️ AM";
-                else if (slot.timeWindow.includes("Afternoon")) shortTime = "🌥️ PM";
-                else if (!slot.timeWindow.includes("Full Day")) shortTime = slot.timeWindow.split(' (')[0]; // admin-defined window: show its name
-            }
-
-            var titleText = shortTime + '\n' + slot.remaining + ' Left';
-
-            if (isFull) {
-                bgColor = AV_SLOT.full;
-                titleText = shortTime + '\nFULLY BOOKED';
-            } else if (isAlmostFull) {
-                bgColor = AV_SLOT.low;
-            }
-
-            return {
-                id: slot.date,
-                title: titleText,
-                start: slot.date,
-                backgroundColor: bgColor,
-                borderColor: 'transparent',
-                extendedProps: {
-                    date: slot.date,
-                    timeWindow: slot.timeWindow,
-                    remaining: slot.remaining,
-                    isFull: isFull
-                }
-            };
-        });
+        // Windows per day ("2026-10-16" -> [slot, ...]); a day's dot is its best window: open / 15 or fewer / full
+        var slotsByDate = {};
+        rawSlots.forEach(function (slot) { (slotsByDate[slot.date] = slotsByDate[slot.date] || []).push(slot); });
+        function dayStatus(slots) {
+            var best = Math.max.apply(null, slots.map(function (s) { return s.remaining; }));
+            return best <= 0 ? 'full' : best <= 15 ? 'low' : 'open';
+        }
+        function ymd(d) {
+            return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        }
 
         var calendarEl = document.getElementById('publicCalendar');
+        var timePicker = document.getElementById('timePicker');
+        var timeList = document.getElementById('timePickerList');
+        var pickedDate = null;
         var calendar;
+
+        // Step 1a: a day. Highlights it, clears any earlier time choice and lists that day's windows below the calendar.
+        function pickDay(date, cell) {
+            if (isMasterMode) return;
+            pickedDate = date;
+            calendarEl.querySelectorAll('.vp-day-pick.is-picked').forEach(function (c) { c.classList.remove('is-picked'); c.setAttribute('aria-pressed', 'false'); });
+            cell.classList.add('is-picked');
+            cell.setAttribute('aria-pressed', 'true');
+            clearSelection();
+            document.getElementById('timePickerDate').textContent =
+                new Date(date + 'T00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+            timeList.textContent = '';
+            slotsByDate[date].forEach(function (slot) {
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'vp-time-btn';
+                btn.setAttribute('aria-pressed', 'false');
+                var label = slot.timeWindow || 'Standard Shift';
+                var name = document.createElement('b');
+                name.textContent = label.split(' (')[0];
+                var range = document.createElement('small');
+                range.textContent = label.indexOf('(') >= 0 ? label.slice(label.indexOf('(') + 1, label.lastIndexOf(')')) : 'Any time';
+                var seats = document.createElement('span');
+                seats.className = 'vp-time-seats' + (slot.remaining > 0 && slot.remaining <= 15 ? ' is-low' : '');
+                seats.textContent = slot.remaining > 0 ? slot.remaining + ' seats left' : 'Fully booked';
+                btn.append(name, range, seats);
+                btn.disabled = slot.remaining <= 0;
+                btn.addEventListener('click', function () {
+                    timeList.querySelectorAll('.vp-time-btn').forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
+                    btn.setAttribute('aria-pressed', 'true');
+                    selectSlot(slot);
+                });
+                timeList.appendChild(btn);
+            });
+            timePicker.classList.remove('d-none');
+            if (window.innerWidth < 992) timePicker.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        // Step 1b: a time window. The same code the old eventClick ran: fill the two hidden fields and unlock the form.
+        function selectSlot(slot) {
+            document.getElementById('registrationFormWrapper').classList.remove('locked-form');
+            document.getElementById('formVisitDate').value = slot.date;
+            document.getElementById('formTimeWindow').value = slot.timeWindow || "Standard Shift";
+
+            var badge = document.getElementById('selectedDateBadge');
+            badge.classList.remove('d-none', 'bg-warning', 'bg-danger', 'text-dark');
+            badge.classList.add('bg-success', 'text-white');
+            badge.innerText = "Selected: " + slot.date;
+
+            maxAllowedForSelectedDate = slot.remaining;
+            document.getElementById('groupSizeInput').setAttribute('max', slot.remaining);
+
+            if (window.innerWidth < 992) {
+                document.getElementById('formCard').scrollIntoView({ behavior: 'smooth' });
+            }
+        }
+
+        // A day without a time yet: relock the form, as on first load (visitor.js resets the summary and Continue)
+        function clearSelection() {
+            if (isMasterMode) return;
+            document.getElementById('registrationFormWrapper').classList.add('locked-form');
+            document.getElementById('formVisitDate').value = '';
+            document.getElementById('formTimeWindow').value = '';
+            var badge = document.getElementById('selectedDateBadge');
+            badge.classList.remove('bg-success', 'bg-danger', 'text-white');
+            badge.classList.add('bg-warning', 'text-dark');
+            badge.innerText = "No Date Selected";
+            maxAllowedForSelectedDate = 0;
+        }
+
+        // Master Booking hides the picker (it sets its own date)
+        window.resetTimePicker = function () {
+            pickedDate = null;
+            timePicker.classList.add('d-none');
+            timeList.textContent = '';
+            if (calendarEl) calendarEl.querySelectorAll('.vp-day-pick.is-picked').forEach(function (c) { c.classList.remove('is-picked'); });
+        };
 
         if (calendarEl) {
             calendar = new FullCalendar.Calendar(calendarEl, {
                 initialView: 'dayGridMonth',
                 headerToolbar: { left: 'prev,next', center: 'title', right: 'today' },
-                events: calendarEvents,
-                height: 550,
+                height: 'auto',
                 validRange: { start: new Date().toISOString().split('T')[0] },
 
-                eventClick: function(info) {
-                    if (isMasterMode) return;
-                    var props = info.event.extendedProps;
-
-                    if (props.isFull) {
-                        alert("We are sorry! This slot is fully booked. Please select another green/orange slot.");
+                // Only a dot in each cell; full days get a red dot and can't be picked. Runs again after prev/next.
+                dayCellDidMount: function (arg) {
+                    var date = ymd(arg.date);
+                    var slots = slotsByDate[date];
+                    if (!slots || arg.isDisabled) return;
+                    var status = dayStatus(slots);
+                    var dot = document.createElement('span');
+                    dot.className = 'vp-day-dot is-' + status;
+                    dot.setAttribute('aria-hidden', 'true');
+                    var top = arg.el.querySelector('.fc-daygrid-day-frame') || arg.el;
+                    top.appendChild(dot);
+                    arg.el.dataset.date = date;
+                    if (status === 'full') {
+                        arg.el.setAttribute('aria-label', date + ': fully booked');
                         return;
                     }
-
-                    document.getElementById('registrationFormWrapper').classList.remove('locked-form');
-                    document.getElementById('formVisitDate').value = props.date;
-                    document.getElementById('formTimeWindow').value = props.timeWindow || "Standard Shift";
-
-                    var badge = document.getElementById('selectedDateBadge');
-                    badge.classList.remove('d-none', 'bg-warning', 'bg-danger');
-                    badge.classList.add('bg-success', 'text-white');
-                    badge.innerText = "Selected: " + props.date;
-
-                    maxAllowedForSelectedDate = props.remaining;
-                    document.getElementById('groupSizeInput').setAttribute('max', props.remaining);
-
-                    if (window.innerWidth < 992) {
-                        document.getElementById('formCard').scrollIntoView({ behavior: 'smooth' });
-                    }
+                    arg.el.classList.add('vp-day-pick');
+                    arg.el.classList.toggle('is-picked', date === pickedDate);
+                    arg.el.setAttribute('role', 'button');
+                    arg.el.setAttribute('tabindex', '0');
+                    arg.el.setAttribute('aria-pressed', date === pickedDate ? 'true' : 'false');
+                    arg.el.setAttribute('aria-label', date + ': ' + (status === 'low' ? 'few seats left' : 'open') + ', choose a time');
+                    arg.el.addEventListener('click', function () { pickDay(date, arg.el); });
+                    arg.el.addEventListener('keydown', function (e) {
+                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickDay(date, arg.el); }
+                    });
                 }
             });
             calendar.render();
@@ -690,6 +749,7 @@
         let submitBtn = document.getElementById('submitBtn');
 
         if (!isMasterMode) {
+            if (window.resetTimePicker) window.resetTimePicker();
             isMasterMode = true;
             toggleBtn.innerHTML = "<i class='bi bi-x-circle me-1'></i> Cancel Master Booking";
             toggleBtn.classList.replace('btn-dark', 'btn-danger');
@@ -865,6 +925,23 @@
         return (comma < 0 ? row : row.substring(0, comma)).trim();
     }
 
+    // Every field of one CSV row, the same rule as the server: commas separate fields, "quoted, with commas" keeps them
+    function csvFields(line) {
+        var fields = [], field = '', quoted = false;
+        for (var i = 0; i < line.length; i++) {
+            var c = line.charAt(i);
+            if (quoted) {
+                if (c !== '"') field += c;
+                else if (line.charAt(i + 1) === '"') { field += '"'; i++; }
+                else quoted = false;
+            } else if (c === '"') quoted = true;
+            else if (c === ',') { fields.push(field.trim()); field = ''; }
+            else field += c;
+        }
+        fields.push(field.trim());
+        return fields;
+    }
+
     document.getElementById('addManualRow').addEventListener('click', function () { addManualRow().focus(); syncCompanionField(); });
     document.querySelectorAll('[data-manifest-mode]').forEach(function (b) {
         b.addEventListener('click', function () { manifestMode = b.dataset.manifestMode; syncCompanionField(); });
@@ -882,14 +959,30 @@
             catch (e) { text = new TextDecoder('windows-1252').decode(buf); }   // Excel's default CSV on Windows
             if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
             var isCsv = /\.csv$/i.test(file.name);
-            var names = [];
+            var names = [], nameParts = false, badRow = 0;
             text.split(/\r\n|\n|\r/).forEach(function (line, i) {
-                var name = isCsv ? firstCsvField(line) : line.trim();
-                if (i === 0 && MANIFEST_HEADERS.indexOf(name.toLowerCase()) >= 0) return;
+                // The template's Last Name / First Name / Middle Name header: rows are name parts, joined like the server does
+                if (i === 0 && isCsv) {
+                    var h = csvFields(line);
+                    if (h[0].toLowerCase() === 'last name' && (h[1] || '').toLowerCase() === 'first name') { nameParts = true; return; }
+                }
+                var name;
+                if (nameParts) {
+                    var p = csvFields(line), last = p[0] || '', first = p[1] || '', middle = p[2] || '';
+                    if (!last && !first && !middle) return;
+                    if (!last || !first) { if (!badRow) badRow = i + 1; return; }
+                    name = last + ', ' + first + (middle ? ' ' + middle : '');
+                } else {
+                    name = isCsv ? firstCsvField(line) : line.trim();
+                    if (i === 0 && MANIFEST_HEADERS.indexOf(name.toLowerCase()) >= 0) return;
+                }
                 if (name) names.push(name);
             });
-            csvNames = names;   // replaced in one step, so reading the same file twice never doubles the count
-            summary.innerText = names.length + ' name(s) found in ' + file.name + '.';
+            // replaced in one step, so reading the same file twice never doubles the count; a bad row blocks Continue,
+            // as the server would refuse the file
+            csvNames = badRow ? [] : names;
+            summary.innerText = badRow ? 'Row ' + badRow + ': Last Name and First Name are both required.'
+                                       : names.length + ' name(s) found in ' + file.name + '.';
             syncCompanionField();
         });
     });

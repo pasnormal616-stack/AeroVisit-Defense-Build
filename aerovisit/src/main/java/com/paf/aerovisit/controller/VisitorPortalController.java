@@ -115,15 +115,21 @@ public class VisitorPortalController {
 
     // Largest guest-list file accepted (a 2,000-name list is well under 100 KB)
     static final int MAX_MANIFEST_CSV_BYTES = 256 * 1024;
-    // Header cell of the downloadable template (static/downloads/guest-list-template.csv); register.html's MANIFEST_HEADERS lists it too
+    // Header row of the downloadable template (static/downloads/guest-list-template.csv): one column per name part.
+    // Detected by its first two cells; Middle Name may be missing or blank. register.html's csv check mirrors it.
+    static final String NAME_PARTS_LAST = "last name", NAME_PARTS_FIRST = "first name";
+    // Header of the previous single-column template; files saved from it still import (first column = whole name).
+    // register.html's MANIFEST_HEADERS lists it too
     static final String MANIFEST_TEMPLATE_HEADER = "guest name (last, first mi)";
     private static final Set<String> MANIFEST_CSV_HEADERS = Set.of("name", "names", "full name", "fullname", "companion",
             "companion name", "companion names", "guest", "guest name", "guest names", MANIFEST_TEMPLATE_HEADER);
 
     // 🚌 MASTER BOOKING manifest: adds the Manual-row names and the names read from the CSV upload to `names`.
     // Returns an error to show, or null. The usual manifest check (exact count, allowed characters) runs afterwards.
-    // Plain Java, no CSV library: one guest per row. A .csv file uses its first column (Excel puts "Dela Cruz, Juan P."
-    // in quotes because of the comma); a .txt file uses the whole line. A first row that is a header ("Name") is skipped.
+    // Plain Java, no CSV library: one guest per row. A .csv whose first row is the template's Last Name / First Name /
+    // Middle Name header is read as name parts, joined as "Last, First Middle". Any other .csv uses its first column
+    // (Excel puts "Dela Cruz, Juan P." in quotes because of the comma); a .txt file uses the whole line. A first row
+    // that is a header ("Name") is skipped.
     static final String EXCEL_WORKBOOK_MESSAGE = "Guest list upload: please choose a .csv file. Excel workbooks (.xlsx / .xls) are not read directly:"
             + " in Excel use File > Save As > CSV UTF-8, or start from the Download Template link.";
 
@@ -157,10 +163,29 @@ public class VisitorPortalController {
             java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.StringReader(decodeManifest(bytes)));
             String line;
             int row = 0;
+            boolean nameParts = false; // row 1 was the template's Last Name / First Name / Middle Name header
             while ((line = reader.readLine()) != null) {
                 row++;
-                String name = isCsv ? firstCsvField(line) : line.trim();
-                if (row == 1 && MANIFEST_CSV_HEADERS.contains(name.toLowerCase(java.util.Locale.ROOT))) continue;
+                if (row == 1 && isCsv) {
+                    List<String> header = csvFields(line);
+                    if (part(header, 0).equalsIgnoreCase(NAME_PARTS_LAST) && part(header, 1).equalsIgnoreCase(NAME_PARTS_FIRST)) {
+                        nameParts = true;
+                        continue;
+                    }
+                }
+                String name;
+                if (nameParts) {
+                    List<String> parts = csvFields(line);
+                    String last = part(parts, 0), first = part(parts, 1), middle = part(parts, 2); // missing cell = ""
+                    if (last.isEmpty() && first.isEmpty() && middle.isEmpty()) continue;          // blank row (Excel saves ",,")
+                    if (last.isEmpty() || first.isEmpty()) {
+                        return "Guest list upload, row " + row + ": Last Name and First Name are both required (Middle Name may be left blank).";
+                    }
+                    name = last + ", " + first + (middle.isEmpty() ? "" : " " + middle);
+                } else {
+                    name = isCsv ? firstCsvField(line) : line.trim();
+                    if (row == 1 && MANIFEST_CSV_HEADERS.contains(name.toLowerCase(java.util.Locale.ROOT))) continue;
+                }
                 if (name.isEmpty()) continue;
                 if (name.length() > Visitor.MAX_COMPANION_NAME_LENGTH) {
                     return "Guest list upload, row " + row + ": the name is longer than " + Visitor.MAX_COMPANION_NAME_LENGTH + " characters.";
@@ -214,6 +239,28 @@ public class VisitorPortalController {
         int comma = row.indexOf(',');
         return (comma < 0 ? row : row.substring(0, comma)).trim();
     }
+
+    // Every field of one CSV row: commas separate fields; "quoted, with commas" keeps them (doubled "" = one quote)
+    private static List<String> csvFields(String line) {
+        List<String> fields = new ArrayList<>();
+        StringBuilder field = new StringBuilder();
+        boolean quoted = false;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (quoted) {
+                if (c != '"') field.append(c);
+                else if (i + 1 < line.length() && line.charAt(i + 1) == '"') { field.append('"'); i++; }
+                else quoted = false;
+            } else if (c == '"') quoted = true;
+            else if (c == ',') { fields.add(field.toString().trim()); field.setLength(0); }
+            else field.append(c);
+        }
+        fields.add(field.toString().trim());
+        return fields;
+    }
+
+    // Cell i of a row, "" when the row is shorter (e.g. no Middle Name cell at all)
+    private static String part(List<String> parts, int i) { return i < parts.size() ? parts.get(i) : ""; }
 
     // 🔑 ONE-TIME KYC NONCE: a fresh random value is put in the visitor's session (and in the booking form) every time
     // the booking page is rendered. /save only accepts a submission that echoes it back, and burns it on the first

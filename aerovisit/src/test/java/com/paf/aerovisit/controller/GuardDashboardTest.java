@@ -230,4 +230,66 @@ class GuardDashboardTest {
         String html = page("expected");
         assertThat(html).contains("Morning Arrival").contains("Visitor Dashboard"); // the Director's own sidebar
     }
+
+    // --- Arrival date picker: ?date= moves Expected Arrivals only ---
+
+    private static final LocalDate LATER = TODAY.plusDays(5);
+
+    private String expectedOn(LocalDate date) throws Exception {
+        stubToday();
+        Visitor later = v(20, "Later Arrival", "APPROVED", MORNING);
+        later.setVisitDate(LATER);
+        Visitor laterPending = v(21, "Later Pending", "PENDING", MORNING);
+        laterPending.setVisitDate(LATER);
+        when(repo.findByVisitDate(LATER)).thenReturn(new ArrayList<>(List.of(later, laterPending)));
+        return mvc.perform(get("/guard/dashboard").param("tab", "expected").param("date", date.toString()))
+                .andExpect(status().isOk()).andExpect(model().attribute("selectedDate", date))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+    }
+
+    @Test
+    void withoutADateThePickerShowsToday() throws Exception {
+        String html = page("expected");
+        assertThat(html).contains("type=\"date\" id=\"arrivalsDate\" name=\"date\"", "value=\"" + TODAY + "\"", "Approved Arrivals for Today")
+                .contains("window.location.href = '?tab=expected&date=' + this.value");
+        assertThat(tbody(html)).contains("data-deny-id=\"4\"");
+    }
+
+    @Test
+    void anotherDateListsThatDaysApprovedPassesOnly() throws Exception {
+        String html = expectedOn(LATER);
+        assertThat(tbody(html)).contains("Later Arrival").doesNotContain("Later Pending", "Morning Arrival", "Afternoon Arrival");
+        assertThat(html).contains("value=\"" + LATER + "\"", "Expected Arrivals <span class=\"count\">(1)</span>")
+                .contains("href=\"/guard/dashboard?tab=expected\" class=\"btn btn-sm btn-outline-secondary\">Today</a>");
+    }
+
+    @Test
+    void anotherDayCannotBeDeniedFromHereButCanStillBeBanned() throws Exception {
+        String rows = tbody(expectedOn(LATER));
+        assertThat(rows).doesNotContain("data-deny-id").contains("Deny on the visit day", "data-ban-url=\"/admin/biometric-ban/20\"");
+    }
+
+    @Test
+    void insideNowAndLeftTodayIgnoreTheDate() throws Exception {
+        String html = expectedOn(LATER);
+        assertThat(html).contains("Inside Now <span class=\"count\">(1)</span>", "Left Today <span class=\"count\">(1)</span>",
+                "Inside <b class=\"text-dark\">3</b>");
+        String left = tbody(mvc.perform(get("/guard/dashboard").param("tab", "left").param("date", LATER.toString()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertThat(left).contains("Left Visitor").doesNotContain("Later Arrival");
+    }
+
+    @Test
+    void anEmptyOtherDaySaysWhichDay() throws Exception {
+        when(repo.findByVisitDate(any())).thenReturn(new ArrayList<>());
+        String html = mvc.perform(get("/guard/dashboard").param("date", LATER.toString()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(html).contains("No approved arrivals for " + LATER.format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d, yyyy")) + ".");
+    }
+
+    @Test
+    void aMalformedDateIsABadRequestNotACrash() throws Exception {
+        stubToday();
+        mvc.perform(get("/guard/dashboard").param("date", "13/45/2026")).andExpect(status().isBadRequest());
+    }
 }

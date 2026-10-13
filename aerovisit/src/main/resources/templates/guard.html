@@ -52,13 +52,25 @@
 
     <!-- Least privilege: names, reference IDs, group size and times only; no contact details, no ID photos, no approvals -->
     <div class="av-panel overflow-hidden">
-        <div class="av-panel-head">
+        <div class="av-panel-head av-panel-head--wrap">
             <span th:switch="${tab}">
                 <th:block th:case="'inside'"><i class="bi bi-door-open me-2"></i>Visitors Inside the Facility</th:block>
                 <th:block th:case="'left'"><i class="bi bi-box-arrow-right me-2"></i>Checked Out Today</th:block>
-                <th:block th:case="*"><i class="bi bi-box-arrow-in-right me-2"></i>Approved Arrivals for Today</th:block>
+                <th:block th:case="*"><i class="bi bi-box-arrow-in-right me-2"></i><span th:text="'Approved Arrivals for ' + (${arrivalsToday} ? 'Today' : ${#temporals.format(selectedDate, 'EEE, MMM d, yyyy')})">Approved Arrivals for Today</span></th:block>
             </span>
-            <span class="av-label">Gate operations</span>
+            <!-- Arrivals for any day. Picking a date reloads with ?date= (years under 1000 are a half-typed year, skipped);
+                 Enter submits the same GET form, so it also works without JavaScript -->
+            <form th:if="${tab == 'expected'}" method="get" action="/guard/dashboard" class="av-manifest-filters">
+                <input type="hidden" name="tab" value="expected">
+                <div class="av-filter-group">
+                    <label class="av-label mb-0" for="arrivalsDate">Arrival date</label>
+                    <input type="date" id="arrivalsDate" name="date" class="form-control form-control-sm av-mono w-auto" required
+                           th:value="${selectedDate}"
+                           onchange="if (this.value.length === 10 && this.value.charAt(0) !== '0') window.location.href = '?tab=expected&date=' + this.value;">
+                </div>
+                <a th:unless="${arrivalsToday}" href="/guard/dashboard?tab=expected" class="btn btn-sm btn-outline-secondary">Today</a>
+            </form>
+            <span th:unless="${tab == 'expected'}" class="av-label">Gate operations</span>
         </div>
         <div class="table-responsive">
             <table class="table table-custom mb-0 av-gate-table" id="gateTable">
@@ -80,7 +92,7 @@
                         </td>
 
                         <td>
-                            <div class="av-cell-strong" th:text="${visitor.timeWindow != null ? visitor.timeWindow : 'Any time today'}"></div>
+                            <div class="av-cell-strong" th:text="${visitor.timeWindow != null ? visitor.timeWindow : (arrivalsToday ? 'Any time today' : 'Any time')}"></div>
                             <div class="av-cell-sub av-mono" th:if="${visitor.checkInTime != null}">
                                 <i class="bi bi-clock"></i> <span th:text="'In ' + ${#temporals.format(visitor.checkInTime, 'hh:mm a')}"></span>
                                 <span th:if="${visitor.checkOutTime != null}" th:text="' · Out ' + ${#temporals.format(visitor.checkOutTime, 'hh:mm a')}"></span>
@@ -95,11 +107,13 @@
 
                         <td class="text-end">
                             <div class="av-actions">
-                                <!-- APPROVED: turn the pass away today (no ban); the QR stops working -->
-                                <button th:if="${visitor.status == 'APPROVED'}" type="button" class="btn btn-sm btn-danger"
+                                <!-- APPROVED: turn the pass away today (no ban); the QR stops working. Only on the visit day:
+                                     /admin/deny-entry refuses any other day, so another date's list shows no Deny button -->
+                                <button th:if="${visitor.status == 'APPROVED' and arrivalsToday}" type="button" class="btn btn-sm btn-danger"
                                         data-bs-toggle="modal" data-bs-target="#denyModal"
                                         th:attr="data-deny-id=${visitor.id},data-deny-name=${visitor.name}">
                                     <i class="bi bi-shield-x"></i> Deny Entry</button>
+                                <span th:if="${visitor.status == 'APPROVED' and !arrivalsToday}" class="av-small av-muted">Deny on the visit day</span>
 
                                 <!-- CHECKED-IN: log the exit now, whether they are leaving or being escorted out -->
                                 <form th:if="${visitor.status == 'CHECKED-IN' and visitor.referenceId != null}" th:action="@{/admin/manual-checkin}" method="post" class="m-0"
@@ -126,7 +140,8 @@
                             <i class="bi bi-check2-square"></i>
                             <th:block th:case="'inside'"><span class="fw-semibold text-dark d-block">Nobody is inside right now.</span></th:block>
                             <th:block th:case="'left'"><span class="fw-semibold text-dark d-block">Nobody has checked out yet today.</span></th:block>
-                            <th:block th:case="*"><span class="fw-semibold text-dark d-block">No more approved arrivals today.</span></th:block>
+                            <th:block th:case="*"><span class="fw-semibold text-dark d-block"
+                                  th:text="${arrivalsToday} ? 'No more approved arrivals today.' : 'No approved arrivals for ' + ${#temporals.format(selectedDate, 'EEE, MMM d, yyyy')} + '.'">No more approved arrivals today.</span></th:block>
                         </td>
                     </tr>
                 </tbody>

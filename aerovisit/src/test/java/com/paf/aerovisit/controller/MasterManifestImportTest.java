@@ -86,6 +86,56 @@ class MasterManifestImportTest {
             .containsExactly("Juan", "Name", "Ana");
     }
 
+    // --- Three-column template: Last Name / First Name / Middle Name ---
+
+    @Test
+    void nameColumnsAreJoinedAsLastCommaFirstMiddle() {
+        String csv = "Last Name,First Name,Middle Name\r\nDela Cruz,Juan,Perez\r\n\"Santos, Jr.\",Maria,L.\r\n";
+        assertThat(importNames(List.of(), null, file("guests.csv", csv, StandardCharsets.UTF_8)))
+            .containsExactly("Dela Cruz, Juan Perez", "Santos, Jr., Maria L.");
+    }
+
+    @Test
+    void aBlankOrMissingMiddleNameLeavesNoTrailingSpace() {
+        // blank Middle Name cell, no Middle Name cell at all, and a header without the Middle Name column
+        assertThat(importNames(List.of(), null, file("g.csv", "LAST NAME,first name,Middle Name\nReyes,Jose,\nBautista,Ana\n", StandardCharsets.UTF_8)))
+            .containsExactly("Reyes, Jose", "Bautista, Ana");
+        assertThat(importNames(List.of(), null, file("g.csv", "Last Name,First Name\nReyes,Jose,  \n", StandardCharsets.UTF_8)))
+            .containsExactly("Reyes, Jose");
+    }
+
+    @Test
+    void blankRowsAreSkippedAndAMissingLastOrFirstNameStopsTheImportWithItsRow() {
+        assertThat(importNames(List.of(), null, file("g.csv", "Last Name,First Name,Middle Name\n,,\nReyes,Jose,M.\n\n", StandardCharsets.UTF_8)))
+            .containsExactly("Reyes, Jose M.");
+        List<String> names = new ArrayList<>();
+        assertThat(VisitorPortalController.addMasterManifestNames(names, null,
+                file("g.csv", "Last Name,First Name,Middle Name\nReyes,Jose,\n,Ana,B.\n", StandardCharsets.UTF_8)))
+            .startsWith("Guest list upload, row 3: Last Name and First Name are both required");
+        assertThat(VisitorPortalController.addMasterManifestNames(names, null,
+                file("g.csv", "Last Name,First Name,Middle Name\nBautista,,B.\n", StandardCharsets.UTF_8)))
+            .startsWith("Guest list upload, row 2:");
+        assertThat(names).isEmpty(); // all or nothing
+    }
+
+    @Test
+    void theJoinedNameStillPassesTheUsualLengthAndCharacterChecks() {
+        String longLast = "A".repeat(95);
+        assertThat(VisitorPortalController.addMasterManifestNames(new ArrayList<>(), null,
+                file("g.csv", "Last Name,First Name\n" + longLast + ",Juan\n", StandardCharsets.UTF_8)))
+            .startsWith("Guest list upload, row 2: the name is longer than");
+        assertThat(VisitorPortalController.addMasterManifestNames(new ArrayList<>(), null,
+                file("g.csv", "Last Name,First Name\nReyes,<b>Jose</b>\n", StandardCharsets.UTF_8)))
+            .startsWith("Guest list upload, row 2: \"Reyes, <b>Jose</b>\" may only contain");
+    }
+
+    @Test
+    void aFileFromTheOldSingleColumnTemplateStillImports() {
+        String csv = "﻿\"Guest Name (Last, First MI)\"\r\n\"Dela Cruz, Juan P.\"\r\n";
+        assertThat(importNames(List.of(), null, file("guest-list-template.csv", csv, StandardCharsets.UTF_8)))
+            .containsExactly("Dela Cruz, Juan P.");
+    }
+
     @Test
     void noFileOrAnEmptyUploadChangesNothing() {
         assertThat(importNames(List.of("A"), null, null)).containsExactly("A");

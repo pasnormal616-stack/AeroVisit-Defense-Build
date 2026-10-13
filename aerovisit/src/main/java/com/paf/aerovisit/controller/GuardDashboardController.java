@@ -2,6 +2,7 @@ package com.paf.aerovisit.controller;
 
 import com.paf.aerovisit.model.Visitor;
 import com.paf.aerovisit.repository.VisitorRepository;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,15 +32,25 @@ public class GuardDashboardController {
     }
 
     @GetMapping("/guard/dashboard")
-    public String showGuardDashboard(@RequestParam(value = "tab", defaultValue = "expected") String tab, Model model) {
+    public String showGuardDashboard(@RequestParam(value = "tab", defaultValue = "expected") String tab,
+                                     @RequestParam(name = "date", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate selectedDate,
+                                     Model model) {
         if (!TAB_STATUS.containsKey(tab)) tab = "expected";
         LocalDate today = LocalDate.now();
+        // ?date= only moves Expected Arrivals (who is booked for that day); Inside Now stays live and Left Today stays today
+        if (selectedDate == null) selectedDate = today;
+        boolean arrivalsToday = selectedDate.equals(today);
 
         List<Visitor> expected = new ArrayList<>();
         List<Visitor> left = new ArrayList<>();
         for (Visitor v : repo.findByVisitDate(today)) {
-            if ("APPROVED".equals(v.getStatus())) expected.add(v);
+            if (arrivalsToday && "APPROVED".equals(v.getStatus())) expected.add(v);
             else if ("CHECKED-OUT".equals(v.getStatus())) left.add(v);
+        }
+        if (!arrivalsToday) {
+            for (Visitor v : repo.findByVisitDate(selectedDate)) {
+                if ("APPROVED".equals(v.getStatus())) expected.add(v);
+            }
         }
         // Inside now, whatever the visit date (the night sweep checks everyone out, so this is normally today only)
         List<Visitor> inside = new ArrayList<>(repo.findByStatus("CHECKED-IN"));
@@ -58,6 +69,8 @@ public class GuardDashboardController {
         model.addAttribute("leftCount", left.size());
         model.addAttribute("headcountInside", headcountInside);
         model.addAttribute("today", today);
+        model.addAttribute("selectedDate", selectedDate);
+        model.addAttribute("arrivalsToday", arrivalsToday);
         model.addAttribute("visitors", "inside".equals(tab) ? inside : "left".equals(tab) ? left : expected);
         return "guard";
     }
