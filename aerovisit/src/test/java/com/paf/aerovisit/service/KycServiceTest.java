@@ -140,15 +140,79 @@ class KycServiceTest {
     }
 
     @Test
-    void aLiveFaceThatDoesNotMatchTheIdIsRefusedWithoutOcr() throws Exception {
-        pythonMatches(false, axis(3));
+    void aLiveFaceThatDoesNotMatchTheIdIsRejectedWithoutOcrAndKeepsTheVector() throws Exception {
+        pythonMatches(false, axis(3)); // an older AI service: no "status" field, same routing
 
         KycService.KycResult result = screen();
 
-        assertThat(result.refused()).isTrue();
-        assertThat(result.message()).isEqualTo("Security Error: Live face does not match ID.");
-        assertThat(result.faceEncoding()).isNull();
+        assertThat(result.rejected()).isTrue();
+        assertThat(result.refused()).isFalse();
+        assertThat(result.status()).isEqualTo(KycService.REJECTED);
+        assertThat(result.reason()).isEqualTo("FACE_MISMATCH");
+        assertThat(result.message()).isEqualTo("Booking failed: your selfie did not match the photo on your ID. If this is a mistake, please contact the reception desk.");
+        assertThat(result.faceEncoding()).isEqualTo(FaceEncodings.format(axis(3))); // kept so the Director can ban the face
         verify(ocr, never()).extractText(any(BufferedImage.class));
+    }
+
+    // --- The AI service's "status" field (kyc.py quality routing) ---
+
+    private void pythonSays(String status, String reason, Boolean match, double[] liveFace) throws Exception {
+        reply.set(new JSONObject().put("status", status).put("reason", reason).put("id_detected", true)
+                .put("id_crop_b64", pngBase64()).put("is_face_match", match == null ? JSONObject.NULL : match)
+                .put("face_similarity", match == null ? JSONObject.NULL : (match ? 0.71 : 0.12))
+                .put("face_match_error", "POOR_QUALITY".equals(status) ? "Face detection unclear - routing to manual review." : JSONObject.NULL)
+                .put("live_sharpness", 210.5).put("id_sharpness", 95.0)
+                .put("live_face_encoding", liveFace == null ? JSONObject.NULL : new JSONArray(liveFace)).toString());
+    }
+
+    @Test
+    void poorQualityGoesToManualReviewWithTheVectorAndNoOcr() throws Exception {
+        for (String reason : new String[] {"BLURRY_LIVE_FACE", "BLURRY_ID_FACE", "BORDERLINE_MATCH", "NO_ID_FACE"}) {
+            pythonSays("POOR_QUALITY", reason, false, axis(4));
+            KycService.KycResult result = screen();
+            assertThat(result.status()).as(reason).isEqualTo(KycService.MANUAL_REVIEW);
+            assertThat(result.reason()).as(reason).isEqualTo(reason);
+            assertThat(result.faceEncoding()).as(reason).isEqualTo(FaceEncodings.format(axis(4)));
+            assertThat(result.rejected() || result.refused()).as(reason).isFalse();
+        }
+        verify(ocr, never()).extractText(any(BufferedImage.class));
+    }
+
+    @Test
+    void aSystemErrorGoesToManualReview() throws Exception {
+        pythonSays("ERROR", "FACE_MODELS_UNAVAILABLE", null, null);
+        assertThat(screen().status()).isEqualTo(KycService.MANUAL_REVIEW);
+    }
+
+    @Test
+    void aMismatchStatusIsRejectedEvenIfTheOldFieldsLookFine() throws Exception {
+        pythonSays("MISMATCH", "OK", true, axis(5)); // the status wins
+        KycService.KycResult result = screen();
+        assertThat(result.rejected()).isTrue();
+        assertThat(result.faceEncoding()).isEqualTo(FaceEncodings.format(axis(5)));
+        verify(ocr, never()).extractText(any(BufferedImage.class));
+    }
+
+    @Test
+    void successStillGoesThroughTheOcrNameCheckAndWaitsForStaff() throws Exception {
+        pythonSays("SUCCESS", "OK", true, axis(6));
+        when(ocr.extractText(any(BufferedImage.class))).thenReturn("REPUBLIC OF THE PHILIPPINES\nDELA CRUZ, JUAN");
+        KycService.KycResult result = screen();
+        assertThat(result.status()).isEqualTo(KycService.PENDING);
+        assertThat(result.ocrNameMatch()).isTrue();
+    }
+
+    @Test
+    void aBannedFaceIsRefusedBeforeAnyStatusIsLookedAt() throws Exception {
+        BlacklistedFace ban = new BlacklistedFace();
+        ban.setFaceEncoding(FaceEncodings.format(axis(7)));
+        when(bans.findAll()).thenReturn(List.of(ban));
+        for (String status : new String[] {"MISMATCH", "POOR_QUALITY", "SUCCESS"}) {
+            pythonSays(status, "OK", "SUCCESS".equals(status), axis(7));
+            KycService.KycResult result = screen();
+            assertThat(result.refused()).as(status).isTrue();
+            assertThat(result.message()).as(status).isEqualTo(KycService.FACE_BANNED);
+        }
     }
 
     // --- Graceful degradation (human-in-the-loop): an unclear face goes to staff, never back to the visitor ---

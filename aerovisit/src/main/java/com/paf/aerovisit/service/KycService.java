@@ -33,10 +33,12 @@ public class KycService {
 
     public static final String PENDING = "PENDING";
     public static final String MANUAL_REVIEW = "PENDING_MANUAL_REVIEW";
-    // Not a Visitor status: /save shows the message and saves nothing
+    // Not a Visitor status: /save shows the message and saves nothing (a banned face)
     public static final String REFUSED = "REFUSED";
+    // A clear face mismatch (likely a spoof): /save stores the attempt as REJECTED (audit trail; the face can be banned)
+    public static final String REJECTED = "REJECTED";
 
-    public static final String FACE_MISMATCH = "Security Error: Live face does not match ID.";
+    public static final String FACE_MISMATCH = "Booking failed: your selfie did not match the photo on your ID. If this is a mistake, please contact the reception desk.";
     // Deliberately generic (silent security): it must not tell a banned person they are banned, restricted or recognised
     public static final String FACE_BANNED = "Booking Failed. We are unable to process your request at this time. Please try again later or contact the reception desk for assistance.";
 
@@ -48,6 +50,10 @@ public class KycService {
 
         public boolean refused() {
             return REFUSED.equals(status);
+        }
+
+        public boolean rejected() {
+            return REJECTED.equals(status);
         }
 
         // Tesseract read both names on the ID close-up (as taken, or after flipping a mirrored photo back)
@@ -91,6 +97,10 @@ public class KycService {
             JSONObject answer = verify(idCardPhoto, livenessSelfie);
             if (answer == null) return review("AI_SERVICE_UNAVAILABLE", null);
             String reason = answer.optString("reason", "UNKNOWN");
+            // 🔎 Logged on every booking so the blur threshold (KYC_MIN_FACE_SHARPNESS) can be tuned on real phone photos
+            System.out.println("KYC readings: status=" + answer.optString("status", "-") + " reason=" + reason
+                    + " live_sharpness=" + answer.opt("live_sharpness") + " id_sharpness=" + answer.opt("id_sharpness")
+                    + " similarity=" + answer.opt("face_similarity"));
 
             // 🧬 Sybil check first: Python returns the live face's vector even when the ID side was unclear, so a banned
             // face is refused whatever name or email it books under, and can't dodge the check by hiding the ID portrait
@@ -100,14 +110,24 @@ public class KycService {
                 return refuse("FACE_BANNED", FACE_BANNED, null);
             }
 
+            // 🧭 The AI service's verdict. POOR_QUALITY (no/weak face, blur, a score just under the match line) and ERROR
+            // are innocent problems: staff review the photos. MISMATCH = two sharp, confidently found, clearly different
+            // faces: the attempt is stored as REJECTED. An older AI service without "status" falls through to the
+            // field checks below, which give the same routing.
+            switch (answer.optString("status", "")) {
+                case "POOR_QUALITY", "ERROR" -> { return review(reason, encoding); }
+                case "MISMATCH" -> { return reject(answer, encoding); }
+                default -> { } // SUCCESS (or no status): continue with the OCR name check
+            }
+
             // GRACEFUL DEGRADATION: a face that couldn't be found (ID portrait under glare, no card, no live face) or was
             // found too weakly to trust a mismatch goes to staff with the photos, never back to the visitor as an error
             if (!answer.isNull("face_match_error") && !answer.optString("face_match_error").isBlank()) {
                 return review(reason, encoding);
             }
             if (!answer.has("is_face_match") || answer.isNull("is_face_match")) return review(reason, encoding);
-            // Both faces clearly found and clearly different people: still refused automatically
-            if (!answer.optBoolean("is_face_match", false)) return refuse("FACE_MISMATCH", FACE_MISMATCH, null);
+            // Both faces clearly found and clearly different people (older AI service): rejected the same way
+            if (!answer.optBoolean("is_face_match", false)) return reject(answer, encoding);
             if (face == null) return review("NO_FACE_ENCODING", null);
 
             String cropB64 = answer.optString("id_crop_b64", "");
@@ -169,6 +189,12 @@ public class KycService {
     private static KycResult review(String reason, String faceEncoding) {
         System.out.println("KYC -> manual review (" + reason + ")");
         return new KycResult(MANUAL_REVIEW, reason, null, faceEncoding);
+    }
+
+    // The vector is kept on the REJECTED booking, so the Director can ban that face from the Entire Database
+    private static KycResult reject(JSONObject answer, String faceEncoding) {
+        System.out.println("KYC -> rejected (FACE_MISMATCH, similarity " + answer.opt("face_similarity") + ")");
+        return new KycResult(REJECTED, "FACE_MISMATCH", FACE_MISMATCH, faceEncoding);
     }
 
     private static KycResult refuse(String reason, String message, String faceEncoding) {

@@ -258,6 +258,38 @@ NO_ID_FACE = "NO_ID_FACE"
 NO_LIVE_FACE = "NO_LIVE_FACE"
 UNSURE_ID_FACE = "UNSURE_ID_FACE"
 # HUMAN-IN-THE-LOOP: whenever a face can't be found (or only weakly), the booking is routed to staff, never refused
+
+# --- 🧭 OUTCOME (one field Java routes on) ------------------------------------------------------------------------
+SUCCESS = "SUCCESS"            # faces match -> normal approval queue (a human still approves)
+POOR_QUALITY = "POOR_QUALITY"  # can't judge (no/weak face, blur, borderline score) -> manual review, never a refusal
+MISMATCH = "MISMATCH"          # two sharp, confidently found faces that are clearly different people -> REJECTED
+ERROR = "ERROR"                # system problem (no OpenCV/models, unreadable upload) -> manual review
+
+# 🔎 BLUR GATE: a blurry face lowers SFace's similarity even for the SAME person, so it must never reach the mismatch
+# rule. Measured on each face (not the whole photo: a plain wall behind a sharp face would read as "blurry"), resized
+# to SFace's own 112 x 112 input, as the variance of the Laplacian. STARTING value, not yet calibrated on real phone
+# photos: the readings come back as live_sharpness / id_sharpness, tune with KYC_MIN_FACE_SHARPNESS.
+MIN_FACE_SHARPNESS = float(os.getenv("KYC_MIN_FACE_SHARPNESS", "40"))
+SHARPNESS_SIDE = 112
+BLURRY_LIVE_FACE = "BLURRY_LIVE_FACE"
+BLURRY_ID_FACE = "BLURRY_ID_FACE"
+# Only a CLEAR mismatch is rejected automatically: a score between this and SFACE_COSINE_THRESHOLD (old ID photo,
+# glasses, lighting) goes to a human instead
+CLEAR_MISMATCH_BELOW = float(os.getenv("KYC_CLEAR_MISMATCH_BELOW", "0.25"))
+BORDERLINE_MATCH = "BORDERLINE_MATCH"
+
+
+def face_sharpness(image, row):
+    """Variance of the Laplacian over one detected face (YuNet row on `image`), on a 112 x 112 grey copy."""
+    x, y, w, h = (int(round(float(v))) for v in row[:4])
+    height, width = image.shape[:2]
+    x0, y0, x1, y1 = max(0, x), max(0, y), min(width, x + w), min(height, y + h)
+    if x1 - x0 < 8 or y1 - y0 < 8:
+        return 0.0
+    face = cv2.cvtColor(image[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
+    shrink = (x1 - x0) >= SHARPNESS_SIDE
+    face = cv2.resize(face, (SHARPNESS_SIDE, SHARPNESS_SIDE), interpolation=cv2.INTER_AREA if shrink else cv2.INTER_CUBIC)
+    return float(cv2.Laplacian(face, cv2.CV_64F).var())
 FACE_UNCLEAR_ERROR = "Face detection unclear - routing to manual review."
 
 try:
@@ -328,13 +360,14 @@ def find_id_face(card):
 def _unclear(result, reason):
     """Human-in-the-loop: a face that can't be found (or only weakly) sends the booking to staff, it never refuses it.
     Any live face vector already in result is kept, so Java can still check the biometric blacklist."""
-    return {**result, "reason": reason, "is_face_match": False, "face_match_error": FACE_UNCLEAR_ERROR}
+    return {**result, "status": POOR_QUALITY, "reason": reason, "is_face_match": False, "face_match_error": FACE_UNCLEAR_ERROR}
 
 
 def verify_two_step(id_image, live_image):
     """Both decoded BGR images -> response dict (see /kyc/verify)."""
-    result = {"reason": OK, "id_detected": False, "id_crop_b64": None, "is_face_match": None,
-              "face_similarity": None, "face_match_error": None, "live_face_encoding": None, "id_face_score": None}
+    result = {"status": SUCCESS, "reason": OK, "id_detected": False, "id_crop_b64": None, "is_face_match": None,
+              "face_similarity": None, "face_match_error": None, "live_face_encoding": None, "id_face_score": None,
+              "live_sharpness": None, "id_sharpness": None}
 
     # 1. The live face first: the biggest face in the selfie, large enough to be the visitor rather than their ID photo.
     # Its vector is returned even when the ID side fails, so a banned face can't slip through by hiding the ID portrait.
@@ -342,6 +375,9 @@ def verify_two_step(id_image, live_image):
     live_vector = None if live_row is None else _feature(live_small, live_row)
     if live_vector is not None:
         result["live_face_encoding"] = [round(float(v), 6) for v in live_vector]
+    live_sharp = None if live_row is None else face_sharpness(live_small, live_row)
+    if live_sharp is not None:
+        result["live_sharpness"] = round(live_sharp, 1)
 
     # 2. The card, from the ID-only close-up. No face veto here: nobody's head is in this photo.
     small, scale = _downscale(id_image)
@@ -360,18 +396,32 @@ def verify_two_step(id_image, live_image):
     if live_vector is None:
         return _unclear(result, NO_LIVE_FACE)
 
+    # 4. Blur gate before any comparison: a blurry photo is an innocent mistake, never a mismatch
+    id_sharp = face_sharpness(card_face_image, id_row)
+    result["id_sharpness"] = round(id_sharp, 1)
+    if live_sharp < MIN_FACE_SHARPNESS:
+        return _unclear(result, BLURRY_LIVE_FACE)
+    if id_sharp < MIN_FACE_SHARPNESS:
+        return _unclear(result, BLURRY_ID_FACE)
+
     similarity = float(np.dot(_feature(card_face_image, id_row), live_vector))
     result.update(is_face_match=similarity >= SFACE_COSINE_THRESHOLD, face_similarity=round(similarity, 4))
-    # A mismatch is only trusted (and refused by Java) when the ID face itself was found with full confidence;
-    # against a portrait found only at the lower threshold (glare, hologram) it goes to manual review instead
-    if not result["is_face_match"] and id_row[14] < FACE_SCORE_THRESHOLD:
+    if result["is_face_match"]:
+        return {**result, "status": SUCCESS}
+    # A mismatch is only trusted (and rejected by Java) when the ID face was found with full confidence AND the score is
+    # clearly low; against a portrait found only at the lower threshold (glare, hologram), or with a score just under
+    # the match line (old ID photo, glasses, lighting), it goes to manual review instead
+    if id_row[14] < FACE_SCORE_THRESHOLD:
         return _unclear(result, UNSURE_ID_FACE)
-    return result
+    if similarity >= CLEAR_MISMATCH_BELOW:
+        return _unclear(result, BORDERLINE_MATCH)
+    return {**result, "status": MISMATCH}
 
 
 def _two_step_failure(reason):
-    return {"reason": reason, "id_detected": False, "id_crop_b64": None, "is_face_match": None,
-            "face_similarity": None, "face_match_error": None, "live_face_encoding": None, "id_face_score": None}
+    return {"status": ERROR, "reason": reason, "id_detected": False, "id_crop_b64": None, "is_face_match": None,
+            "face_similarity": None, "face_match_error": None, "live_face_encoding": None, "id_face_score": None,
+            "live_sharpness": None, "id_sharpness": None}
 
 
 class TwoStepRequest(BaseModel):

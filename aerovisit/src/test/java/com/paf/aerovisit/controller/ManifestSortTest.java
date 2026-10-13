@@ -78,12 +78,23 @@ class ManifestSortTest {
     }
 
     @Test
-    void everyTabDefaultsToOldestFirstWithUntimestampedRowsOnTop() throws Exception {
+    void todayAndPendingDefaultToOldestFirstWithUntimestampedRowsOnTop() throws Exception {
         stubAllTabs(mixed());
-        for (String filter : new String[] {"today", "pending", "all"}) {
+        for (String filter : new String[] {"today", "pending"}) {
             assertThat(order(filter, null)).as(filter).containsExactly(2L, 7L, 3L, 6L, 4L, 5L);
             assertThat(order(filter, "asc")).as(filter).containsExactly(2L, 7L, 3L, 6L, 4L, 5L);
         }
+    }
+
+    @Test
+    void theEntireDatabaseDefaultsToNewestFirstButOldestFirstCanStillBeChosen() throws Exception {
+        stubAllTabs(mixed());
+        assertThat(order("all", null)).containsExactly(5L, 4L, 6L, 3L, 7L, 2L);
+        assertThat(order("all", "asc")).containsExactly(2L, 7L, 3L, 6L, 4L, 5L);
+        String html = mvc.perform(get("/admin").param("filter", "all"))
+            .andExpect(model().attribute("sort", "desc"))
+            .andReturn().getResponse().getContentAsString();
+        assertThat(html).contains("<option value=\"desc\" selected=\"selected\">Newest First</option>");
     }
 
     @Test
@@ -109,6 +120,7 @@ class ManifestSortTest {
             .andExpect(status().isOk())
             .andExpect(model().attribute("sort", "asc"))
             .andExpect(content().string(not(containsString("<script>\""))));
+        mvc.perform(get("/admin").param("filter", "all").param("sort", "bogus")).andExpect(model().attribute("sort", "desc"));
     }
 
     @Test

@@ -68,7 +68,7 @@ public class AdminDashboardController {
     @GetMapping("/admin")
     public String showAdminDashboard(@RequestParam(value = "filter", required = false) String filter,
                                      @RequestParam(value = "capacityDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate capacityDate,
-                                     @RequestParam(value = "sort", defaultValue = "asc") String sort,
+                                     @RequestParam(value = "sort", required = false) String sort,
                                      @RequestParam(value = "dateFilter", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFilter,
                                      @RequestParam(value = "range", defaultValue = "today") String range,
                                      Model model, RedirectAttributes redirectAttributes){
@@ -144,9 +144,12 @@ public class AdminDashboardController {
                 filter = "today";
             }
             
-            // Oldest First (FIFO, the default) or Newest First, by submission time (createdAt). Rows from before createdAt
-            // existed have no timestamp: they count as the oldest and are ordered by ID among themselves.
-            String sortOrder = "desc".equals(sort) ? "desc" : "asc";
+            // Oldest First (FIFO) or Newest First, by submission time (createdAt). Default per tab: Oldest First on
+            // Today's Manifest and Pending (first come, first served), Newest First on the Entire Database (latest
+            // registrations on top). A ?sort= choice from the dropdown always wins; anything else falls back to the
+            // tab's default. Rows from before createdAt existed have no timestamp: they count as the oldest and are
+            // ordered by ID among themselves.
+            String sortOrder = "asc".equals(sort) || "desc".equals(sort) ? sort : ("all".equals(filter) ? "desc" : "asc");
             Comparator<Visitor> oldestFirst = Comparator
                     .comparing(Visitor::getCreatedAt, Comparator.nullsFirst(Comparator.<java.time.LocalDateTime>naturalOrder()))
                     .thenComparing(Visitor::getId, Comparator.nullsFirst(Comparator.<Long>naturalOrder()));

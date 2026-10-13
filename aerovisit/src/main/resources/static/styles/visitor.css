@@ -53,54 +53,47 @@
 .vp-eyebrow--on-dark { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.18); color: rgba(255,255,255,0.9); }
 
 /* --------------------------------------------------------------------------
-   1. Floating navigation bar: logo on the left, actions + dark-mode toggle on the far right
+   1. Floating controls (no header bar): a round, frosted dark-mode toggle in the top-right corner, plus a
+      "Book a Visit" pill on the other visitor pages. Absolute, so it scrolls away with the top of the page and
+      never sits on the booking card. Both always float over the dark hero / page band, so they stay white-on-glass
+      in either theme.
    -------------------------------------------------------------------------- */
-.vp-nav-wrap { position: fixed; top: 16px; left: 0; right: 0; z-index: var(--z-header); display: flex; justify-content: center; padding: 0 16px; pointer-events: none; }
-.vp-nav {
-    pointer-events: auto;
-    width: 100%; max-width: 1320px;                 /* lines up with the page container */
-    display: flex; align-items: center; gap: 4px;
-    padding: 6px 6px 6px 18px;
-    border-radius: 999px;
-    background: rgba(8, 18, 44, 0.55);
-    border: 1px solid rgba(255,255,255,0.14);
-    backdrop-filter: blur(18px) saturate(140%);
-    -webkit-backdrop-filter: blur(18px) saturate(140%);
+.vp-float-controls {
+    position: absolute; z-index: 50;
+    top: calc(env(safe-area-inset-top, 0px) + 1rem);
+    right: calc(env(safe-area-inset-right, 0px) + 1rem);
+    display: flex; align-items: center; gap: 8px;
+}
+.vp-theme-btn,
+.vp-float-link {
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(8, 18, 44, 0.42);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    box-shadow: 0 8px 24px -10px rgba(0, 0, 0, 0.55);
     color: #FFFFFF;
-    transition: background-color var(--dur-slow) var(--ease-out), border-color var(--dur-slow) var(--ease-out);
+    transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
-.vp-nav.is-scrolled { background: color-mix(in srgb, var(--bg-surface) 82%, transparent); border-color: var(--bezel-line); color: var(--text); }
-.vp-brand { display: inline-flex; align-items: center; gap: 10px; margin-right: 12px; color: inherit !important; text-decoration: none; font-family: var(--font-display); font-weight: 800; font-size: 1.05rem; letter-spacing: -0.02em; }
-.vp-brand-mark { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--paf-gold); color: var(--paf-ultramarine-900); font-size: 0.85rem; }
-/* Navbar logo: 36px plate = the theme button's height, so the floating pill keeps its size */
-.vp-brand-logo { height: 36px; padding: 2px 6px; border-radius: 999px; }
-.vp-nav .vp-brand { margin-left: -12px; margin-right: auto; }   /* pushes the rest (toggle last) to the right edge */
-.vp-footer-logo { height: 64px; padding: 4px 10px; border-radius: 12px; margin-bottom: 8px; align-self: flex-start; }
-.vp-welcome-plate { height: 76px; padding: 6px 12px; margin: 0 auto 16px; border-radius: 16px; box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.6); }
-.vp-nav-link {
-    display: inline-flex; align-items: center;
-    height: 36px; padding: 0 14px;
-    border-radius: 999px;
-    color: inherit !important;
-    opacity: 0.82;
-    font-size: 0.8125rem; font-weight: 600;
-    text-decoration: none;
-    transition: opacity var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
-}
-.vp-nav-link:hover { opacity: 1; background: rgba(255,255,255,0.1); }
-.vp-nav.is-scrolled .vp-nav-link:hover { background: var(--bezel-shell); }
 .vp-theme-btn {
-    width: 36px; height: 36px;
+    width: 44px; height: 44px;
     display: inline-grid; place-items: center;
     border-radius: 50%;
-    border: 1px solid rgba(255,255,255,0.2);
-    background: rgba(255,255,255,0.08);
-    color: inherit;
+    font-size: 1.05rem;
     cursor: pointer;
-    transition: background-color var(--dur-fast) var(--ease-out);
 }
-.vp-nav.is-scrolled .vp-theme-btn { border-color: var(--bezel-line); background: var(--bezel-shell); }
-.vp-theme-btn:hover { background: rgba(255,255,255,0.18); }
+.vp-float-link {
+    display: inline-flex; align-items: center;
+    height: 44px; padding: 0 18px;
+    border-radius: 999px;
+    color: #FFFFFF !important;
+    font-size: 0.8125rem; font-weight: 600;
+    text-decoration: none;
+}
+.vp-theme-btn:hover, .vp-float-link:hover { background: rgba(8, 18, 44, 0.62); border-color: rgba(255, 255, 255, 0.36); }
+.vp-theme-btn:focus-visible, .vp-float-link:focus-visible { outline: 3px solid var(--paf-gold); outline-offset: 2px; }
+.vp-brand-mark { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--paf-gold); color: var(--paf-ultramarine-900); font-size: 0.85rem; }
+.vp-footer-logo { height: 64px; padding: 4px 10px; border-radius: 12px; margin-bottom: 8px; align-self: flex-start; }
+.vp-welcome-plate { height: 76px; padding: 6px 12px; margin: 0 auto 16px; border-radius: 16px; box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.6); }
 
 /* --------------------------------------------------------------------------
    2. Hero — editorial split with subtle depth
@@ -108,10 +101,10 @@
 .vp-hero {
     position: relative;
     isolation: isolate;
-    min-height: min(78dvh, 760px);
+    min-height: min(70dvh, 680px);
     display: flex;
     align-items: center;
-    padding: 136px 0 176px;
+    padding: 88px 0 176px;    /* top: clears the floating toggle (16px + 44px) with room to spare; no header bar */
     color: #FFFFFF;
     background: transparent;   /* photography comes from the fixed .vp-backdrop slideshow */
     overflow: hidden;
@@ -619,7 +612,7 @@ html.vp-cam-open { overflow: hidden; scrollbar-gutter: auto; }
    10. Confirmation / feedback pages
    -------------------------------------------------------------------------- */
 .vp-page { min-height: 100dvh; display: flex; flex-direction: column; }
-.vp-page-main { flex: 1; display: flex; align-items: flex-start; padding: 176px 0 64px; }
+.vp-page-main { flex: 1; display: flex; align-items: flex-start; padding: 104px 0 64px; } /* top: below the floating controls */
 .vp-page-band { position: absolute; inset: 0 0 auto 0; height: 320px; background: var(--paf-ultramarine-900); z-index: 0; }
 .vp-page-band::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: rgba(210,175,57,0.4); }
 .vp-narrow { position: relative; z-index: 1; width: 100%; max-width: 640px; margin: 0 auto; }
@@ -822,13 +815,12 @@ body.modal-open #chat-toggle-btn, body.modal-open .aero-greet, body.modal-open #
 @media (max-width: 991.98px) {
     .vp-hero-grid { grid-template-columns: 1fr; }
     .vp-facts { max-width: 560px; }
-    .vp-nav-link.hide-md { display: none; }
     /* Narrow screens: collapse to the active step only (no tall empty space) */
     .vp-step:not(.is-active) { display: none; }
 }
 @media (max-width: 767.98px) {
     .vp .container { padding-left: 16px; padding-right: 16px; }
-    .vp-hero { padding: 112px 0 152px; min-height: 0; }
+    .vp-hero { padding: 80px 0 152px; min-height: 0; }
     .vp-hero::after { bottom: 104px; }
     .vp-console { margin-top: -96px; }
     .vp-grid-2, .vp-rules { grid-template-columns: 1fr; }
@@ -841,7 +833,6 @@ body.modal-open #chat-toggle-btn, body.modal-open .aero-greet, body.modal-open #
     .vp-step-actions .vp-btn { flex: 1 1 auto; }
     .vp-details-row { grid-template-columns: 1fr; gap: 2px; }
     .vp-bezel { --vp-radius-xl: 1.5rem; }
-    .vp-nav { padding-left: 14px; }
 }
 
 /* ==========================================================================
@@ -1169,9 +1160,6 @@ html.vp-is-loading { overflow: hidden; }
    Mouse/trackpad desktops keep the sizes above. Nothing is hidden or removed.
    -------------------------------------------------------------------------- */
 @media (pointer: coarse) {
-    .vp-nav-link { height: 44px; }
-    .vp-theme-btn { width: 44px; height: 44px; }
-    .vp-brand { min-height: 44px; }
     .vp-welcome-close { width: 44px; height: 44px; }
     .vp .btn { min-height: 44px; }
     .vp-footer-legal nav a { display: inline-flex; align-items: center; min-height: 44px; }

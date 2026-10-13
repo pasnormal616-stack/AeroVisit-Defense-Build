@@ -166,6 +166,10 @@ class TwoStepEndpointTest(unittest.TestCase):
     def setUp(self):
         self.id_closeup = paste_card(noisy_background(), (300, 250), 900, thumb=False)
         self.selfie = noisy_background(1280, 720, seed=5)
+        # The mocked faces have no real texture: both count as sharp unless a test says otherwise (live is measured first)
+        sharp = mock.patch.object(kyc, "face_sharpness", return_value=500.0)
+        self.sharpness = sharp.start()
+        self.addCleanup(sharp.stop)
 
     def faces(self, id_found=True, live_found=True, id_score=0.95):
         self.searches = []
@@ -187,9 +191,11 @@ class TwoStepEndpointTest(unittest.TestCase):
         v = unit_vector(1)
         with mock.patch.object(kyc, "FACE_READY", True), self.faces(), self.features(v, v):
             result = two_step(self.id_closeup, self.selfie)
+        self.assertEqual(result["status"], kyc.SUCCESS)
         self.assertEqual(result["reason"], kyc.OK)
         self.assertIs(result["is_face_match"], True)
         self.assertAlmostEqual(result["face_similarity"], 1.0, places=3)
+        self.assertEqual((result["live_sharpness"], result["id_sharpness"]), (500.0, 500.0))  # logged for tuning
         self.assertEqual(len(result["live_face_encoding"]), 128)
         self.assertIsNone(result["face_match_error"])
         crop = cv2.imdecode(np.frombuffer(base64.b64decode(result["id_crop_b64"]), np.uint8), cv2.IMREAD_COLOR)
@@ -214,6 +220,7 @@ class TwoStepEndpointTest(unittest.TestCase):
     # --- Graceful degradation: an unclear face routes to manual review (Java), never a refusal ---
 
     def assertUnclear(self, result, reason):
+        self.assertEqual(result["status"], kyc.POOR_QUALITY)
         self.assertEqual(result["reason"], reason)
         self.assertIs(result["is_face_match"], False)
         self.assertEqual(result["face_match_error"], "Face detection unclear - routing to manual review.")
@@ -255,10 +262,12 @@ class TwoStepEndpointTest(unittest.TestCase):
         self.assertEqual(result["reason"], kyc.OK)
         self.assertIs(result["is_face_match"], True)
 
-    def test_a_confident_mismatch_stays_a_plain_mismatch_that_java_refuses(self):
+    def test_a_confident_clear_mismatch_is_a_mismatch_that_java_rejects(self):
         with mock.patch.object(kyc, "FACE_READY", True), self.faces(id_score=0.9), \
                 self.features(unit_vector(1), unit_vector(2)):
             result = two_step(self.id_closeup, self.selfie)
+        self.assertLess(result["face_similarity"], kyc.CLEAR_MISMATCH_BELOW)
+        self.assertEqual(result["status"], kyc.MISMATCH)
         self.assertEqual(result["reason"], kyc.OK)
         self.assertIs(result["is_face_match"], False)
         self.assertIsNone(result["face_match_error"])
@@ -284,8 +293,74 @@ class TwoStepEndpointTest(unittest.TestCase):
             boom = two_step(self.id_closeup, self.selfie)
         self.assertEqual(boom["reason"], kyc.INTERNAL_ERROR)
         for answer in (bad, boom):
+            self.assertEqual(answer["status"], kyc.ERROR)
             self.assertIsNone(answer["face_match_error"])
             self.assertIsNone(answer["is_face_match"])
+
+    # --- Quality routing: blur and borderline scores are innocent mistakes (manual review), never a mismatch ---
+
+    def test_a_blurry_selfie_is_poor_quality_even_when_the_faces_differ(self):
+        self.sharpness.side_effect = [kyc.MIN_FACE_SHARPNESS - 1, 500.0]   # live, then ID
+        with mock.patch.object(kyc, "FACE_READY", True), self.faces(id_score=0.9), \
+                self.features(unit_vector(1), unit_vector(2)):
+            result = two_step(self.id_closeup, self.selfie)
+        self.assertUnclear(result, kyc.BLURRY_LIVE_FACE)
+        self.assertIsNone(result["face_similarity"])                     # never compared
+        self.assertEqual(len(result["live_face_encoding"]), 128)          # still checked against the blacklist
+
+    def test_a_blurry_id_portrait_is_poor_quality(self):
+        self.sharpness.side_effect = [500.0, kyc.MIN_FACE_SHARPNESS - 1]
+        with mock.patch.object(kyc, "FACE_READY", True), self.faces(id_score=0.9), \
+                self.features(unit_vector(1), unit_vector(2)):
+            result = two_step(self.id_closeup, self.selfie)
+        self.assertUnclear(result, kyc.BLURRY_ID_FACE)
+        self.assertEqual(result["id_sharpness"], kyc.MIN_FACE_SHARPNESS - 1)
+
+    def test_exactly_at_the_sharpness_threshold_counts_as_sharp(self):
+        self.sharpness.side_effect = [kyc.MIN_FACE_SHARPNESS, kyc.MIN_FACE_SHARPNESS]
+        v = unit_vector(1)
+        with mock.patch.object(kyc, "FACE_READY", True), self.faces(), self.features(v, v):
+            self.assertEqual(two_step(self.id_closeup, self.selfie)["status"], kyc.SUCCESS)
+
+    def test_a_score_just_under_the_match_line_is_borderline_not_a_mismatch(self):
+        a = np.zeros(128); a[0] = 1.0
+        b = np.zeros(128); b[0] = 0.30; b[1] = np.sqrt(1 - 0.30 ** 2)       # 0.25 <= 0.30 < 0.363
+        with mock.patch.object(kyc, "FACE_READY", True), self.faces(id_score=0.9), self.features(a, b):
+            result = two_step(self.id_closeup, self.selfie)
+        self.assertUnclear(result, kyc.BORDERLINE_MATCH)
+        self.assertAlmostEqual(result["face_similarity"], 0.30, places=3)
+        c = np.zeros(128); c[0] = 0.24; c[1] = np.sqrt(1 - 0.24 ** 2)       # just below the clear-mismatch line
+        with mock.patch.object(kyc, "FACE_READY", True), self.faces(id_score=0.9), self.features(a, c):
+            self.assertEqual(two_step(self.id_closeup, self.selfie)["status"], kyc.MISMATCH)
+
+
+class FaceSharpnessTest(unittest.TestCase):
+    """The real variance-of-Laplacian measure on a textured patch, sharp and blurred."""
+
+    def setUp(self):
+        rng = np.random.default_rng(7)
+        texture = rng.integers(0, 255, size=(60, 60), dtype=np.uint8)
+        self.sharp = cv2.cvtColor(cv2.resize(texture, (240, 240), interpolation=cv2.INTER_NEAREST), cv2.COLOR_GRAY2BGR)
+        self.row = np.array([20, 20, 200, 200] + [0] * 10 + [0.95], np.float32)   # YuNet-style row: x, y, w, h, ..., score
+
+    def test_blur_lowers_the_sharpness_below_the_threshold(self):
+        sharp = kyc.face_sharpness(self.sharp, self.row)
+        blurred = kyc.face_sharpness(cv2.GaussianBlur(self.sharp, (0, 0), 6), self.row)
+        self.assertGreater(sharp, kyc.MIN_FACE_SHARPNESS)
+        self.assertLess(blurred, kyc.MIN_FACE_SHARPNESS)
+        self.assertLess(blurred, sharp / 10)
+
+    def test_a_flat_face_area_reads_as_blurry(self):
+        flat = np.full((240, 240, 3), 128, np.uint8)
+        self.assertLess(kyc.face_sharpness(flat, self.row), kyc.MIN_FACE_SHARPNESS)
+
+    def test_a_tiny_or_off_image_box_is_zero_not_an_error(self):
+        self.assertEqual(kyc.face_sharpness(self.sharp, np.array([300, 300, 50, 50] + [0] * 11, np.float32)), 0.0)
+        self.assertEqual(kyc.face_sharpness(self.sharp, np.array([10, 10, 4, 4] + [0] * 11, np.float32)), 0.0)
+
+    def test_a_small_face_is_measured_at_the_same_scale_as_a_large_one(self):
+        small_row = np.array([20, 20, 60, 60] + [0] * 10 + [0.95], np.float32)
+        self.assertGreater(kyc.face_sharpness(self.sharp, small_row), 0.0)   # upscaled to 112, not skipped
 
 
 @unittest.skipUnless(kyc.FACE_READY, "YuNet/SFace models not in ./models")

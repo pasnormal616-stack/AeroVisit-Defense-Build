@@ -33,18 +33,14 @@
 </head>
 <body class="vp">
 
-<div th:fragment="topnav(onHome)" class="vp-nav-wrap">
-    <nav class="vp-nav" id="vpNav" aria-label="Main">
-        <a class="vp-brand" href="/">
-            <span class="paf-logo-plate vp-brand-logo"><img class="paf-logo" src="/images/paflogo.png" alt="Philippine Air Force Museum Logo" width="64" height="32"></span>
-        </a>
-        <!-- Booking page: no section links here (the booking panel's own tabs cover Book / Manage / Guidelines / Exhibits) -->
-        <a th:unless="${onHome}" href="/" class="vp-nav-link">Book a Visit</a>
-        <button type="button" class="vp-theme-btn theme-toggle" data-theme-toggle aria-label="Toggle dark mode">
-            <i class="bi bi-moon-stars theme-icon-light"></i>
-            <i class="bi bi-sun theme-icon-dark"></i>
-        </button>
-    </nav>
+<!-- No header bar: floating controls in the top-right corner. The booking page shows only the round dark-mode toggle;
+     the other visitor pages also keep a "Book a Visit" pill (on the feedback pages it is the only way back). -->
+<div th:fragment="topnav(onHome)" class="vp-float-controls">
+    <a th:unless="${onHome}" href="/" class="vp-float-link">Book a Visit</a>
+    <button type="button" class="vp-theme-btn theme-toggle" data-theme-toggle aria-label="Toggle dark mode">
+        <i class="bi bi-moon-stars theme-icon-light"></i>
+        <i class="bi bi-sun theme-icon-dark"></i>
+    </button>
 </div>
 
 <!-- Pre-loader: radar sweep + jet silhouette. Pure markup/CSS; visitor.js dismisses it

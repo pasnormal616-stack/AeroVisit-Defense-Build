@@ -315,14 +315,23 @@ class PortalContentTest {
     // --- PAF Museum logo branding (public pages) ---
 
     @Test
-    void publicPagesCarryTheLogoInTheNavbarLoaderAndFooterPlusTheFavicon() throws Exception {
+    void theOtherVisitorPagesKeepAFloatingBookAVisitLinkBesideTheToggle() throws Exception {
+        String html = mvc.perform(get("/manage-booking")).andReturn().getResponse().getContentAsString();
+        assertThat(html).containsSubsequence("<div class=\"vp-float-controls\">",
+            "<a href=\"/\" class=\"vp-float-link\">Book a Visit</a>", "data-theme-toggle");
+        assertThat(html).doesNotContain("class=\"vp-nav", "vp-brand-logo");
+    }
+
+    @Test
+    void publicPagesCarryTheLogoInTheLoaderAndFooterPlusTheFavicon() throws Exception {
         String html = mvc.perform(get("/")).andReturn().getResponse().getContentAsString();
         assertThat(html).contains("<link rel=\"icon\" type=\"image/png\" href=\"/images/paflogo.png\">");
-        // navbar: logo, then the dark-mode toggle on the far right; no Plan Visit / Guidelines / Exhibits links (the
-        // booking panel's tabs cover them) and the hero keeps one call to action
-        assertThat(html).containsSubsequence("<a class=\"vp-brand\" href=\"/\">",
-            "<img class=\"paf-logo\" src=\"/images/paflogo.png\" alt=\"Philippine Air Force Museum Logo\"", "</a>",
-            "data-theme-toggle", "</nav>", "data-open-tab=\"book-tab\"");
+        // no header bar and no header logo (user decision 2026-10-13): only the floating dark-mode toggle, before the
+        // hero's one call to action; no Plan Visit / Guidelines / Exhibits links (the booking panel's tabs cover them)
+        assertThat(html).containsSubsequence("<div class=\"vp-float-controls\">", "data-theme-toggle", "</div>",
+            "data-open-tab=\"book-tab\"");
+        assertThat(html).doesNotContain("class=\"vp-nav", "vp-brand-logo", "id=\"vpNav\"");
+        assertThat(html).doesNotContain("class=\"vp-float-link\""); // the booking page itself needs no "Book a Visit" pill
         assertThat(html).doesNotContain(">Plan Visit<").doesNotContain("vp-btn--ghost-dark");
         // loading screen keeps its radar and progress bar; the one transparent logo file on its white badge (no JPEG)
         assertThat(html).containsSubsequence("id=\"vpPreloader\"", "vp-radar-sweep",

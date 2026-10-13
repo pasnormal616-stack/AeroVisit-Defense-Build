@@ -165,11 +165,33 @@ class EmailOtpSelfieBookingTest {
     }
 
     @Test
-    void aLiveFaceThatDoesNotMatchTheIdIsRefused() throws Exception {
+    void aBannedFaceIsRefusedAndNothingIsSaved() throws Exception {
         when(otpService.isVerified(EMAIL)).thenReturn(true);
         when(kycService.screen(any(), any(), anyString(), anyString())).thenReturn(new KycService.KycResult(
-                KycService.REFUSED, "FACE_MISMATCH", "Security Error: Live face does not match ID.", null));
-        assertRefusedWith("Security Error: Live face does not match ID.");
+                KycService.REFUSED, "FACE_BANNED", KycService.FACE_BANNED, null));
+        assertRefusedWith(KycService.FACE_BANNED);
+    }
+
+    @Test
+    void aClearFaceMismatchIsStoredAsRejectedWithItsPhotosAndFaceButNoSeatOrPendingEmail() throws Exception {
+        when(otpService.isVerified(EMAIL)).thenReturn(true);
+        when(kycService.screen(any(), any(), anyString(), anyString())).thenReturn(new KycService.KycResult(
+                KycService.REJECTED, "FACE_MISMATCH", KycService.FACE_MISMATCH, FACE));
+
+        mvc.perform(booking(false))
+            .andExpect(redirectedUrl("/"))
+            .andExpect(flash().attribute("error", KycService.FACE_MISMATCH));
+
+        Visitor saved = firstSaved();
+        assertThat(saved.getStatus()).isEqualTo("REJECTED");
+        assertThat(saved.getRejectionReason()).isEqualTo("Automatic KYC: live face does not match the ID portrait");
+        assertThat(saved.getFaceEncoding()).isEqualTo(FACE);   // the Director can ban this face
+        assertThat(saved.getIdImageUrl()).isNotNull();          // both photos kept as evidence
+        assertThat(saved.getIdCardImageUrl()).isNotNull();
+        assertThat(saved.getReferenceId()).startsWith("PAF-");
+        verify(otpService).consume(EMAIL);                      // one email code = one attempt
+        verify(emailService, never()).sendPendingNotification(any(), any(), any(), anyBoolean(), any());
+        verify(emailService, never()).sendPendingNotification(any(), any(), any(), anyBoolean());
     }
 
     @Test
@@ -313,7 +335,7 @@ class EmailOtpSelfieBookingTest {
     void aRefusedBookingDoesNotUseUpTheVerification() throws Exception {
         when(otpService.isVerified(EMAIL)).thenReturn(true);
         when(kycService.screen(any(), any(), anyString(), anyString())).thenReturn(new KycService.KycResult(
-                KycService.REFUSED, "FACE_MISMATCH", KycService.FACE_MISMATCH, null));
+                KycService.REFUSED, "FACE_BANNED", KycService.FACE_BANNED, null));
 
         mvc.perform(booking(false)).andExpect(redirectedUrl("/"));
 

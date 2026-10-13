@@ -86,7 +86,7 @@ class ManifestDateFilterTest {
             .andExpect(model().attribute("dateFilter", PICKED))
             .andReturn();
 
-        assertThat(ids(result)).containsExactly(1L, 2L, 3L); // FIFO by createdAt; 9 (Historical Baseline) dropped
+        assertThat(ids(result)).containsExactly(3L, 2L, 1L); // Entire Database default: newest createdAt first; 9 (Historical Baseline) dropped
         verify(repo, never()).findAll();
     }
 
@@ -112,7 +112,7 @@ class ManifestDateFilterTest {
                 .andExpect(status().isOk())
                 .andExpect(model().attribute("dateFilter", (Object) null))
                 .andReturn();
-            assertThat(ids(result)).as("dateFilter=" + blank).containsExactly(50L, 51L);
+            assertThat(ids(result)).as("dateFilter=" + blank).containsExactly(51L, 50L); // Entire Database default: newest first
         }
     }
 

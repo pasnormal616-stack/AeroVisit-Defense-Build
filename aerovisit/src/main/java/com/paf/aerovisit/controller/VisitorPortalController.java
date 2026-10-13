@@ -473,7 +473,8 @@ public class VisitorPortalController {
                 // 🪪 TWO-STEP KYC (ZERO TRUST: Master Bookings included, their lead booker is screened like anyone else):
                 // ID portrait vs live face (1:1), the biometric blacklist, then the OCR name match on the ID close-up.
                 // Both photos are needed; a missing one, the AI service being offline or a name mismatch =
-                // PENDING_MANUAL_REVIEW. A clear face mismatch or a banned face refuses the booking outright.
+                // PENDING_MANUAL_REVIEW (so is a blurry photo or a score just under the match line). A banned face is
+                // refused outright; a clear face mismatch is stored as REJECTED (saveRejectedAttempt).
                 KycService.KycResult kyc = (kycService == null || file.isEmpty() || idCardFile.isEmpty())
                         ? new KycService.KycResult(KycService.MANUAL_REVIEW, "INCOMPLETE")
                         : kycService.screen(idCardFile.getBytes(), file.getBytes(), visitor.getFirstName(), visitor.getLastName());
@@ -483,6 +484,9 @@ public class VisitorPortalController {
                     discardIdPhoto(visitor.getIdCardImageUrl());
                     redirectAttributes.addFlashAttribute("error", kyc.message());
                     return "redirect:/";
+                }
+                if (kyc.rejected()) {
+                    return saveRejectedAttempt(visitor, kyc, redirectAttributes);
                 }
                 visitor.setStatus(kyc.status());
                 visitor.setFaceEncoding(kyc.faceEncoding());
@@ -595,6 +599,25 @@ public class VisitorPortalController {
 
     // Statuses that no longer hold a seat (kept in step with the capacity sums in showForm and saveVisitor)
     private static final Set<String> SEAT_FREE_STATUSES = Set.of("REJECTED", "CANCELLED_OVERRIDE", "CANCELLED_BY_VISITOR", "CANCELLED");
+
+    // 🛑 CLEAR FACE MISMATCH (likely a spoof): stored as REJECTED so the Director sees the attempt with its photos and
+    // face vector in the Entire Database (and can ban that face). No seat, no "pending" email, no success page. The
+    // email code is used up, and the usual re-apply cooldown (below) for this email and date applies.
+    private String saveRejectedAttempt(Visitor visitor, KycService.KycResult kyc, RedirectAttributes redirectAttributes) {
+        String referenceId;
+        do {
+            referenceId = ReferenceIdGenerator.generate();
+        } while (repo.existsByReferenceId(referenceId));
+        visitor.setReferenceId(referenceId);
+        visitor.setStatus("REJECTED");
+        visitor.setRejectionReason("Automatic KYC: live face does not match the ID portrait");
+        visitor.setFaceEncoding(kyc.faceEncoding());
+        visitor.setOcrNameMatch(false);
+        repo.save(visitor);
+        otpService.consume(visitor.getEmail());
+        redirectAttributes.addFlashAttribute("error", kyc.message());
+        return "redirect:/";
+    }
 
     // Re-applying for a date after a rejection: allowed once this many hours have passed since the newest REJECTED
     // application for that email + date (timed from its createdAt, i.e. when it was submitted)

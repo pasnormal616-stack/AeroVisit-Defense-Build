@@ -138,19 +138,10 @@
         });
     }
 
-    /* ---------- Floating nav ---------- */
+    /* ---------- In-page tab links (hero "Book a Visit" etc.) ---------- */
+    // The header bar is gone (only a floating toggle, see fragments/visitor :: topnav), so there is no scroll styling
+    // left here: just the links that open a booking-panel tab and scroll to it.
     function initNav() {
-        var nav = document.getElementById('vpNav');
-        var hero = document.querySelector('.vp-hero, .vp-page-band');
-        if (!nav) return;
-        if (hero && 'IntersectionObserver' in window) {
-            new IntersectionObserver(function (entries) {
-                nav.classList.toggle('is-scrolled', !entries[0].isIntersecting);
-            }, { rootMargin: '-72px 0px 0px 0px' }).observe(hero);
-        } else {
-            nav.classList.add('is-scrolled');
-        }
-
         document.querySelectorAll('[data-open-tab]').forEach(function (link) {
             link.addEventListener('click', function (e) {
                 var tabBtn = document.getElementById(link.dataset.openTab);
