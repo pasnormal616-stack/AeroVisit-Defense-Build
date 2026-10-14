@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Visit Reminder</title></head>
+<!--/* Variables: name, date. The Entry QR Code is attached by EmailService. */-->
+<body th:replace="~{email/layout :: layout('Visit Reminder', ~{::content})}">
+<div th:fragment="content">
+  <p style="margin:0 0 14px;">Dear <span th:text="${name}">Juan Dela Cruz</span>,</p>
+  <p style="margin:0 0 14px;">This is a reminder that your scheduled visit to the Philippine Air Force Aerospace Museum is tomorrow, <strong th:text="${date}" style="white-space:nowrap;">2026-10-20</strong>.</p>
+  <p style="margin:0;">Your Entry QR Code is attached to this email. Kindly have it ready on your mobile device, with the screen brightness increased, for scanning at the gate.</p>
+</div>
+</body>
+</html>

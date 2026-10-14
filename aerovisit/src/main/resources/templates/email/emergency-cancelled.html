@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Museum Closure</title></head>
+<!--/* Variables: name, date, reason, referenceId (may be null), bookUrl */-->
+<body th:replace="~{email/layout :: layout('Museum Closure Notice', ~{::content})}">
+<div th:fragment="content">
+  <p style="margin:0 0 14px;">Dear <span th:text="${name}">Juan Dela Cruz</span>,</p>
+  <p style="margin:0 0 16px;">We regret to inform you that the museum will be closed on <strong th:text="${date}" style="white-space:nowrap;">2026-10-20</strong> due to an emergency, and your visit on that date has been cancelled.</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px; border:1px solid #d1d5db; border-left:4px solid #C41F1E; background-color:#f9fafb;">
+    <tr>
+      <td style="padding:14px 16px; font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:1.6; color:#1f2937;">
+        <strong>Reason for closure:</strong> <span th:text="${reason}">Typhoon Signal No. 3</span>
+      </td>
+    </tr>
+  </table>
+  <p th:if="${referenceId != null}" style="margin:0 0 14px;">Cancelled Booking Reference ID: <strong th:text="${referenceId}">PAF-A7X92K</strong></p>
+  <p style="margin:0 0 20px;">Any Entry QR Code issued for this visit is no longer valid. For your safety, please do not travel to the museum on this date. You are welcome to book a new visit on another date of your choice.</p>
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 4px;">
+    <tr>
+      <td style="background-color:#002B80;">
+        <a th:href="${bookUrl}" href="#" style="display:inline-block; padding:12px 24px; font-family:Arial, Helvetica, sans-serif; font-size:15px; font-weight:bold; color:#ffffff; text-decoration:none;">Book a New Visit</a>
+      </td>
+    </tr>
+  </table>
+</div>
+</body>
+</html>

@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Visit Request Not Approved</title></head>
+<!--/* Variables: name, reason, notes (may be null or blank) */-->
+<body th:replace="~{email/layout :: layout('Visit Request Not Approved', ~{::content})}">
+<div th:fragment="content">
+  <p style="margin:0 0 14px;">Dear <span th:text="${name}">Juan Dela Cruz</span>,</p>
+  <p style="margin:0 0 16px;">We regret to inform you that your visit request to the Philippine Air Force Aerospace Museum could not be approved at this time, for the following reason:</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px; border:1px solid #d1d5db; border-left:4px solid #C41F1E; background-color:#f9fafb;">
+    <tr>
+      <td style="padding:14px 16px; font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:1.6; color:#1f2937;">
+        <strong>Reason:</strong><br><span th:text="${reason}">Expired ID presented</span>
+        <th:block th:if="${notes != null and !#strings.isEmpty(#strings.trim(notes))}">
+          <br><br><strong>Administrative notes:</strong><br><span th:text="${notes}">Notes</span>
+        </th:block>
+      </td>
+    </tr>
+  </table>
+  <p style="margin:0;">You are welcome to submit a new registration request once the matter above has been resolved.</p>
+</div>
+</body>
+</html>

@@ -98,7 +98,7 @@ class EmailServiceTest {
         assertThat(email.path("sender").path("name").asText()).isEqualTo("AeroVisit System");
         assertThat(email.path("sender").path("email").asText()).isEqualTo("pasnormal616@gmail.com");
         assertThat(email.path("to").get(0).path("email").asText()).isEqualTo("v@example.com");
-        assertThat(email.path("subject").asText()).isEqualTo("AeroVisit Verification Code");
+        assertThat(email.path("subject").asText()).isEqualTo("PAF Aerospace Museum - Email Verification Code");
         assertThat(email.path("htmlContent").asText()).contains(">482913</p>").contains("valid for <strong>5 minutes</strong>");
     }
 
@@ -161,22 +161,34 @@ class EmailServiceTest {
     void capacityReachedRejectionInvitesTheVisitorToRebook() {
         emailService.sendRejectionEmail("v@example.com", ATTACK, "Capacity Reached", ATTACK);
         String html = sentHtml();
-        assertThat(html).contains("The museum has reached maximum security capacity for your requested date. "
-                + "Please submit a new booking for a different day.");
-        assertThat(html).contains("https://museum.example/'").doesNotContain("PRIMARY REASON").doesNotContain("HOW TO COMPLY");
+        assertThat(html).contains("the museum has reached its maximum security capacity for your requested date. "
+                + "We kindly ask that you submit a new booking for a different day.");
+        assertThat(html).contains("href=\"https://museum.example/\"").doesNotContain("<strong>Reason:</strong>");
+        assertThat(sentEmail().path("subject").asText()).isEqualTo("PAF Aerospace Museum - Requested Date Fully Booked");
         assertEscaped(html);
     }
 
     @Test
     void otherRejectionReasonsStillGetTheStandardEmail() {
-        emailService.sendRejectionEmail("v@example.com", "Juan", "Expired ID presented", null);
-        assertThat(sentHtml()).contains("PRIMARY REASON").contains("Expired ID presented").doesNotContain("maximum security capacity");
+        emailService.sendRejectionEmail("v@example.com", "Juan", "Expired ID presented", "Bring a valid ID");
+        assertThat(sentHtml()).contains("<strong>Reason:</strong>").contains("Expired ID presented")
+            .contains("<strong>Administrative notes:</strong>").contains("Bring a valid ID")
+            .doesNotContain("maximum security capacity");
+        assertThat(sentEmail().path("subject").asText()).isEqualTo("PAF Aerospace Museum - Visit Request Not Approved");
     }
 
     @Test
-    void normalNamesAreUnchanged() {
+    void rejectionReasonAndNotesAreEscapedToo() {
+        emailService.sendRejectionEmail("v@example.com", "Juan", ATTACK, ATTACK);
+        String html = sentHtml();
+        assertThat(html).doesNotContain(ATTACK);
+        assertThat(html.split(java.util.regex.Pattern.quote(ESCAPED), -1)).hasSize(3); // reason + notes
+    }
+
+    @Test
+    void namesAppearAsEnteredInAFormalSalutation() {
         emailService.sendCheckInGuidelines("v@example.com", "Juan Dela Cruz");
-        assertThat(sentHtml()).contains("Welcome, JUAN DELA CRUZ!");
+        assertThat(sentHtml()).contains("Dear <span>Juan Dela Cruz</span>,").doesNotContain("JUAN DELA CRUZ");
     }
 
     @Test
@@ -206,7 +218,7 @@ class EmailServiceTest {
 
         emailService.sendCheckOutFeedback("v@example.com", "Juan", "tok-123");
         assertThat(sentHtml())
-            .contains("href='https://museum.example/leave-feedback?token=tok-123'")
+            .contains("href=\"https://museum.example/leave-feedback?token=tok-123\"")
             .doesNotContain("ngrok");
     }
 
@@ -251,10 +263,11 @@ class EmailServiceTest {
     void approvalEmailCarriesTheEntryAndExitSecurityNotice() throws Exception {
         String html = sentApprovalHtml("Juan Dela Cruz");
         assertThat(html)
-            .contains("Dear Juan Dela Cruz,")
+            .contains("Dear <span>Juan Dela Cruz</span>,")
             .contains("Booking Reference ID: <strong>PAF-A7X92K</strong>")
-            .contains("<strong>⚠ SECURITY NOTICE:</strong>")
-            .contains("You must present it for scanning upon both ENTRY and EXIT to formally clear your name from the active manifest.");
+            .contains("<strong>Security Notice:</strong>")
+            .contains("It must be presented for scanning upon both entry and exit to formally clear your name from the active visitor manifest.");
+        assertThat(sent.get(0).path("subject").asText()).isEqualTo("PAF Aerospace Museum - Visit Approved: Entry Pass Enclosed");
     }
 
     @Test
@@ -263,11 +276,13 @@ class EmailServiceTest {
     }
 
     @Test
-    void reminderEmailIsPlainTextWithTheQrAttached() throws Exception {
+    void reminderEmailIsHtmlWithTheQrAttached() throws Exception {
         JsonNode email = sendWithQrFile(file -> emailService.sendReminderEmailWithQR("v@example.com", "Juan", "2026-10-01", file));
         assertQrAttached(email);
-        assertThat(email.has("htmlContent")).isFalse();
-        assertThat(email.path("textContent").asText()).startsWith("Dear Juan,").contains("TOMORROW (2026-10-01)");
+        assertThat(email.has("textContent")).isFalse();
+        assertThat(email.path("htmlContent").asText()).contains("Dear <span>Juan</span>,")
+            .contains("is tomorrow, <strong style=\"white-space:nowrap;\">2026-10-01</strong>.");
+        assertThat(email.path("subject").asText()).isEqualTo("PAF Aerospace Museum - Visit Reminder for Tomorrow");
     }
 
     @Test
@@ -280,8 +295,8 @@ class EmailServiceTest {
     void checkInGuidelinesRequireAnExitScan() {
         emailService.sendCheckInGuidelines("v@example.com", "Juan", "Lt. Santos");
         assertThat(sentHtml())
-            .contains("<strong>📤 EXIT SCAN REQUIRED:</strong> Keep your Entry QR Code handy.")
-            .contains("you are required to scan this code at the gate when you leave.");
+            .contains("<strong>Exit scan required:</strong> Please keep your Entry QR Code available.")
+            .contains("You are required to scan it at the gate when you leave");
     }
 
     // --- Staff duty roster ---
@@ -301,13 +316,13 @@ class EmailServiceTest {
 
         String html = sentHtml();
         assertThat(html)
-            .contains("Good day, SGT. REYES!")
-            .contains("Here is your upcoming duty roster:")
+            .contains("Good day, <span>Sgt. Reyes</span>.")
+            .contains("Please find below your upcoming duty roster:")
             .contains(">Date</th>").contains(">Shift Time</th>")
             .contains(">Mon, Oct 5, 2026</td>").contains(">Morning (0800H-1200H)</td>")
             .contains(">Wed, Oct 7, 2026</td>").contains(">Full Day (0800H-1700H)</td>");
 
-        assertThat(sentEmail().path("subject").asText()).isEqualTo("AeroVisit - Your Upcoming Duty Roster");
+        assertThat(sentEmail().path("subject").asText()).isEqualTo("PAF Aerospace Museum - Upcoming Duty Roster");
         assertThat(sentEmail().path("to").get(0).path("email").asText()).isEqualTo("reyes@example.com");
     }
 
@@ -318,5 +333,92 @@ class EmailServiceTest {
         String html = sentHtml();
         assertEscaped(html);
         assertThat(html).doesNotContain("<b>Morning</b>").contains("&lt;b&gt;Morning&lt;/b&gt;");
+    }
+
+    // --- One formal design for every email: header, signature, HTML, no emoji anywhere ---
+
+    private static final java.util.regex.Pattern EMOJI = java.util.regex.Pattern.compile(
+            "[\\x{1F300}-\\x{1FAFF}\\x{2600}-\\x{27BF}\\x{2B00}-\\x{2BFF}\\x{FE0F}]");
+    private static final String HEADER = "PHILIPPINE AIR FORCE AEROSPACE MUSEUM - VISITOR MANAGEMENT SYSTEM";
+    private static final String SIGNATURE = "Respectfully,<br>Office of the Director<br>Philippine Air Force Aerospace Museum<br>Villamor Air Base, Pasay City";
+
+    @Test
+    void everyEmailUsesTheFormalLayoutWithoutEmoji() throws Exception {
+        com.paf.aerovisit.model.Visitor closed = new com.paf.aerovisit.model.Visitor();
+        closed.setName("Juan"); closed.setEmail("v@example.com"); closed.setVisitDate(java.time.LocalDate.of(2026, 10, 12));
+        List<Runnable> visitorEmails = List.of(
+            () -> emailService.sendOtpEmail("v@example.com", "482913", 5),
+            () -> emailService.sendPendingNotification("v@example.com", "Juan", "2026-10-01", false, "PAF-A7X92K"),
+            () -> emailService.sendPendingNotification("v@example.com", "Juan", "2026-10-01", true),
+            () -> emailService.sendCheckInGuidelines("v@example.com", "Juan", "Lt. Santos"),
+            () -> emailService.sendCheckOutFeedback("v@example.com", "Juan", "tok-1"),
+            () -> emailService.sendRejectionEmail("v@example.com", "Juan", "Capacity Reached", null),
+            () -> emailService.sendRejectionEmail("v@example.com", "Juan", "Expired ID presented", null),
+            () -> emailService.sendOverrideCancellationEmail("v@example.com", "Juan", "2026-10-01", "PAF-A7X92K"),
+            () -> emailService.sendEmergencyCancellation(closed, "Typhoon Signal No. 3"),
+            () -> emailService.sendStaffScheduleEmail("s@example.com", "Sgt. Reyes",
+                    List.of(dutyShift(java.time.LocalDate.of(2026, 10, 5), "Morning (0800H-1200H)"))));
+        for (Runnable send : visitorEmails) send.run();
+        List<JsonNode> formal = new ArrayList<>(sent);
+        sent.clear();
+        sendWithQrFile(file -> emailService.sendApprovalEmailWithQR("v@example.com", "Juan", "2026-10-01", file, "PAF-A7X92K"));
+        formal.add(sent.remove(0));
+        sendWithQrFile(file -> emailService.sendReminderEmailWithQR("v@example.com", "Juan", "2026-10-01", file));
+        formal.add(sent.remove(0));
+        emailService.sendDirectorDailyReport("d@example.com", "2026-10-01", 40, 35, 5);
+        emailService.sendCriticalFeedbackAlert("d@example.com", "Juan", "Closed exhibit", -0.9);
+        List<JsonNode> internal = new ArrayList<>(sent);
+
+        assertThat(formal).hasSize(12);
+        assertThat(internal).hasSize(2);
+        for (JsonNode email : concat(formal, internal)) {
+            String subject = email.path("subject").asText();
+            String html = email.path("htmlContent").asText(null);
+            assertThat(html).as(subject).isNotNull().contains(HEADER);
+            assertThat(email.has("textContent")).as(subject).isFalse();
+            assertThat(subject).as("subject").startsWith("PAF Aerospace Museum - ");
+            assertThat(EMOJI.matcher(subject).find()).as("emoji in subject " + subject).isFalse();
+            assertThat(EMOJI.matcher(html).find()).as("emoji in body of " + subject).isFalse();
+        }
+        for (JsonNode email : formal) {
+            assertThat(email.path("htmlContent").asText()).as(email.path("subject").asText()).contains(SIGNATURE);
+        }
+        // Sent TO the Director: a system signature instead of the office signing to itself
+        for (JsonNode email : internal) {
+            assertThat(email.path("htmlContent").asText()).as(email.path("subject").asText())
+                .doesNotContain(SIGNATURE).contains("AeroVisit Visitor Management System<br>(automated notice)");
+        }
+    }
+
+    private static List<JsonNode> concat(List<JsonNode> a, List<JsonNode> b) {
+        List<JsonNode> all = new ArrayList<>(a);
+        all.addAll(b);
+        return all;
+    }
+
+    @Test
+    void theDailySummaryIsHtmlWithTheThreeFigures() {
+        emailService.sendDirectorDailyReport("d@example.com", "2026-10-01", 40, 35, 5);
+        JsonNode email = sentEmail();
+        assertThat(email.path("subject").asText()).isEqualTo("PAF Aerospace Museum - Daily Visitor Summary - 2026-10-01");
+        assertThat(email.path("htmlContent").asText()).contains(">40</td>").contains(">35</td>").contains(">5</td>");
+    }
+
+    @Test
+    void aMissingTemplateIsAMailFailureNotACrash() {
+        // An engine looking in a folder without the email templates: every render fails
+        org.thymeleaf.templateresolver.ClassLoaderTemplateResolver nowhere = new org.thymeleaf.templateresolver.ClassLoaderTemplateResolver();
+        nowhere.setPrefix("no-such-folder/");
+        nowhere.setSuffix(".html");
+        org.thymeleaf.spring6.SpringTemplateEngine missing = new org.thymeleaf.spring6.SpringTemplateEngine();
+        missing.setTemplateResolver(nowhere);
+        EmailService service = new EmailService(rest, "https://museum.example/", missing);
+        service.brevoApiKey = API_KEY;
+
+        assertThat(service.sendOtpEmail("v@example.com", "1", 5)).isFalse();         // same as a Brevo failure
+        service.sendPendingNotification("v@example.com", "Juan", "2026-10-01", false); // caught and logged, never thrown
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.sendStaffScheduleEmail("s@example.com", "Reyes", List.of()))
+            .isInstanceOf(EmailService.MailDeliveryException.class);              // batch senders still count it as a failure
+        assertThat(sent).isEmpty();
     }
 }

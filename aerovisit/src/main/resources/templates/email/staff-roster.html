@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Upcoming Duty Roster</title></head>
+<!--/* Variables: staffName, slots (list of maps: date (already formatted), shift) */-->
+<body th:replace="~{email/layout :: layout('Upcoming Duty Roster', ~{::content})}">
+<div th:fragment="content">
+  <p style="margin:0 0 14px;">Good day, <span th:text="${staffName}">Sgt. Reyes</span>.</p>
+  <p style="margin:0 0 16px;">Please find below your upcoming duty roster:</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px; border-collapse:collapse;">
+    <tr>
+      <th style="padding:10px 14px; border:1px solid #d1d5db; background-color:#f3f4f6; font-family:Arial, Helvetica, sans-serif; font-size:13px; color:#111827; text-align:left;">Date</th>
+      <th style="padding:10px 14px; border:1px solid #d1d5db; background-color:#f3f4f6; font-family:Arial, Helvetica, sans-serif; font-size:13px; color:#111827; text-align:left;">Shift Time</th>
+    </tr>
+    <tr th:each="slot : ${slots}">
+      <td th:text="${slot.date}" style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#1f2937;">Mon, Oct 5, 2026</td>
+      <td th:text="${slot.shift}" style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#1f2937;">Morning (0800H-1200H)</td>
+    </tr>
+  </table>
+  <p style="margin:0;">For any change to this roster, please coordinate with the Office of the Director.</p>
+</div>
+</body>
+</html>

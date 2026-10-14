@@ -58,7 +58,7 @@ class EmergencyCancellationEmailTest {
         String html = email.path("htmlContent").asText();
         assertThat(html).contains("2026-10-12").contains("PAF-A7X92K")
             .contains("Typhoon &lt;script&gt;").doesNotContain("<script>")
-            .contains("&lt;B&gt;JUAN&lt;/B&gt;").doesNotContain("<B>JUAN");
+            .contains("&lt;b&gt;Juan&lt;/b&gt;").doesNotContain("<b>Juan");
     }
 
     @Test
