@@ -297,6 +297,33 @@ class PortalContentTest {
             .contains("Data Protection Officer through the museum administration office.");
     }
 
+    @Test
+    void footerShowsThePhoneWithItsItalicNoteBeneathOnlyWhenSaved() throws Exception {
+        PortalSettings settings = new PortalSettings();
+        settings.setContactEmail("paf.museum@paf.mil.ph");
+        settings.setContactPhone("+63 (2) 8854-6711");
+        settings.setContactPhoneNote("Official inquiries only. <script>alert(1)</script>");
+        when(settingsRepo.findById(1L)).thenReturn(java.util.Optional.of(settings));
+        String html = mvc.perform(get("/")).andReturn().getResponse().getContentAsString();
+        String footer = html.substring(html.indexOf("<footer"), html.indexOf("</footer>"));
+        // phone under the email, tel: link reduced to digits and the leading +, note escaped and right beneath the number
+        assertThat(footer).containsSubsequence("mailto:paf.museum@paf.mil.ph", "class=\"vp-footer-phone\"",
+            "<a href=\"tel:+63288546711\">+63 (2) 8854-6711</a>",
+            "<small class=\"vp-footer-note\">Official inquiries only. &lt;script&gt;alert(1)&lt;/script&gt;</small>");
+        assertThat(footer).doesNotContain("<script>alert(1)");
+
+        // a note without a phone stays hidden
+        settings.setContactPhone(null);
+        html = mvc.perform(get("/manage-booking")).andReturn().getResponse().getContentAsString();
+        assertThat(html).doesNotContain("tel:").doesNotContain("vp-footer-phone").doesNotContain("Official inquiries only.");
+
+        // a phone without a note shows just the number
+        settings.setContactPhone("8854-6711");
+        settings.setContactPhoneNote(null);
+        html = mvc.perform(get("/")).andReturn().getResponse().getContentAsString();
+        assertThat(html).contains("<a href=\"tel:88546711\">8854-6711</a>").doesNotContain("vp-footer-note");
+    }
+
     // --- Sgt. Aero chat window: close button and microphone error handling ---
 
     @Test

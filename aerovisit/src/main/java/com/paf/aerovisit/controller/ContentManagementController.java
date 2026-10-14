@@ -62,6 +62,8 @@ public class ContentManagementController {
         model.addAttribute("instagramUrl", settings.getInstagramUrl());
         model.addAttribute("xUrl", settings.getXUrl());
         model.addAttribute("contactEmail", settings.getContactEmail());
+        model.addAttribute("contactPhone", settings.getContactPhone());
+        model.addAttribute("contactPhoneNote", settings.getContactPhoneNote());
         return "content";
     }
 
@@ -188,10 +190,12 @@ public class ContentManagementController {
 
     // ---------- Contact & Social Media (public footer) ----------
 
-    // Saves the contact email and the three footer links together; a blank field hides that line or icon.
-    // Nothing is saved if any field is wrong.
+    // Saves the contact email, phone (+ its note) and the three footer links together; a blank field hides that line or
+    // icon. Nothing is saved if any field is wrong.
     @PostMapping("/admin/content/social/save")
     public String saveSocialLinks(@RequestParam(value = "contactEmail", required = false) String contactEmail,
+                                  @RequestParam(value = "contactPhone", required = false) String contactPhone,
+                                  @RequestParam(value = "contactPhoneNote", required = false) String contactPhoneNote,
                                   @RequestParam(value = "facebookUrl", required = false) String facebookUrl,
                                   @RequestParam(value = "instagramUrl", required = false) String instagramUrl,
                                   @RequestParam(value = "xUrl", required = false) String xUrl,
@@ -200,8 +204,12 @@ public class ContentManagementController {
         String instagram = socialUrl(instagramUrl, "instagram.com");
         String x = socialUrl(xUrl, "x.com", "twitter.com");
         String email = contactEmail(contactEmail);
+        String phone = contactPhone(contactPhone);
+        String phoneNote = contactPhoneNote == null ? "" : contactPhoneNote.trim().replaceAll("\\s+", " ");
         List<String> wrong = new ArrayList<>();
         if (email == null) wrong.add("Contact email (an address like museum@paf.mil.ph)");
+        if (phone == null) wrong.add("Contact phone (digits with + ( ) - . or spaces, 7 to 15 digits)");
+        if (phoneNote.length() > 160) wrong.add("Phone note (160 characters max)");
         if (facebook == null) wrong.add("Facebook (a facebook.com page link)");
         if (instagram == null) wrong.add("Instagram (an instagram.com profile link)");
         if (x == null) wrong.add("X (an x.com or twitter.com profile link)");
@@ -214,8 +222,11 @@ public class ContentManagementController {
         settings.setInstagramUrl(instagram.isEmpty() ? null : instagram);
         settings.setXUrl(x.isEmpty() ? null : x);
         settings.setContactEmail(email.isEmpty() ? null : email);
+        settings.setContactPhone(phone.isEmpty() ? null : phone);
+        settings.setContactPhoneNote(phoneNote.isEmpty() ? null : phoneNote);
         settingsRepo.save(settings);
         redirectAttributes.addFlashAttribute("success", settings.socialLinks().isEmpty() && settings.getContactEmail() == null
+                && settings.getContactPhone() == null
                 ? "Contact email and social links cleared. The visitor portal footer shows neither."
                 : "Contact & social links saved. Only the filled-in ones appear in the visitor portal footer.");
         return "redirect:/admin/content#announcements";
@@ -231,6 +242,19 @@ public class ContentManagementController {
             return "";
         }
         return text.length() <= 150 && EMAIL.matcher(text).matches() ? text : null;
+    }
+
+    // A phone as typed ("(02) 8XXX-XXXX", "+63 917 123 4567"): digits with + ( ) - . and spaces, 7 to 15 digits
+    // (the international maximum). "" for a blank field, null when it is not a phone number.
+    private static final Pattern PHONE = Pattern.compile("^\\+?[0-9()\\-. ]+$");
+
+    static String contactPhone(String pasted) {
+        String text = pasted == null ? "" : pasted.trim().replaceAll("\\s+", " ");
+        if (text.isEmpty()) {
+            return "";
+        }
+        int digits = text.replaceAll("[^0-9]", "").length();
+        return text.length() <= 30 && PHONE.matcher(text).matches() && digits >= 7 && digits <= 15 ? text : null;
     }
 
     // A pasted page link rebuilt as https://<host><path>[?query]: "" for a blank field, null when it is not a page on

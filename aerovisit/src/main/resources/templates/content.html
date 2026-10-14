@@ -111,6 +111,15 @@
                                     <input type="email" id="contactEmail" name="contactEmail" class="form-control-custom" maxlength="150" placeholder="museum@paf.mil.ph" th:value="${contactEmail}">
                                 </div>
                                 <div class="av-field">
+                                    <label class="form-label-custom" for="contactPhone"><i class="bi bi-telephone me-1"></i>Official contact phone</label>
+                                    <input type="tel" id="contactPhone" name="contactPhone" class="form-control-custom" maxlength="30" placeholder="(02) 8XXX-XXXX" th:value="${contactPhone}">
+                                </div>
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="contactPhoneNote"><i class="bi bi-exclamation-triangle me-1"></i>Phone note (optional)</label>
+                                    <input type="text" id="contactPhoneNote" name="contactPhoneNote" class="form-control-custom" maxlength="160" placeholder="For official inquiries only. Prank calls are logged and reported." th:value="${contactPhoneNote}">
+                                    <small class="av-hint mt-1">Small italic line under the phone number. Only shown when a phone number is saved.</small>
+                                </div>
+                                <div class="av-field">
                                     <label class="form-label-custom" for="facebookUrl"><i class="bi bi-facebook me-1"></i>Facebook page</label>
                                     <input type="text" inputmode="url" id="facebookUrl" name="facebookUrl" class="form-control-custom" maxlength="300" placeholder="https://www.facebook.com/..." th:value="${facebookUrl}">
                                 </div>

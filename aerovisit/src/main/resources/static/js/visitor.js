@@ -299,6 +299,74 @@
         render();
     }
 
+    /* ---------- Connection guard: offline banner + no submit while the browser reports no network ---------- */
+    function initConnectionGuard() {
+        var form = document.getElementById('mainRegForm');
+        var banner = document.getElementById('vpOfflineBanner');
+        var submitBtn = document.getElementById('submitBtn');
+        if (!form || !banner || !submitBtn) return;
+        var disabledByUs = false; // only undo our own disable: capacity checks and the submit lock disable it too
+
+        function update() {
+            var offline = navigator.onLine === false;
+            banner.hidden = !offline;
+            if (offline && !submitBtn.disabled) {
+                submitBtn.disabled = true;
+                disabledByUs = true;
+            } else if (!offline && disabledByUs) {
+                var warning = document.getElementById('capacityWarning');
+                submitBtn.disabled = !!(warning && !warning.classList.contains('d-none')); // still over capacity: stay off
+                disabledByUs = false;
+            }
+        }
+
+        // Capture phase on document runs before the form's own listeners, so an offline attempt is stopped before
+        // the double-submit lock (initSteps) engages, and also when the group-size check re-enabled the button
+        document.addEventListener('submit', function (e) {
+            if (e.target === form && navigator.onLine === false) {
+                e.preventDefault();
+                e.stopPropagation();
+                update();
+            }
+        }, true);
+        window.addEventListener('offline', update);
+        window.addEventListener('online', update);
+        update();
+    }
+
+    /* ---------- Booking draft: four plain-text contact fields in sessionStorage (this tab only) ---------- */
+    // Never the photos, the OTP code, the kycNonce, or the visit date/time (those come from the calendar's capacity check)
+    var DRAFT_KEY = 'aero_booking_draft';
+    var DRAFT_FIELDS = ['nameInput', 'emailInput', 'phoneInput', 'affiliationInput'];
+
+    function initBookingDraft() {
+        // The redirect after a successful /save: the booking is in, so the draft goes
+        if (location.pathname === '/success-page') {
+            try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) { /* storage blocked */ }
+            return;
+        }
+        if (!document.getElementById('mainRegForm')) return;
+
+        var draft = {};
+        try { draft = JSON.parse(sessionStorage.getItem(DRAFT_KEY)); } catch (e) { draft = null; }
+        if (!draft || typeof draft !== 'object') draft = {};
+
+        DRAFT_FIELDS.forEach(function (id) {
+            var field = document.getElementById(id);
+            if (!field) return;
+            if (!field.value && typeof draft[id] === 'string' && draft[id]) {
+                field.value = draft[id];
+                field.dispatchEvent(new Event('input', { bubbles: true })); // lets the email OTP box refresh its state
+            }
+            function save() {
+                draft[id] = field.value;
+                try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch (e) { /* private mode / quota */ }
+            }
+            field.addEventListener('change', save);
+            field.addEventListener('blur', save);
+        });
+    }
+
     /* ---------- Ready signal: runs cb once the radar pre-loader has lifted (right away on pages without one).
        Used by the welcome modal and Sgt. Aero's greeting so nothing opens underneath the pre-loader. ---------- */
     window.vpWhenReady = function (cb) {
@@ -321,6 +389,8 @@
         initBackdrop();
         initNav();
         initSteps();
+        initConnectionGuard();
+        initBookingDraft();
         initPreloader(initReveals);
     });
 })();

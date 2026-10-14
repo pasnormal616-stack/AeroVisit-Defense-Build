@@ -117,7 +117,7 @@ class WaitlistAndCapacityTest {
     @SuppressWarnings("unchecked")
     void pendingQueueIsOldestFirstWithUntimestampedRowsOnTop() throws Exception {
         LocalDateTime base = LocalDateTime.of(2026, 10, 12, 8, 30);
-        when(repo.findAll()).thenReturn(List.of(
+        when(repo.findByStatusIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of(
             visitor(5, "PENDING", base.plusHours(2)),
             visitor(3, "PENDING", base),
             visitor(7, "PENDING", null),
@@ -191,7 +191,7 @@ class WaitlistAndCapacityTest {
         LocalDate picked = LocalDate.now().plusDays(10);
         when(bookingRepo.findAll()).thenReturn(List.of(slot(LocalDate.now(), MORNING, 99), slot(picked, MORNING, 20)));
         when(repo.findByVisitDate(picked)).thenReturn(List.of(booking(1, "APPROVED", MORNING, 8)));
-        when(repo.findAll()).thenReturn(List.of(visitor(3, "PENDING", LocalDateTime.now())));
+        when(repo.findByStatusIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of(visitor(3, "PENDING", LocalDateTime.now())));
 
         MvcResult result = mvc.perform(get("/admin").param("filter", "pending").param("capacityDate", picked.toString()))
             .andExpect(status().isOk())

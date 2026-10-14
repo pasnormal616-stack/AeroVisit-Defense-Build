@@ -1258,3 +1258,66 @@ button.av-nav-link { width: 100%; background: none; border: 0; font: inherit; te
     .av-metrics { gap: 24px; margin-bottom: 24px; }
     .av-metrics > .av-metrics-intel, .av-stat-row { gap: 24px; }
 }
+
+/* --------------------------------------------------------------------------
+   16. Pending Approval queue (admin.html, Pending tab): triage chips, date group headers, seats-left pills.
+   Group headers are <th colspan> rows inside the tbody, so they must undo the thead styling of .table-custom th.
+   -------------------------------------------------------------------------- */
+.av-triage {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+.av-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 10px;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: var(--bg-raised); color: var(--text-secondary);
+    font-size: 0.75rem; font-weight: 550; cursor: pointer;
+}
+.av-chip:hover:not(:disabled) { border-color: var(--primary); color: var(--primary-ink); }
+.av-chip:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.av-chip.is-active { background: var(--primary); border-color: var(--primary); color: #FFFFFF; }
+.av-chip:disabled { opacity: 0.45; cursor: default; }
+.av-chip-count { font-family: var(--font-mono); font-size: 0.6875rem; opacity: 0.8; }
+.av-triage-search { width: auto; min-width: 220px; margin-left: auto; }
+
+.av-app .table-custom tbody > tr.av-group-row > th {
+    height: auto; padding: 8px 12px;
+    background: var(--bg-surface) !important;
+    color: var(--text) !important;
+    white-space: normal;
+    border-top: 1px solid var(--border);
+    border-left: 3px solid var(--border);
+}
+.av-app .table-custom tbody > tr.av-group-row--overdue > th { border-left-color: var(--danger); }
+.av-app .table-custom tbody > tr.av-group-row--today > th { border-left-color: var(--primary); }
+.av-app .table-custom tbody > tr.av-group-row--tomorrow > th { border-left-color: var(--paf-gold); }
+.av-group-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.av-group-toggle {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 0; border: 0; background: none; color: inherit;
+    font: inherit; text-align: left; cursor: pointer;
+}
+.av-group-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; border-radius: 4px; }
+.av-group-toggle:disabled { cursor: default; }
+.av-group-chevron { transition: transform var(--dur-base, 150ms); }
+.av-group-toggle[aria-expanded="true"] .av-group-chevron { transform: rotate(90deg); }
+.av-group-title { font-size: 0.875rem; font-weight: 600; }
+.av-group-row--overdue .av-group-title { color: var(--danger-ink); }
+.av-group-meta { font-size: 0.75rem; font-weight: 500; color: var(--text-muted); }
+.av-group-match { font-size: 0.6875rem; font-weight: 550; color: var(--primary-ink); }
+.av-group-seats { display: flex; flex-wrap: wrap; gap: 6px; }
+.av-seat {
+    display: inline-flex; align-items: center; height: 22px; padding: 0 8px;
+    border-radius: var(--radius);
+    background: var(--success-tint); color: var(--success-ink);
+    font-family: var(--font-mono); font-size: 0.6875rem; font-weight: 550; white-space: nowrap;
+}
+.av-seat--low { background: var(--gold-tint); color: var(--gold-ink); }
+.av-seat--full { background: var(--danger-tint); color: var(--danger-ink); }
+.av-seat--none { background: var(--neutral-tint); color: var(--text-muted); font-family: var(--font-ops); }
+.av-empty-row { padding: 24px 12px !important; text-align: center; color: var(--text-muted) !important; }
+@media (max-width: 767.98px) {
+    .av-triage-search { min-width: 0; width: 100%; margin-left: 0; }
+}

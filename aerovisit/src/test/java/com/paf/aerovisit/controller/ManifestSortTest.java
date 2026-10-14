@@ -66,6 +66,7 @@ class ManifestSortTest {
 
     private void stubAllTabs(List<Visitor> rows) {
         when(repo.findAll()).thenAnswer(inv -> new ArrayList<>(rows));
+        when(repo.findByStatusIn(org.mockito.ArgumentMatchers.anyCollection())).thenAnswer(inv -> new ArrayList<>(rows));
         when(repo.findByVisitDate(LocalDate.now())).thenAnswer(inv -> new ArrayList<>(rows));
     }
 

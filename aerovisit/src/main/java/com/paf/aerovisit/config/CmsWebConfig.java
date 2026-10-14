@@ -117,10 +117,11 @@ public class CmsWebConfig implements WebMvcConfigurer {
     }
 
     // Only platforms with a saved link are passed on, so the footer never renders an empty icon;
-    // a blank contact email is passed as null so the footer hides that line
+    // a blank contact email or phone is passed as null so the footer hides that line (the phone note goes with the phone)
     void addFooterContent(ModelAndView mav) {
         List<PortalSettings.SocialLink> socialLinks = List.of();
         String contactEmail = null;
+        String contactPhone = null, contactPhoneHref = null, contactPhoneNote = null;
         try {
             PortalSettingsRepository portalRepo = settingsRepo.getIfAvailable();
             if (portalRepo != null) {
@@ -129,6 +130,13 @@ public class CmsWebConfig implements WebMvcConfigurer {
                     socialLinks = settings.socialLinks();
                     String email = settings.getContactEmail();
                     contactEmail = (email == null || email.isBlank()) ? null : email.trim();
+                    String phone = settings.getContactPhone();
+                    if (phone != null && !phone.isBlank()) {
+                        contactPhone = phone.trim();
+                        contactPhoneHref = "tel:" + contactPhone.replaceAll("[^0-9+]", ""); // digits and a leading + only
+                        String note = settings.getContactPhoneNote();
+                        contactPhoneNote = (note == null || note.isBlank()) ? null : note.trim();
+                    }
                 }
             }
         } catch (RuntimeException e) {
@@ -136,5 +144,8 @@ public class CmsWebConfig implements WebMvcConfigurer {
         }
         mav.addObject("socialLinks", socialLinks);
         mav.addObject("contactEmail", contactEmail);
+        mav.addObject("contactPhone", contactPhone);
+        mav.addObject("contactPhoneHref", contactPhoneHref);
+        mav.addObject("contactPhoneNote", contactPhoneNote);
     }
 }

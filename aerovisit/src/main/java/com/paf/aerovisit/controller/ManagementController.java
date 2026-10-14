@@ -80,19 +80,21 @@ public class ManagementController {
             @RequestParam("id") Long id, 
             @RequestParam("presetReason") String presetReason,
             @RequestParam(value = "additionalNotes", required = false) String additionalNotes,
+            @RequestParam(value = "returnTo", required = false) String returnTo,
             RedirectAttributes redirectAttributes) {
+        String back = AdminReturnTo.redirect(returnTo); // the officer's Pending view, or /admin as before
         
         Visitor visitor = repo.findById(id).orElse(null);
         if (visitor != null && "DENIED_ENTRY".equals(visitor.getStatus())) {
             // 🛑 A gate denial is a final audit record and must not be overwritten
             redirectAttributes.addFlashAttribute("error", "This visitor was denied entry at the gate; that record cannot be changed.");
-            return "redirect:/admin";
+            return back;
         }
         if (visitor != null && visitor.visitUnderwayOrOver()) {
             // 🛑 Rejecting someone inside would drop them from live occupancy (and the 5:30 PM sweep), and a finished
             // or missed visit is history
             redirectAttributes.addFlashAttribute("error", Visitor.CANNOT_REJECT_MESSAGE);
-            return "redirect:/admin";
+            return back;
         }
         if (visitor != null) {
             visitor.setStatus("REJECTED");
@@ -112,7 +114,7 @@ public class ManagementController {
                 redirectAttributes.addFlashAttribute("error", "Visitor rejected, but compliance email failed to send.");
             }
         }
-        return "redirect:/admin";
+        return back;
     }
 
     // 🧬 BAN VISITOR (the only ban in the system; the old email "Block" was removed because a new email beats it):

@@ -39,6 +39,12 @@ public interface VisitorRepository extends JpaRepository<Visitor, Long> {
     // 4b. Header notification bell: requests waiting in the Pending Approval queue (a COUNT query, polled every 30 seconds)
     long countByStatusIn(java.util.Collection<String> statuses);
 
+    // 4c. Pending Approval tab: only the requests awaiting review, instead of loading the whole table
+    List<Visitor> findByStatusIn(java.util.Collection<String> statuses);
+
+    // 4d. Pending Approval tab seat headers: seat-holding bookings on the queue's upcoming dates
+    List<Visitor> findByVisitDateBetweenAndStatusIn(LocalDate from, LocalDate to, java.util.Collection<String> statuses);
+
     // --- BOOKING REFERENCE ID ---
 
     // 5. Used to guarantee each generated Reference ID is unique before saving

@@ -118,13 +118,15 @@ class PostOnlyActionsTest {
         v.setPurpose("Leisure");
         v.setStatus("PENDING");
         v.setVisitDate(LocalDate.now().plusDays(2));
-        when(repo.findAll()).thenReturn(new ArrayList<>(List.of(v)));
+        when(repo.findByStatusIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(new ArrayList<>(List.of(v)));
 
         String html = mvc.perform(get("/admin").param("filter", "pending")).andExpect(status().isOk())
             .andReturn().getResponse().getContentAsString();
 
         assertThat(html)
-            .containsPattern("<form action=\"/admin/approve/3\" method=\"post\" class=\"m-0\">" + CSRF_FIELD + "\\s*<button type=\"submit\" class=\"btn btn-sm btn-outline-success\" title=\"Approve\">Approve</button>")
+            .containsPattern("<form action=\"/admin/approve/3\" method=\"post\" class=\"m-0\">" + CSRF_FIELD
+                + "\\s*<input type=\"hidden\" name=\"returnTo\" value=\"/admin\\?filter=pending&amp;sort=asc\">"
+                + "\\s*<button type=\"submit\" class=\"btn btn-sm btn-outline-success\" title=\"Approve\">Approve</button>")
             .containsPattern("<form action=\"/admin/delete/3\" method=\"post\" class=\"m-0\" onsubmit=\"return confirm\\('Delete this record\\?'\\);\">" + CSRF_FIELD + "\\s*<button type=\"submit\" class=\"dropdown-item text-danger\">")
             .doesNotContain("href=\"/admin/approve/")
             .doesNotContain("href=\"/admin/delete/");

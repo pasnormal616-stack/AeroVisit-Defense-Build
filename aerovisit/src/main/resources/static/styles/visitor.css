@@ -210,6 +210,20 @@
     color: var(--danger-ink);
     font-weight: 600; font-size: 0.9rem;
 }
+/* Offline banner (visitor.js initConnectionGuard): top-centre pill, clears the 44px theme button on both sides */
+.vp-offline-banner {
+    position: fixed; top: calc(1rem + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%);
+    z-index: calc(var(--z-chat) + 1);
+    display: flex; align-items: center; gap: 8px;
+    max-width: calc(100% - 7.5rem); padding: 10px 16px;
+    border-radius: var(--vp-radius-md);
+    background: var(--danger-tint);
+    border: 1px solid color-mix(in srgb, var(--paf-red) 40%, transparent);
+    color: var(--danger-ink);
+    font-weight: 600; font-size: 0.85rem; line-height: 1.35;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+}
+.vp-offline-banner[hidden] { display: none; }
 
 /* Segmented tabs (Bootstrap tab JS drives .active) */
 .vp-segment {
@@ -983,6 +997,9 @@ html.vp-is-loading { overflow: hidden; }
 .vp-footer--official .container { align-items: flex-end; }
 .vp-footer-id { display: flex; flex-direction: column; gap: 4px; }
 .vp-footer-id strong { font-family: var(--font-display); font-weight: 600; color: #FFFFFF; }
+/* Footer phone line + optional note directly beneath it, lined up with the number (past the icon) */
+.vp-footer-phone { display: flex; flex-direction: column; gap: 2px; }
+.vp-footer-note { font-size: 0.75rem; font-style: italic; line-height: 1.4; color: rgba(255,255,255,0.6); padding-left: calc(1em + 0.25rem); }
 .vp-footer-legal { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .vp-footer-legal nav { display: flex; gap: 8px; }
 .vp-footer--official a { color: rgba(255,255,255,0.82); }

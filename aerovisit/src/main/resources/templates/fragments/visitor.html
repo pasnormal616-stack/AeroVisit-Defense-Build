@@ -152,6 +152,11 @@
             <span th:if="${contactEmail != null and !contactEmail.isEmpty()}">
                 <i class="bi bi-envelope me-1" aria-hidden="true"></i><a th:href="|mailto:${contactEmail}|" th:text="${contactEmail}">museum@example.com</a>
             </span>
+            <!-- Contact phone + optional note (e.g. a prank-call warning): Director-managed on Website Content; hidden when blank -->
+            <span class="vp-footer-phone" th:if="${contactPhone != null}">
+                <span><i class="bi bi-telephone me-1" aria-hidden="true"></i><a th:href="${contactPhoneHref}" th:text="${contactPhone}">(02) 8XXX-XXXX</a></span>
+                <small class="vp-footer-note" th:if="${contactPhoneNote != null}" th:text="${contactPhoneNote}">For official inquiries only.</small>
+            </span>
             <!-- Social icons: only the platforms the Director saved on Website Content (CmsWebConfig.addFooterContent) -->
             <nav class="vp-footer-social" aria-label="Official social media" th:if="${socialLinks != null and !socialLinks.isEmpty()}">
                 <a th:each="link : ${socialLinks}" th:href="${link.url}" target="_blank" rel="noopener noreferrer"

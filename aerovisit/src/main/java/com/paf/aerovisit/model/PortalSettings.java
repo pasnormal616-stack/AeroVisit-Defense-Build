@@ -34,6 +34,14 @@ public class PortalSettings {
     @Column(length = 150)
     private String contactEmail;
 
+    // Official museum phone shown as a tel: link in the public footer; null hides the line
+    @Column(length = 30)
+    private String contactPhone;
+
+    // Optional small italic line under the phone (e.g. a prank-call warning); only shown with a phone number
+    @Column(length = 160)
+    private String contactPhoneNote;
+
     // One footer icon: platform name (for the screen-reader label), Bootstrap Icons class and the saved link
     public record SocialLink(String name, String icon, String url) {}
 
@@ -56,6 +64,12 @@ public class PortalSettings {
 
     public String getContactEmail() { return contactEmail; }
     public void setContactEmail(String contactEmail) { this.contactEmail = contactEmail; }
+
+    public String getContactPhone() { return contactPhone; }
+    public void setContactPhone(String contactPhone) { this.contactPhone = contactPhone; }
+
+    public String getContactPhoneNote() { return contactPhoneNote; }
+    public void setContactPhoneNote(String contactPhoneNote) { this.contactPhoneNote = contactPhoneNote; }
 
     // Only the platforms that have a saved link, in footer order
     public List<SocialLink> socialLinks() {

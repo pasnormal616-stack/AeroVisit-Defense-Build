@@ -7,6 +7,11 @@
 </head>
 <body class="vp vp--immersive">
 
+<!-- Shown by visitor.js (initConnectionGuard) while the browser reports no network -->
+<div class="vp-offline-banner" id="vpOfflineBanner" role="status" aria-live="polite" hidden>
+    <i class="bi bi-wifi-off" aria-hidden="true"></i> Network connection lost. Please reconnect to continue.
+</div>
+
 <th:block th:replace="~{fragments/visitor :: preloader}"></th:block>
 <th:block th:replace="~{fragments/visitor :: backdrop}"></th:block>
 <th:block th:replace="~{fragments/visitor :: topnav(true)}"></th:block>

@@ -13,6 +13,23 @@ class FuzzyNameMatcherTest {
         return FuzzyNameMatcher.matches(ocr, first, last);
     }
 
+    // Full-card OCR text, headers, address and numbers included: the noise a real ID close-up gives Tesseract.
+    // A score-based matcher (FuzzySearch.tokenSetRatio) gave "JUAM" and "PEDRO" the same 78 on these, so they stay here.
+    private static String philSysCard(String last, String given, String middle) {
+        return "REPUBLIKA NG PILIPINAS\nRepublic of the Philippines\nPAMBANSANG PAGKAKAKILANLAN\n"
+                + "Philippine Identification Card\n1234-5678-9101-1121\nApelyido/Last Name\n" + last
+                + "\nMga Pangalan/Given Names\n" + given + "\nGitnang Apelyido/Middle Name\n" + middle
+                + "\nPetsa ng Kapanganakan/Date of Birth\nJANUARY 01, 1990\nTirahan/Address\n"
+                + "123 RIZAL ST, BRGY SAN ANTONIO, QUEZON CITY, METRO MANILA";
+    }
+
+    private static String driversLicense(String name) {
+        return "REPUBLIC OF THE PHILIPPINES\nDEPARTMENT OF TRANSPORTATION\nLAND TRANSPORTATION OFFICE\n"
+                + "DRIVER'S LICENSE\nLast Name. First Name. Middle Name\n" + name + "\nNationality Sex Date of Birth "
+                + "Weight (kg) Height(m)\nPHL M 1990/01/01 70 1.70\nAddress\n123 RIZAL ST BRGY SAN ANTONIO QUEZON CITY\n"
+                + "License No. N01-23-456789 Expiration Date 2030/01/01 Agency Code N01\nBlood Type O+ Eyes Color BLACK";
+    }
+
     // --- the distance itself ---
 
     @Test
@@ -72,6 +89,17 @@ class FuzzyNameMatcherTest {
         assertThat(match("peña, josé", "JOSE", "PENA")).isTrue();
     }
 
+    @Test
+    void oneLetterSlipsOnAFullIdCardPass() {
+        assertThat(match(philSysCard("DELA CRUZ", "JUAN", "PEREZ"), "Juan", "Dela Cruz")).isTrue();
+        assertThat(match(philSysCard("DELA CRUZ", "JUAM", "PEREZ"), "Juan", "Dela Cruz")).isTrue();
+        assertThat(match(philSysCard("DELA CRUS", "JUAN", "PEREZ"), "Juan", "Dela Cruz")).isTrue();
+        assertThat(match(philSysCard("DELACRUZ", "JUAN", "PEREZ"), "Juan", "Dela Cruz")).isTrue();
+        assertThat(match(driversLicense("DELA CRUZ, JUAN PEREZ"), "Juan", "Dela Cruz")).isTrue();
+        assertThat(match(driversLicense("DELA CRUZ, JUAM PEREZ"), "Juan", "Dela Cruz")).isTrue();
+        assertThat(match(driversLicense("0ELA CRUZ, JUAM PEREZ"), "Juan", "Dela Cruz")).isTrue();
+    }
+
     // --- things that must still go to manual review ---
 
     @Test
@@ -79,6 +107,15 @@ class FuzzyNameMatcherTest {
         assertThat(match("SANTOS, MARIA", "Juan", "Dela Cruz")).isFalse();
         assertThat(match("JUANITO DELA CRUZ", "Juan", "Dela Cruz")).isFalse();  // 3 edits from JUAN
         assertThat(match("DELA CRUZ, JUAN", "Juan", "Reyes")).isFalse();        // first name alone isn't enough
+    }
+
+    @Test
+    void aDifferentPersonOnAFullIdCardDoesNotPass() {
+        assertThat(match(philSysCard("DELA CRUZ", "PEDRO", "PEREZ"), "Juan", "Dela Cruz")).isFalse();   // same surname
+        assertThat(match(philSysCard("DELA CRUZ", "JUANITO", "PEREZ"), "Juan", "Dela Cruz")).isFalse();
+        assertThat(match(philSysCard("SANTOS", "JUAN", "REYES"), "Juan", "Dela Cruz")).isFalse();       // same first name
+        assertThat(match(philSysCard("SANTOS", "MARIA", "REYES"), "Juan", "Dela Cruz")).isFalse();
+        assertThat(match(driversLicense("DELA CRUZ, PEDRO PEREZ"), "Juan", "Dela Cruz")).isFalse();
     }
 
     @Test

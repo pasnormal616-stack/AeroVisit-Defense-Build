@@ -123,9 +123,10 @@ public class AdminDashboardController {
                     }
                 }
             } else if ("pending".equals(filter)) {
-                List<Visitor> rawVisitors = (dateFilter != null) ? repo.findByVisitDate(dateFilter) : repo.findAll();
+                // Only the requests awaiting review are read (not the whole table); a picked visit date reads just that day
+                List<Visitor> rawVisitors = (dateFilter != null) ? repo.findByVisitDate(dateFilter) : repo.findByStatusIn(AWAITING_REVIEW_STATUSES);
                 for (Visitor v : rawVisitors) {
-                    if ("PENDING".equals(v.getStatus()) || "VERIFIED".equals(v.getStatus()) || "PENDING_MANUAL_REVIEW".equals(v.getStatus())) {
+                    if (AWAITING_REVIEW_STATUSES.contains(v.getStatus())) {
                         visitors.add(v);
                     }
                 }
@@ -154,6 +155,20 @@ public class AdminDashboardController {
                     .comparing(Visitor::getCreatedAt, Comparator.nullsFirst(Comparator.<java.time.LocalDateTime>naturalOrder()))
                     .thenComparing(Visitor::getId, Comparator.nullsFirst(Comparator.<Long>naturalOrder()));
             visitors.sort("desc".equals(sortOrder) ? oldestFirst.reversed() : oldestFirst);
+
+            // 🗂️ Pending tab: grouped by visit date (seats left per window in each header) with triage tags for the
+            // quick-filter chips. Same requests, same order inside each date; only the grouping is added.
+            if ("pending".equals(filter)) {
+                PendingQueue.View queue = buildPendingQueue(visitors, dateFilter != null);
+                visitors = queue.rows();
+                model.addAttribute("pendingGroupStarts", queue.groupStarts());
+                model.addAttribute("pendingRows", queue.rowInfo());
+                model.addAttribute("pendingChips", queue.chips());
+                // Approve / Reject come back here instead of Today's Manifest (AdminReturnTo checks it)
+                model.addAttribute("pendingReturnTo", "/admin?filter=pending&sort=" + sortOrder
+                        + (dateFilter != null ? "&dateFilter=" + dateFilter : "")
+                        + (capacityDate != null ? "&capacityDate=" + capacityDate : ""));
+            }
 
             model.addAttribute("listVisitors", visitors);
             model.addAttribute("currentFilter", filter); 
@@ -439,15 +454,19 @@ public class AdminDashboardController {
     // Seats per time window on one date, counted the same way as the public calendar: slot capacity minus
     // seat-holding bookings (Visitor.holdsSeat), and zero when a Master Booking buyout or an emergency closure has the day
     private List<Map<String, Object>> buildCapacityForDate(LocalDate targetDate) {
+        boolean closed = repo.findBuyoutDates().contains(targetDate) || repo.findClosureDates().contains(targetDate);
+        return capacityRows(targetDate, bookingRepo.findAll(), repo.findByVisitDate(targetDate), closed);
+    }
+
+    // The tracker's per-window rows for one date (window, maxCapacity, remaining), from data already loaded; shared with
+    // the Pending tab's group headers so both count seats the same way
+    static List<Map<String, Object>> capacityRows(LocalDate targetDate, List<BookingSlot> slots, List<Visitor> visitorsOnDate, boolean closed) {
         Map<String, Integer> maxByWindow = new LinkedHashMap<>();
-        for (BookingSlot slot : bookingRepo.findAll()) {
+        for (BookingSlot slot : slots) {
             if (targetDate.equals(slot.getSlotDate()) && slot.getTimeWindow() != null) {
                 maxByWindow.merge(slot.getTimeWindow(), slot.getMaxCapacity(), Integer::sum);
             }
         }
-        List<Visitor> visitorsOnDate = repo.findByVisitDate(targetDate);
-        boolean closed = repo.findBuyoutDates().contains(targetDate) || repo.findClosureDates().contains(targetDate);
-
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Map.Entry<String, Integer> e : maxByWindow.entrySet()) {
             int booked = 0;
@@ -466,6 +485,37 @@ public class AdminDashboardController {
         // Window labels start with a name, so order by the start time inside "(hh:mm AM - ...)"
         rows.sort(Comparator.comparing(r -> windowStart((String) r.get("window"))));
         return rows;
+    }
+
+    // Pending tab: slots, seat-holding bookings and closed days are read once for every upcoming date in the queue
+    // (not once per group); overdue and undated requests need no seat counts
+    private PendingQueue.View buildPendingQueue(List<Visitor> requests, boolean singleDay) {
+        LocalDate today = LocalDate.now();
+        LocalDate first = null, last = null;
+        for (Visitor v : requests) {
+            LocalDate d = v.getVisitDate();
+            if (d == null || d.isBefore(today)) continue;
+            if (first == null || d.isBefore(first)) first = d;
+            if (last == null || d.isAfter(last)) last = d;
+        }
+        if (first == null) {
+            return PendingQueue.build(requests, today, d -> List.of(), java.util.Set.of(), singleDay);
+        }
+        List<BookingSlot> slots = bookingRepo.findAll();
+        Map<LocalDate, List<Visitor>> seatHolders = new HashMap<>();
+        for (Visitor v : repo.findByVisitDateBetweenAndStatusIn(first, last, Visitor.SEAT_HOLDING_STATUSES)) {
+            seatHolders.computeIfAbsent(v.getVisitDate(), k -> new ArrayList<>()).add(v);
+        }
+        java.util.Set<LocalDate> closed = new java.util.HashSet<>(repo.findBuyoutDates());
+        closed.addAll(repo.findClosureDates());
+        return PendingQueue.build(requests, today, d -> {
+            List<PendingQueue.SeatWindow> windows = new ArrayList<>();
+            for (Map<String, Object> r : capacityRows(d, slots, seatHolders.getOrDefault(d, List.of()), closed.contains(d))) {
+                String window = (String) r.get("window");
+                windows.add(new PendingQueue.SeatWindow(window, PendingQueue.windowName(window), (Integer) r.get("maxCapacity"), (Integer) r.get("remaining")));
+            }
+            return windows;
+        }, closed, singleDay);
     }
 
     private static java.time.LocalTime windowStart(String label) {

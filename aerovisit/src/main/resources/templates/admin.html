@@ -131,6 +131,15 @@
             </form>
         </div>
 
+        <!-- 🗂️ TRIAGE CHIPS (Pending tab): one kind of request at a time, plus a search box. Counts come from PendingQueue;
+             the script below hides rows, nothing is reloaded. Replaces the DataTables search on this tab. -->
+        <div class="av-triage" th:if="${currentFilter == 'pending' and !#lists.isEmpty(listVisitors)}" role="toolbar" aria-label="Quick filters">
+            <button type="button" class="av-chip is-active" data-triage="" aria-pressed="true">All <span class="av-chip-count" th:text="${#lists.size(listVisitors)}">0</span></button>
+            <button th:each="c : ${pendingChips}" type="button" class="av-chip" th:attr="data-triage=${c.key}" aria-pressed="false" th:disabled="${c.count == 0}">
+                <span th:text="${c.label}">Manual review</span> <span class="av-chip-count" th:text="${c.count}">0</span></button>
+            <input type="search" class="form-control form-control-sm av-triage-search" placeholder="Search name, email, ID, reference" aria-label="Search pending requests" data-triage-search>
+        </div>
+
         <div class="table-responsive">
             <table class="table table-custom mb-0" id="visitorTable">
                 <thead>
@@ -145,7 +154,42 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr th:each="visitor : ${listVisitors}">
+                    <tr th:if="${currentFilter == 'pending' and #lists.isEmpty(listVisitors)}">
+                        <td colspan="6" class="av-empty-row">No requests are waiting for approval.</td>
+                    </tr>
+                    <tr th:if="${currentFilter == 'pending' and !#lists.isEmpty(listVisitors)}" id="triageEmpty" hidden>
+                        <td colspan="6" class="av-empty-row">No requests match this filter.</td>
+                    </tr>
+                    <th:block th:each="visitor : ${listVisitors}">
+                    <!-- DATE GROUP HEADER (Pending tab): Overdue, Today, Tomorrow open; later dates collapsed. Seats left per
+                         time window are counted like the Daily Capacity Tracker (AdminDashboardController.capacityRows). -->
+                    <tr th:if="${pendingGroupStarts != null and pendingGroupStarts.containsKey(visitor.id)}"
+                        th:with="g=${pendingGroupStarts.get(visitor.id)}"
+                        class="av-group-row" th:classappend="${'av-group-row--' + g.tone}" th:attr="data-group-head=${g.key}">
+                        <th colspan="6" scope="rowgroup">
+                            <div class="av-group-head">
+                                <button type="button" class="av-group-toggle" th:attr="data-group-toggle=${g.key},aria-expanded=${g.open}">
+                                    <i class="bi bi-chevron-right av-group-chevron" aria-hidden="true"></i>
+                                    <span class="av-group-title" th:text="${g.label}">Today</span>
+                                    <span class="av-group-meta" th:text="${g.requests + (g.requests == 1 ? ' request' : ' requests') + ' · ' + g.people + (g.people == 1 ? ' person' : ' people')}">1 request</span>
+                                    <span class="av-group-match" data-group-match hidden></span>
+                                </button>
+                                <span class="av-group-seats" th:if="${g.tone != 'overdue' and g.tone != 'nodate'}">
+                                    <span th:if="${g.closed}" class="av-seat av-seat--full">Closed: buyout or emergency closure</span>
+                                    <th:block th:unless="${g.closed}">
+                                        <span th:if="${#lists.isEmpty(g.windows)}" class="av-seat av-seat--none">No time slots set for this date</span>
+                                        <span th:each="w : ${g.windows}" class="av-seat"
+                                              th:classappend="${w.remaining == 0 ? 'av-seat--full' : (w.remaining <= 15 ? 'av-seat--low' : '')}"
+                                              th:title="${w.window + ': ' + w.remaining + ' of ' + w.maxCapacity + ' seats left'}"
+                                              th:text="${w.name + ' ' + (w.remaining == 0 ? 'FULL' : w.remaining + ' left')}">Morning 12 left</span>
+                                    </th:block>
+                                </span>
+                            </div>
+                        </th>
+                    </tr>
+                    <tr th:with="pr=${pendingRows != null ? pendingRows.get(visitor.id) : null}"
+                        th:attr="data-group=${pr?.group},data-tags=${pr?.tags},data-search=${pr?.search}"
+                        th:hidden="${pr != null and pr.collapsed}">
                         <!-- Civilian Profile -->
                         <td class="ps-4">
                             <div class="av-person">
@@ -209,7 +253,7 @@
                         </td>
 
                         <td>
-                            <span th:if="${visitor.status == 'PENDING' or visitor.status == 'PENDING_MANUAL_REVIEW'}" class="badge-soft badge-pending">Pending Review</span>
+                            <span th:if="${visitor.awaitsApproval()}" class="badge-soft badge-pending">Pending Review</span>
                             <span th:if="${visitor.status == 'APPROVED'}" class="badge-soft badge-approved"><i class="bi bi-patch-check-fill"></i> Approved</span>
                             <span th:if="${visitor.status == 'REJECTED'}" class="badge-soft badge-rejected">Rejected</span>
                             <span th:if="${visitor.status == 'CANCELLED_OVERRIDE'}" class="badge-soft badge-rejected">Cancelled (Override)</span>
@@ -234,13 +278,15 @@
 
                         <td class="text-end pe-4">
                             <div class="av-actions">
-                                <th:block th:if="${visitor.status == 'PENDING' or visitor.status == 'PENDING_MANUAL_REVIEW'}">
+                                <th:block th:if="${visitor.awaitsApproval()}">
                                     <form th:action="@{'/admin/approve/' + ${visitor.id}}" method="post" class="m-0">
+                                        <input type="hidden" name="returnTo" th:if="${pendingReturnTo != null}" th:value="${pendingReturnTo}">
                                         <button type="submit" class="btn btn-sm btn-outline-success" title="Approve">Approve</button>
                                     </form>
                                     <!-- ⚠️ DIRECTOR OVERRIDE: approves past the slot's capacity (Master Bookings already skip the check) -->
-                                    <form th:if="${isDirector and !visitor.masterBooking}" th:action="@{'/admin/approve-override/' + ${visitor.id}}" method="post" class="m-0"
+                                    <form th:if="${isDirector and !visitor.masterBooking and visitor.status != 'VERIFIED'}" th:action="@{'/admin/approve-override/' + ${visitor.id}}" method="post" class="m-0"
                                           onsubmit="return confirm('Force Approve skips the capacity check and can overbook this time slot. Continue?');">
+                                        <input type="hidden" name="returnTo" th:if="${pendingReturnTo != null}" th:value="${pendingReturnTo}">
                                         <button type="submit" class="btn btn-sm btn-warning" title="Approve even if the time slot is full (Director override)"><i class="bi bi-exclamation-triangle-fill me-1"></i>Force Approve</button>
                                     </form>
                                     <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" th:data-bs-target="'#rejectModal' + ${visitor.id}" title="Reject">Reject</button>
@@ -280,6 +326,7 @@
                                         </div>
                                         <form action="/admin/reject-visitor" method="post">
                                             <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                            <input type="hidden" name="returnTo" th:if="${pendingReturnTo != null}" th:value="${pendingReturnTo}">
                                             <div class="modal-body text-start">
                                                 <p class="av-small av-muted mb-3">Target: <strong class="text-dark" th:text="${visitor.name}"></strong></p>
                                                 <input type="hidden" name="id" th:value="${visitor.id}">
@@ -354,6 +401,7 @@
 
                         </td>
                     </tr>
+                    </th:block>
                 </tbody>
             </table>
         </div>
@@ -433,6 +481,84 @@
     });
 })();
 </script>
+<script>
+// 🗂️ PENDING QUEUE: open/close date groups, quick-filter chips and search. While a chip or search is active every match
+// is shown, whatever group it is in; clearing it brings back the officer's own open/closed groups. The view (open groups,
+// chip, search) is kept in sessionStorage, so it survives the page reload after Approve / Reject.
+(function () {
+    var table = document.getElementById('visitorTable');
+    var toggles = table ? Array.prototype.slice.call(table.querySelectorAll('[data-group-toggle]')) : [];
+    if (!toggles.length) return;
+    var rows = Array.prototype.slice.call(table.querySelectorAll('tr[data-group]'));
+    var chips = Array.prototype.slice.call(document.querySelectorAll('[data-triage]'));
+    var search = document.querySelector('[data-triage-search]');
+    var empty = document.getElementById('triageEmpty');
+    var KEY = 'av_pending_view';
+    var state = { open: {}, tag: '', q: '' };
+    try {
+        var saved = JSON.parse(sessionStorage.getItem(KEY));
+        if (saved && typeof saved === 'object') {
+            state.open = saved.open && typeof saved.open === 'object' ? saved.open : {};
+            state.tag = typeof saved.tag === 'string' ? saved.tag : '';
+            state.q = typeof saved.q === 'string' ? saved.q : '';
+        }
+    } catch (e) { /* storage blocked: server defaults */ }
+    toggles.forEach(function (b) {
+        var key = b.getAttribute('data-group-toggle');
+        if (typeof state.open[key] !== 'boolean') state.open[key] = b.getAttribute('aria-expanded') === 'true';
+    });
+    // A saved chip that has no matches any more (or no longer exists) falls back to All
+    if (!chips.some(function (c) { return c.getAttribute('data-triage') === state.tag && !c.disabled; })) state.tag = '';
+    if (search) search.value = state.q;
+
+    function matches(row) {
+        if (state.tag && (' ' + (row.getAttribute('data-tags') || '') + ' ').indexOf(' ' + state.tag + ' ') < 0) return false;
+        return !state.q || (row.getAttribute('data-search') || '').indexOf(state.q.toLowerCase()) >= 0;
+    }
+
+    function render() {
+        var filtering = !!(state.tag || state.q), hits = {}, total = 0;
+        rows.forEach(function (row) {
+            var g = row.getAttribute('data-group'), ok = matches(row);
+            if (ok) { hits[g] = (hits[g] || 0) + 1; total++; }
+            row.hidden = !ok || (!filtering && !state.open[g]);
+        });
+        toggles.forEach(function (b) {
+            var g = b.getAttribute('data-group-toggle');
+            b.closest('tr').hidden = filtering && !hits[g];
+            b.setAttribute('aria-expanded', (filtering || state.open[g]) ? 'true' : 'false');
+            b.disabled = filtering;
+            var badge = b.querySelector('[data-group-match]');
+            badge.hidden = !filtering;
+            badge.textContent = (hits[g] || 0) + ' shown';
+        });
+        chips.forEach(function (c) {
+            var on = c.getAttribute('data-triage') === state.tag;
+            c.classList.toggle('is-active', on);
+            c.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+        if (empty) empty.hidden = total > 0;
+        try { sessionStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* private mode */ }
+    }
+
+    toggles.forEach(function (b) {
+        b.addEventListener('click', function () {
+            var g = b.getAttribute('data-group-toggle');
+            state.open[g] = !state.open[g];
+            render();
+        });
+    });
+    chips.forEach(function (c) {
+        c.addEventListener('click', function () {
+            var tag = c.getAttribute('data-triage');
+            state.tag = (tag === state.tag) ? '' : tag;
+            render();
+        });
+    });
+    if (search) search.addEventListener('input', function () { state.q = search.value.trim(); render(); });
+    render();
+})();
+</script>
 <script type="text/javascript" src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script type="text/javascript" src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
 <script type="text/javascript" src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
@@ -440,6 +566,8 @@
 <script th:inline="javascript">
     /*<![CDATA[*/
     $(document).ready(function() {
+        // Pending tab: grouped rows, its own chips and search (above); DataTables would page through the date headers
+        if (document.querySelector('#visitorTable [data-group-toggle], #visitorTable .av-empty-row')) return;
         $('#visitorTable').DataTable({
             "pageLength": 10,
             "ordering": false,

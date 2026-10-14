@@ -373,37 +373,40 @@ public class GuardOperationController {
     }
 
     @PostMapping("/admin/approve/{id}")
-    public String approveVisitor(@PathVariable Long id, RedirectAttributes redirectAttributes) {
-        if (id == null) return "redirect:/admin";
+    public String approveVisitor(@PathVariable Long id,
+                                 @RequestParam(value = "returnTo", required = false) String returnTo,
+                                 RedirectAttributes redirectAttributes) {
+        String back = AdminReturnTo.redirect(returnTo); // the officer's Pending view, or /admin as before
+        if (id == null) return back;
         Visitor v = repo.findById(id).orElse(null);
         if (v != null && "DENIED_ENTRY".equals(v.getStatus())) {
             // 🛑 Re-approving would issue a fresh QR and undo the gate's decision; the visitor must book again
             redirectAttributes.addFlashAttribute("error", "Approval refused: this visitor was denied entry at the gate. The denial is final for this booking.");
-            return "redirect:/admin";
+            return back;
         }
         if (v != null && !v.awaitsApproval()) {
             // 🔒 STATE MACHINE: only a pending request can be approved, so a checked-in, checked-out, rejected or
             // cancelled booking can never be moved back to APPROVED (which would re-activate its QR code)
             redirectAttributes.addFlashAttribute("error", "Invalid state transition: a booking with status "
                     + (v.getStatus() != null ? v.getStatus() : "UNKNOWN") + " cannot be approved. Only pending requests can be approved.");
-            return "redirect:/admin";
+            return back;
         }
         if (v != null && isFaceBanned(v)) {
             redirectAttributes.addFlashAttribute("error", BANNED_APPROVAL);
-            return "redirect:/admin";
+            return back;
         }
         if (v != null) {
             // 👻 GHOST SLOTS: a standard booking needs a real slot for its date and time window (never created, deleted,
             // or a made-up window from a hand-made request). Master Bookings may take a day with no public slots.
             if (!v.isMasterBooking() && slotCapacity(v) <= 0) {
                 redirectAttributes.addFlashAttribute("error", INVALID_SLOT);
-                return "redirect:/admin";
+                return back;
             }
             // 🔒 Just-in-time capacity check: PENDING requests hold no seats, so the slot is re-counted at approval.
             // Master Bookings are exempt: the VIP buyout override below takes over the whole date.
             if (!v.isMasterBooking() && !hasSeatsForApproval(v)) {
                 redirectAttributes.addFlashAttribute("error", "Approval failed: Not enough seats remaining in this time slot.");
-                return "redirect:/admin";
+                return back;
             }
             v.setStatus("APPROVED");
             try {
@@ -427,7 +430,7 @@ public class GuardOperationController {
                     redirectAttributes.addFlashAttribute("error", full instanceof SeatReservationService.CapacityFullException
                             ? "Approval failed: Not enough seats remaining in this time slot."
                             : "Approval failed: this time slot is being updated by another approval right now. Please try again.");
-                    return "redirect:/admin";
+                    return back;
                 }
                 emailService.sendApprovalEmailWithQR(v.getEmail(), v.getName(), v.getVisitDate().toString(), qrFileName, v.getReferenceId());
                 redirectAttributes.addFlashAttribute("success", "Visitor approved and Email sent successfully!");
@@ -467,36 +470,39 @@ public class GuardOperationController {
                 redirectAttributes.addFlashAttribute("error", "Approved, but failed to generate QR or send email: " + e.getMessage());
             }
         }
-        return "redirect:/admin";
+        return back;
     }
 
     // ⚠️ DIRECTOR OVERRIDE: approves a pending request even when its time slot is already full.
     // Same QR + email steps as approveVisitor above, without the capacity check. SecurityConfig limits this path to the Director.
     @PostMapping("/admin/approve-override/{id}")
-    public String forceApproveVisitor(@PathVariable Long id, java.security.Principal principal, RedirectAttributes redirectAttributes) {
+    public String forceApproveVisitor(@PathVariable Long id, java.security.Principal principal,
+                                      @RequestParam(value = "returnTo", required = false) String returnTo,
+                                      RedirectAttributes redirectAttributes) {
+        String back = AdminReturnTo.redirect(returnTo);
         Visitor v = repo.findById(id).orElse(null);
         if (v == null) {
             redirectAttributes.addFlashAttribute("error", "Visitor ID not found in database.");
-            return "redirect:/admin";
+            return back;
         }
         if (!"PENDING".equals(v.getStatus()) && !"PENDING_MANUAL_REVIEW".equals(v.getStatus())) {
             // 🛑 Also keeps denied, cancelled and rejected bookings from being revived through the override
             redirectAttributes.addFlashAttribute("error", "Force Approve only applies to a pending request (status: " + v.getStatus() + ").");
-            return "redirect:/admin";
+            return back;
         }
         if (v.isMasterBooking()) {
             // Master Bookings already skip the capacity check, and only the standard approval runs the VIP buyout rules
             redirectAttributes.addFlashAttribute("error", "Master Bookings are exempt from the capacity check. Use the standard Approve button.");
-            return "redirect:/admin";
+            return back;
         }
         // The override skips the seat count only: a banned face or a slot that does not exist still blocks it
         if (isFaceBanned(v)) {
             redirectAttributes.addFlashAttribute("error", BANNED_APPROVAL);
-            return "redirect:/admin";
+            return back;
         }
         if (slotCapacity(v) <= 0) {
             redirectAttributes.addFlashAttribute("error", INVALID_SLOT);
-            return "redirect:/admin";
+            return back;
         }
 
         String qrFileName = "QR_" + v.getId() + ".png";
@@ -514,7 +520,7 @@ public class GuardOperationController {
         } catch (Exception e) {
             System.err.println("❌ Force approval failed for visitor #" + v.getId() + ": " + e);
             redirectAttributes.addFlashAttribute("error", "Force approval failed, the booking is still pending: " + e.getMessage());
-            return "redirect:/admin";
+            return back;
         }
         System.out.println("⚠️ CAPACITY OVERRIDE: visitor #" + v.getId() + " force-approved by " + (principal != null ? principal.getName() : "unknown"));
 
@@ -525,7 +531,7 @@ public class GuardOperationController {
             System.err.println("❌ Force approval email failed for visitor #" + v.getId() + ": " + e);
             redirectAttributes.addFlashAttribute("error", "Force-approved, but the approval email failed to send: " + e.getMessage());
         }
-        return "redirect:/admin";
+        return back;
     }
 
     // True when the visitor's group still fits its date and time window, counting only seat-holding

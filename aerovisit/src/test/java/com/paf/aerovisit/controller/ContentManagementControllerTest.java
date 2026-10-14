@@ -529,4 +529,58 @@ class ContentManagementControllerTest {
             .andExpect(content().string(Matchers.stringContainsInOrder("Contact &amp; Social Media",
                 "type=\"email\" id=\"contactEmail\" name=\"contactEmail\"", "value=\"paf.museum@paf.mil.ph\"", "id=\"facebookUrl\"")));
     }
+
+    // --- Contact phone + its note (footer) ---
+
+    @Test
+    void contactPhoneAndNoteAreSavedTrimmedWithTheSocialLinks() throws Exception {
+        PortalSettings existing = new PortalSettings();
+        when(settingsRepo.findById(1L)).thenReturn(Optional.of(existing));
+        mvc.perform(post("/admin/content/social/save").with(csrf())
+                .param("contactPhone", "  (02)  8854-6711 ")
+                .param("contactPhoneNote", "  For official inquiries only.\n Prank calls are logged. "))
+            .andExpect(flash().attribute("success", "Contact & social links saved. Only the filled-in ones appear in the visitor portal footer."));
+        verify(settingsRepo).save(existing);
+        assertThat(existing.getContactPhone()).isEqualTo("(02) 8854-6711");
+        assertThat(existing.getContactPhoneNote()).isEqualTo("For official inquiries only. Prank calls are logged.");
+
+        mvc.perform(post("/admin/content/social/save").with(csrf()).param("contactPhone", " ").param("contactPhoneNote", ""))
+            .andExpect(flash().attribute("success", "Contact email and social links cleared. The visitor portal footer shows neither."));
+        assertThat(existing.getContactPhone()).isNull();
+        assertThat(existing.getContactPhoneNote()).isNull();
+    }
+
+    @Test
+    void aWrongContactPhoneOrALongNoteSavesNothing() throws Exception {
+        mvc.perform(post("/admin/content/social/save").with(csrf()).param("contactPhone", "call 8854-6711"))
+            .andExpect(redirectedUrl("/admin/content#announcements"))
+            .andExpect(flash().attribute("error", "Contact & social links not saved. Check: Contact phone (digits with + ( ) - . or spaces, 7 to 15 digits)."));
+        mvc.perform(post("/admin/content/social/save").with(csrf()).param("contactPhone", "8854-6711").param("contactPhoneNote", "x".repeat(161)))
+            .andExpect(flash().attribute("error", "Contact & social links not saved. Check: Phone note (160 characters max)."));
+        verify(settingsRepo, never()).save(any());
+    }
+
+    @Test
+    void contactPhoneMustBeAPlainNumber() {
+        assertThat(ContentManagementController.contactPhone("+63 917 123 4567")).isEqualTo("+63 917 123 4567");
+        assertThat(ContentManagementController.contactPhone("(02) 8854.6711")).isEqualTo("(02) 8854.6711");
+        assertThat(ContentManagementController.contactPhone(null)).isEmpty();
+        String[] rejected = {"123456", "1234567890123456", "tel:88546711", "8854-6711 loc 2", "63+917 123 4567", "<b>8854-6711</b>",
+            "javascript:alert(1)", "(0)-(2)-(8)-(8)-(5)-(4)-(6)-(7)"}; // last: 8 digits but 31 characters
+        for (String phone : rejected) {
+            assertThat(ContentManagementController.contactPhone(phone)).as(phone).isNull();
+        }
+    }
+
+    @Test
+    void pageShowsTheSavedPhoneAndNoteUnderTheContactEmail() throws Exception {
+        PortalSettings existing = new PortalSettings();
+        existing.setContactPhone("(02) 8854-6711");
+        existing.setContactPhoneNote("For official inquiries only.");
+        when(settingsRepo.findById(1L)).thenReturn(Optional.of(existing));
+        mvc.perform(get("/admin/content"))
+            .andExpect(content().string(Matchers.stringContainsInOrder("id=\"contactEmail\"",
+                "type=\"tel\" id=\"contactPhone\" name=\"contactPhone\"", "value=\"(02) 8854-6711\"",
+                "id=\"contactPhoneNote\" name=\"contactPhoneNote\"", "value=\"For official inquiries only.\"", "id=\"facebookUrl\"")));
+    }
 }
