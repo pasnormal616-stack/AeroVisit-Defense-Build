@@ -79,14 +79,26 @@ class SingleConsentTest {
     }
 
     @Test
-    void theIdUploadIsTwoStepAnIdCloseUpThenASelfieFromTheFrontCamera() throws Exception {
-        Matcher selfie = Pattern.compile("<input[^>]*id=\"idImageInput\"[^>]*>").matcher(form());
-        assertThat(selfie.find()).isTrue();
-        assertThat(selfie.group()).contains("name=\"livenessImage\"", "capture=\"user\"", "accept=\"image/png, image/jpeg\"", "required");
-        Matcher card = Pattern.compile("<input[^>]*id=\"idCardImageInput\"[^>]*>").matcher(form());
-        assertThat(card.find()).isTrue();
-        assertThat(card.group()).contains("name=\"highResIdImage\"", "capture=\"environment\"", "accept=\"image/png, image/jpeg\"", "required");
-        assertThat(form()).contains("Your Valid ID + Selfie Holding It", "Close-up photo of your ID", "Selfie holding your ID");
+    void theTwoKycPhotosComeOnlyFromTheLiveCameraWithNoUploadFallback() throws Exception {
+        String form = form();
+        // The camera's two photos still travel in these inputs (/save reads them as uploads), but they are never shown
+        for (String[] in : new String[][] {{"idCardImageInput", "highResIdImage"}, {"idImageInput", "livenessImage"}}) {
+            Matcher m = Pattern.compile("<input[^>]*id=\"" + in[0] + "\"[^>]*>").matcher(form);
+            assertThat(m.find()).isTrue();
+            assertThat(m.group()).contains("type=\"file\"", "name=\"" + in[1] + "\"", "class=\"vp-liveness-input\"",
+                "tabindex=\"-1\"", "aria-hidden=\"true\"", "required").doesNotContain("capture=", "form-control");
+        }
+        assertThat(form).contains("<label for=\"livenessStartBtn\"", "Your Valid ID + Selfie Holding It",
+                "id=\"livenessBlocked\"", "uploaded files are not accepted")
+            .doesNotContain("vp-upload-file", "vp-upload-step", "livenessNote", "Close-up photo of your ID", "<label for=\"idCardImageInput\"");
+        // The camera box is shown from the start (no script-only reveal that a fallback could undo)
+        assertThat(form).contains("<div class=\"vp-liveness\" id=\"livenessBox\">");
+
+        String html = mvc.perform(get("/")).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(html).contains("function hardStop(reason, canRetry)",
+                "'A live camera is required for identity verification. Please grant camera permissions or switch to a smartphone to continue.'",
+                "hardStop('This browser cannot open a live camera on this page.', false);")
+            .doesNotContain("UPLOAD_INSTEAD", "fallback(", "upload a close-up photo of your ID and a selfie holding it instead");
     }
 
     @Test

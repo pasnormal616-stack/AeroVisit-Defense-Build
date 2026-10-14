@@ -46,6 +46,8 @@ fake_genai.types = fake_genai_types
 
 fake_transformers = types.ModuleType("transformers")
 fake_transformers.pipeline = lambda *args, **kwargs: (lambda text: [{"label": "NEUTRAL", "score": 0.5}])
+# main.py loads the tokenizer itself (fix_mistral_regex=False) and hands it to pipeline()
+fake_transformers.AutoTokenizer = types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: object())
 
 fake_mysql_connector = types.ModuleType("mysql.connector")
 def _no_database(**kwargs):

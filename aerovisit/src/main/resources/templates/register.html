@@ -358,13 +358,17 @@
                                                       placeholder="State the official purpose of the event, the organizing institution, and why exclusive use of the facility is needed."></textarea>
                                         </div>
 
-                                        <!-- STRICT UPLOAD FIELD -->
+                                        <!-- LIVE CAPTURE FIELD -->
                                         <div class="vp-upload">
-                                            <label for="idCardImageInput" class="form-label" id="idPhotosLabel"><i class="bi bi-person-bounding-box me-1"></i>Your Valid ID + Selfie Holding It</label>
-                                            <!-- TWO-STEP CAPTURE: the script at the bottom of this page shows this box only when the camera can be used.
+                                            <label for="livenessStartBtn" class="form-label" id="idPhotosLabel"><i class="bi bi-person-bounding-box me-1"></i>Your Valid ID + Selfie Holding It</label>
+                                            <!-- TWO-STEP LIVE CAPTURE (camera only, no upload fallback).
                                                  Step 1 (ID alone, close up) goes into #idCardImageInput = "highResIdImage";
                                                  step 2 (liveness selfie holding the ID) goes into #idImageInput = "livenessImage". -->
-                                            <div class="vp-liveness d-none" id="livenessBox">
+                                            <div class="vp-liveness" id="livenessBox">
+                                                <!-- 🛑 Shown instead of any fallback when the live camera cannot be used (script: hardStop) -->
+                                                <div class="vp-alert d-none" id="livenessBlocked" role="alert">
+                                                    <i class="bi bi-camera-video-off-fill" aria-hidden="true"></i> <span id="livenessBlockedText"></span>
+                                                </div>
                                                 <div class="vp-liveness-inline">
                                                     <div class="vp-liveness-thumbs">
                                                         <img id="idCardPreview" class="vp-liveness-thumb d-none" alt="Your captured ID">
@@ -404,27 +408,19 @@
                                                     </div>
                                                 </div>
                                             </div>
-                                            <!-- Selfie tip, shown with the camera box and with the fallback inputs (both end in a selfie) -->
+                                            <!-- Selfie tip, shown with the camera box -->
                                             <div class="vp-note vp-cam-tip" role="note">
                                                 <span class="vp-cam-tip-icon" aria-hidden="true">💡</span>
                                                 <div><strong>Pro Tip:</strong> For the fastest verification, hold your device slightly above eye level in a well-lit area.</div>
                                             </div>
-                                            <!-- Fallback (no camera, permission denied, plain http, old browser): these two inputs are shown instead.
-                                                 capture: phones open the back camera for the ID and the front camera for the selfie;
-                                                 desktops show the normal file picker -->
-                                            <div class="vp-upload-file">
-                                                <label for="idCardImageInput" class="form-label vp-upload-step">1. Close-up photo of your ID (front side, placed flat on a table)</label>
-                                                <input type="file" id="idCardImageInput" class="form-control" name="highResIdImage" accept="image/png, image/jpeg" capture="environment" required>
-                                            </div>
-                                            <div class="vp-upload-file">
-                                                <label for="idImageInput" class="form-label vp-upload-step">2. Selfie holding your ID</label>
-                                                <input type="file" id="idImageInput" class="form-control" name="livenessImage" accept="image/png, image/jpeg" capture="user" required>
-                                            </div>
-                                            <p class="form-text d-none" id="livenessNote" role="status"></p>
+                                            <!-- The camera's two photos travel in these inputs (/save reads them as normal uploads). They are never
+                                                 shown, focused or labelled: only the live capture can fill them (attach() in the script below). -->
+                                            <input type="file" id="idCardImageInput" class="vp-liveness-input" name="highResIdImage" accept="image/jpeg" tabindex="-1" aria-hidden="true" required>
+                                            <input type="file" id="idImageInput" class="vp-liveness-input" name="livenessImage" accept="image/jpeg" tabindex="-1" aria-hidden="true" required>
                                             <ul class="vp-selfie-tips form-text">
                                                 <li>ID photo: place your ID flat on a table and align it within the frame for a clear scan, in good light and without glare.</li>
                                                 <li>Selfie: hold your ID <b>beside</b> your face, not covering it, with the printed side facing the camera.</li>
-                                                <li><i class="bi bi-lock"></i> Only <b>.jpg</b> and <b>.png</b> are accepted. Every booking is reviewed by museum personnel before your entry pass is sent.</li>
+                                                <li><i class="bi bi-lock"></i> Both photos are taken live by the camera; uploaded files are not accepted. Every booking is reviewed by museum personnel before your entry pass is sent.</li>
                                             </ul>
                                         </div>
 
@@ -1139,8 +1135,6 @@
     var input = document.getElementById('idImageInput');          // step 2: liveness selfie ("livenessImage")
     var cardInput = document.getElementById('idCardImageInput');  // step 1: ID close-up ("highResIdImage")
     if (!box || !input || !cardInput) return;
-    var label = document.getElementById('idPhotosLabel');
-    var stepLabels = document.querySelectorAll('.vp-upload-step');
     var video = document.getElementById('livenessVideo');
     var preview = document.getElementById('livenessPreview');
     var cardPreview = document.getElementById('idCardPreview');
@@ -1148,7 +1142,8 @@
     var canvas = document.getElementById('livenessCanvas');
     var startBtn = document.getElementById('livenessStartBtn');
     var retakeBtn = document.getElementById('livenessRetakeBtn');
-    var note = document.getElementById('livenessNote');
+    var blocked = document.getElementById('livenessBlocked');
+    var blockedText = document.getElementById('livenessBlockedText');
     var status = document.getElementById('livenessStatus');
     var modal = document.getElementById('livenessModal');
     var closeBtn = document.getElementById('livenessCloseBtn');
@@ -1174,7 +1169,7 @@
     var FACE_TOP = 10, FACE_CHIN = 152, FACE_LEFT = 234, FACE_RIGHT = 454;
 
     var NEEDS_LIVENESS = 'Please start the camera: take a close-up of your ID, then complete the two face challenges.';
-    var UPLOAD_INSTEAD = ' Please upload a close-up photo of your ID and a selfie holding it instead.';
+    var CAMERA_REQUIRED = 'A live camera is required for identity verification. Please grant camera permissions or switch to a smartphone to continue.';
     // Step 1 instruction follows the camera: a phone's back camera can look down at an ID lying on a table (steadier than
     // holding it), but a laptop webcam faces the visitor and can't see the table
     var ID_STEP_PROMPT_TABLE = 'Step 1 of 2: Place your ID flat on a table and align it within the frame for a clear scan.';
@@ -1307,7 +1302,7 @@
             dt.items.add(new File(['x'], 'probe.jpg', { type: 'image/jpeg' }));
             return dt.files.length === 1;
         } catch (e) {
-            return false; // Safari < 14.1 cannot build a FileList, so the upload box is the only way
+            return false; // Safari < 14.1 cannot build a FileList, so the photos could not reach the form: hard stop
         }
     }
 
@@ -1569,7 +1564,7 @@
         var idStep = !hasFile(cardInput);
         setStep(idStep ? 1 : 2);
         startBtn.disabled = true;
-        note.classList.add('d-none');
+        blocked.classList.add('d-none'); // a retry clears the previous hard-stop message
         tell('Camera open: follow the instructions on screen.');
         say('Waiting for camera permission…');
         openModal();
@@ -1596,7 +1591,7 @@
         }).catch(function (err) {
             if (err === stale) return;
             if (window.console) console.warn('Live challenge check unavailable:', err);
-            fallback(reasonFor(err));
+            hardStop(reasonFor(err));
         });
     }
 
@@ -1645,7 +1640,7 @@
             result = landmarker.detectForVideo(video, now);
         } catch (e) {
             if (window.console) console.warn('Face detection failed:', e);
-            fallback('The live challenge check stopped working.');
+            hardStop('The live challenge check stopped working.');
             return;
         }
         var faces = (result && result.faceLandmarks) || [];
@@ -1875,7 +1870,7 @@
         say('✓ ID captured');
         canvas.toBlob(function (blob) {
             if (mine !== session) return; // cancelled meanwhile
-            if (!blob || !attach(cardInput, blob, 'id-card.jpg')) { fallback('The ID photo could not be saved.'); return; }
+            if (!blob || !attach(cardInput, blob, 'id-card.jpg')) { hardStop('The ID photo could not be saved.'); return; }
             cardPreviewUrl = showPreview(cardPreview, blob, cardPreviewUrl);
             tell('✓ ID photo captured. Now the selfie holding your ID.');
             // Let the green frame show for a moment, then switch to the front camera for step 2
@@ -1920,7 +1915,7 @@
         stopCamera(); // the frame is on the canvas: release the camera (and its light) straight away
         say('Saving photo…');
         canvas.toBlob(function (blob) {
-            if (!blob || !attach(input, blob, 'selfie-with-id.jpg')) { fallback('The photo could not be saved.'); return; }
+            if (!blob || !attach(input, blob, 'selfie-with-id.jpg')) { hardStop('The photo could not be saved.'); return; }
             previewUrl = showPreview(preview, blob, previewUrl);
             box.classList.add('is-captured');
             startBtn.classList.add('d-none');
@@ -1958,38 +1953,34 @@
         tell(message || 'Camera paused. Tap Start camera to continue.');
     }
 
-    // No camera / permission denied / model unavailable: give the visitor the two plain upload boxes back
-    function fallback(reason) {
+    // 🛑 LIVE CAMERA ONLY: no upload fallback (it would skip the liveness check). No camera, permission denied, or the
+    // check could not run: stop, drop any half-taken photo, keep both inputs invalid (so the form cannot be submitted)
+    // and say why inside the camera box. Start camera stays available as a retry after the visitor grants permission.
+    function hardStop(reason, canRetry) {
         stopCamera();
-        closeModal(cardInput);
-        clearCapture();
-        box.classList.add('d-none');
-        [cardInput, input].forEach(function (el) {
-            el.classList.remove('vp-liveness-input');
-            el.removeAttribute('tabindex');
-            el.removeAttribute('aria-hidden');
-            el.setCustomValidity('');
-        });
-        Array.prototype.forEach.call(stepLabels, function (l) { l.classList.remove('d-none'); });
-        if (label) label.htmlFor = 'idCardImageInput';
-        note.textContent = reason + UPLOAD_INSTEAD;
-        note.classList.remove('d-none');
+        clearCapture(); // both inputs empty again and still carrying NEEDS_LIVENESS
+        startBtn.disabled = false;
+        startBtn.classList.toggle('d-none', canRetry === false);
+        closeModal(startBtn);
+        blockedText.textContent = reason + ' ' + CAMERA_REQUIRED;
+        blocked.classList.remove('d-none');
+        tell('Identity verification cannot continue without a live camera.');
     }
 
-    if (!supported()) return; // plain http on a phone, old browser: keep the two upload boxes exactly as they are
-
-    box.classList.remove('d-none');
+    // Both photos stay empty, and the form unsubmittable, until the camera fills them
     [cardInput, input].forEach(function (el) {
-        el.classList.add('vp-liveness-input');
-        el.tabIndex = -1;
-        el.setAttribute('aria-hidden', 'true');
         el.setCustomValidity(NEEDS_LIVENESS);
         el.addEventListener('invalid', function () {
-            if (!box.classList.contains('d-none') && !stream) tell(NEEDS_LIVENESS);
+            if (!stream && blocked.classList.contains('d-none')) tell(NEEDS_LIVENESS); // a hard-stop message stays as it is
         });
     });
-    Array.prototype.forEach.call(stepLabels, function (l) { l.classList.add('d-none'); });
-    if (label) label.htmlFor = 'livenessStartBtn';
+
+    // Plain http, old browser, no camera API: nothing to retry on this page
+    if (!supported()) {
+        hardStop('This browser cannot open a live camera on this page.', false);
+        return;
+    }
+
     document.body.appendChild(modal); // out of .vp-console's stacking context, so it covers the navbar too
 
     startBtn.addEventListener('click', startCamera);

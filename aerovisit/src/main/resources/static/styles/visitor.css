@@ -420,9 +420,6 @@
 .vp-liveness-thumbs { flex: 0 0 auto; display: flex; gap: 8px; }
 .vp-liveness-thumbs:not(:has(.vp-liveness-thumb:not(.d-none))) { display: none; }
 .vp-liveness-copy { flex: 1 1 auto; min-width: 0; }
-/* Fallback uploads: one labelled input per photo */
-.vp-upload-file + .vp-upload-file { margin-top: 12px; }
-.vp .vp-upload-step { font-size: 0.8125rem; font-weight: 600; margin-bottom: 6px; }
 .vp .vp-liveness-status { margin: 0; font-size: 0.875rem; color: var(--text-secondary); }
 .vp .vp-liveness.is-captured .vp-liveness-status { color: var(--success-ink); font-weight: 700; }
 .vp-liveness-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
@@ -512,7 +509,7 @@ html.vp-cam-open { overflow: hidden; scrollbar-gutter: auto; }
 .vp .vp-upload .vp-cam-tip { margin: 12px 0; padding: 12px 14px; gap: 10px; }
 .vp-cam-tip-icon { font-size: 1.1rem; line-height: 1.3; }
 
-/* The real file input stays in the form (and in native validation) while the camera box is in use */
+/* The real file inputs stay in the form (and in native validation) but are never shown: only the camera fills them */
 .vp-liveness-input {
     position: absolute;
     width: 1px; height: 1px; padding: 0; margin: 0;

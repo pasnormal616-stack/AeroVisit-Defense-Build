@@ -8,7 +8,7 @@ import datetime
 import random
 from sklearn.ensemble import RandomForestRegressor
 import numpy as np
-from transformers import pipeline
+from transformers import pipeline, AutoTokenizer
 import mysql.connector
 import re
 import threading
@@ -114,10 +114,17 @@ app.include_router(kyc_router, dependencies=[global_limit(KYC_PER_MINUTE)])
 # 🔥 FIXED: Added local_files_only=True so it boots instantly from your RAM/Cache without downloading
 print("Loading AI NLP Engine from Local Cache... (This should be instant)")
 try:
+    NLP_MODEL = "cardiffnlp/twitter-xlm-roberta-base-sentiment"  # XLM-R: reads Tagalog/Taglish (needs: pip install sentencepiece)
+    NLP_LOCAL_ONLY = os.getenv("HF_LOCAL_ONLY", "1") == "1"       # Railway: HF_LOCAL_ONLY=0 so it can download once
+    # fix_mistral_regex=False on purpose: transformers' Mistral check misfires on this XLM-R model (its config.json has
+    # no transformers_version). False only silences that warning; True would insert Mistral's split rule and change
+    # the tokens (a stray "▁" before every comma), which lowered the sentiment scores on Taglish reviews in testing.
+    nlp_tokenizer = AutoTokenizer.from_pretrained(NLP_MODEL, local_files_only=NLP_LOCAL_ONLY, fix_mistral_regex=False)
     sentiment_analyzer = pipeline(
-        "sentiment-analysis", 
-        model="cardiffnlp/twitter-xlm-roberta-base-sentiment",  # XLM-R: reads Tagalog/Taglish (needs: pip install sentencepiece)
-        local_files_only=os.getenv("HF_LOCAL_ONLY", "1") == "1"  # Railway: HF_LOCAL_ONLY=0 so it can download once
+        "sentiment-analysis",
+        model=NLP_MODEL,
+        tokenizer=nlp_tokenizer,
+        local_files_only=NLP_LOCAL_ONLY
     )
     print("✅ AI NLP Engine Ready!")
 except Exception as e:
