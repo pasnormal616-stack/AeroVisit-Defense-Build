@@ -14,3 +14,6 @@ opencv-python-headless==4.14.0.94
 transformers==5.14.1
 torch==2.13.0+cpu
 sentencepiece==0.2.2
+# XLM-R ships only sentencepiece.bpe.model: transformers needs protobuf to convert it to a fast tokenizer at start-up
+# (without it the container crashes). Same version as the local install the service is tested with.
+protobuf==5.29.6
