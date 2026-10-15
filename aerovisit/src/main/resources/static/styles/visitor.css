@@ -1196,3 +1196,63 @@ html.vp-is-loading { overflow: hidden; }
         height: auto; max-height: none;
     }
 }
+
+/* ==========================================================================
+   15. Mobile sweep (2026-10-16): nothing wider than the phone, touch-sized controls
+   Measured in headless Chrome at 320 / 375 / 414 px (the page never scrolled sideways,
+   but parts of the booking card were wider than the card and silently clipped).
+   ========================================================================== */
+/* The booking card's single grid cell may never grow past the card: a step shrinks to fit and its content wraps,
+   instead of the step growing wider than the screen and being cut off on the right */
+#formCard { grid-template-columns: minmax(0, 1fr); }
+#formCard > .vp-step,
+#mainRegForm > .vp-step,
+.vp-step-body { min-width: 0; }
+
+/* Calendar header (month title + today / previous / next) wraps onto two lines on a narrow phone */
+.vp .fc .fc-header-toolbar { flex-wrap: wrap; gap: 8px; }
+
+/* Images and video never wider than their box. (No height:auto here: the camera feed fills the full-screen
+   layer and the capture thumbnails are cropped boxes; both set their own height.) */
+.vp img, .vp video { max-width: 100%; }
+
+/* Stacked columns (below lg): Bootstrap's -12px row margins pushed the calendar column past the card edge */
+@media (max-width: 991.98px) {
+    #formCard .row { --bs-gutter-x: 0; }
+}
+
+/* Phones: the captured ID / selfie previews sit above the text instead of beside it, and Start camera /
+   Retake become full-width buttons stacked one above the other */
+@media (max-width: 575.98px) {
+    .vp-liveness-inline { flex-direction: column; align-items: stretch; }
+    .vp-liveness-thumbs { width: 100%; justify-content: center; }
+    .vp-liveness-thumb { width: calc(50% - 4px); max-width: 160px; height: auto; aspect-ratio: 4 / 3; }
+    .vp-liveness-actions { display: grid; grid-template-columns: 1fr; gap: 8px; }
+    .vp-liveness-actions .vp-btn { width: 100%; justify-content: center; }
+}
+
+/* Touch screens: at least 44 x 44 px for every control a thumb has to hit */
+@media (pointer: coarse), (max-width: 767.98px) {
+    .vp-footer--official .vp-footer-social a { width: 44px; height: 44px; }
+    .vp .modal .btn-close { flex-shrink: 0; box-sizing: content-box; width: 1em; height: 1em; padding: calc((44px - 1em) / 2); }
+    .vp .form-check-input { width: 1.375rem; height: 1.375rem; margin-top: 0.125rem; }
+}
+
+/* Long email addresses (e.g. a university address) have no break points: the Next Steps note (success page) and the
+   Visit Details email (Manage Booking) were wider than their card and cut off. minmax(0, 1fr) lets the text column
+   shrink, and overflow-wrap: anywhere breaks the address instead of the layout. */
+.vp-note { grid-template-columns: 24px minmax(0, 1fr); }
+.vp-details-row { grid-template-columns: 140px minmax(0, 1fr); }
+.vp-note > div, .vp-details dd { overflow-wrap: anywhere; }
+@media (max-width: 767.98px) {
+    .vp-details-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Manage Booking mini-calendar on touch screens: 44px arrows, and day buttons 44px tall (seven columns cannot be
+   44px wide on a phone, so they get the full column width with a tighter gap) */
+@media (pointer: coarse), (max-width: 767.98px) {
+    .vp-mcal { padding: 8px; }
+    .vp-mcal-nav { width: 44px; height: 44px; }
+    .vp-mcal-grid { gap: 2px; }
+    .vp-mcal-day { aspect-ratio: auto; min-height: 44px; }
+}

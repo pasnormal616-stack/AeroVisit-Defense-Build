@@ -82,6 +82,75 @@ class EmailServiceTest {
         assertThat(sent).isEmpty();
     }
 
+    // --- Staff account security code (password changes), worded for the Director, not as a booking code ---
+
+    @Test
+    void staffSecurityCodeEmailNamesTheRequestedChangeAndIsNotABookingCode() {
+        assertThat(emailService.sendStaffOtpEmail("PAFMuseumOfficial@gmail.com", "730154", 5,
+                "change the Guard account's password")).isTrue();
+
+        SentEmail email = sentEmail();
+        assertThat(email.to()).isEqualTo("PAFMuseumOfficial@gmail.com");
+        assertThat(email.fromAddress()).isEqualTo("PAFMuseumOfficial@gmail.com");
+        assertThat(email.subject()).isEqualTo("PAF Aerospace Museum - Staff Account Security Code");
+        assertThat(email.html())
+            .contains("PHILIPPINE AIR FORCE AEROSPACE MUSEUM - VISITOR MANAGEMENT SYSTEM")
+            .contains("Dear Director,")
+            .contains("to <strong>change the Guard account&#39;s password</strong>")
+            .contains(">730154</p>").contains("valid for <strong>5 minutes</strong>")
+            .contains("No change is saved until the code is entered.")
+            .contains("AeroVisit Visitor Management System<br>(automated notice)")
+            .doesNotContain("booking form").doesNotContain("Dear Visitor");
+    }
+
+    @Test
+    void staffSecurityCodeReturnsFalseWhenTheEmailFails() {
+        mail.failure = new MailAuthenticationException("535-5.7.8 Username and Password not accepted");
+        assertThat(emailService.sendStaffOtpEmail("PAFMuseumOfficial@gmail.com", "730154", 5, "change the Director's password")).isFalse();
+    }
+
+    @Test
+    void staffSecurityCodeEscapesTheRequestedChange() {
+        emailService.sendStaffOtpEmail("PAFMuseumOfficial@gmail.com", "730154", 5, ATTACK);
+        assertEscaped(sentHtml());
+    }
+
+    // --- Forgot Password reset code (public sign-in page) ---
+
+    @Test
+    void passwordResetEmailHasItsOwnWordingForTheDirector() {
+        assertThat(emailService.sendPasswordResetEmail("PAFMuseumOfficial@gmail.com", "905521", 5)).isTrue();
+
+        SentEmail email = sentEmail();
+        assertThat(email.to()).isEqualTo("PAFMuseumOfficial@gmail.com");
+        assertThat(email.fromAddress()).isEqualTo("PAFMuseumOfficial@gmail.com");
+        assertThat(email.subject()).isEqualTo("PAF Aerospace Museum - Staff Password Reset Code");
+        assertThat(email.html())
+            .contains("PHILIPPINE AIR FORCE AEROSPACE MUSEUM - VISITOR MANAGEMENT SYSTEM")
+            .contains("Dear Director,")
+            .contains("A password reset was requested for the Director's AeroVisit staff account")
+            .contains(">905521</p>").contains("valid for <strong>5 minutes</strong> and can be used once.")
+            .contains("Your current password keeps working until a new one is saved.")
+            .contains("If you did not request a password reset, ignore this email")
+            .contains("AeroVisit Visitor Management System<br>(automated notice)")
+            .doesNotContain("booking form").doesNotContain("Dear Visitor").doesNotContain("Settings page");
+        assertThat(email.plainText()).isNull();
+        assertThat(email.attachments()).isEmpty();
+    }
+
+    @Test
+    void passwordResetEmailReturnsFalseWhenTheEmailFails() {
+        mail.failure = new MailAuthenticationException("535-5.7.8 Username and Password not accepted");
+        assertThat(emailService.sendPasswordResetEmail("PAFMuseumOfficial@gmail.com", "905521", 5)).isFalse();
+    }
+
+    @Test
+    void passwordResetEmailCannotBeSentWithoutTheMailPassword() {
+        emailService.mailPassword = "";
+        assertThat(emailService.sendPasswordResetEmail("PAFMuseumOfficial@gmail.com", "905521", 5)).isFalse();
+        assertThat(sent).isEmpty();
+    }
+
     // --- Visitor text escaping ---
 
     @Test

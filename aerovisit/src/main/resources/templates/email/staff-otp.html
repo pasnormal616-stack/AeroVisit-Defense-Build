@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Staff Account Security Code</title></head>
+<!--/* Variables: otpCode, ttlMinutes, requestedChange (e.g. "change the Guard account's password"), internal */-->
+<body th:replace="~{email/layout :: layout('Staff Account Security Code', ~{::content})}">
+<div th:fragment="content">
+  <p style="margin:0 0 14px;">Dear Director,</p>
+  <p style="margin:0 0 18px;">A request was made in the AeroVisit staff portal to <strong th:text="${requestedChange}">change a staff password</strong>. To confirm it, enter the following security code on the Settings page:</p>
+  <p th:text="${otpCode}" style="margin:0 0 18px; padding:14px 0; border:1px solid #d1d5db; background-color:#f9fafb; text-align:center; font-family:Arial, Helvetica, sans-serif; font-size:28px; font-weight:bold; letter-spacing:8px; color:#002B80;">482913</p>
+  <p style="margin:0 0 14px;">This code is valid for <strong th:text="${ttlMinutes} + ' minutes'">5 minutes</strong>. No change is saved until the code is entered. Do not share this code with anyone.</p>
+  <p style="margin:0; color:#6b7280;">If you did not make this request, do not use the code: the change will not take place. Someone else may know the Director's password, so change it as soon as possible.</p>
+</div>
+</body>
+</html>

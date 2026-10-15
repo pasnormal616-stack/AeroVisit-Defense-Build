@@ -1,8 +1,5 @@
 package com.paf.aerovisit.config;
 
-import java.security.SecureRandom;
-import java.util.Base64;
-
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -10,12 +7,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.csrf.CsrfFilter;
 
@@ -59,6 +52,10 @@ public class SecurityConfig {
                 // 2. EXPLICIT LOGIN PATHS: Ensure login endpoints are open
                 .requestMatchers("/admin/login", "/guard/login").permitAll()
 
+                // 🔑 Forgot Password (ForgotPasswordController): signed out by definition. CSRF still applies to its POSTs,
+                // and RateLimitFilter limits them per IP.
+                .requestMatchers("/forgot-password", "/forgot-password/**").permitAll()
+
                 // 🖼️ Exhibits slideshow photos (Website Content) are public; they live apart from /uploads/**
                 .requestMatchers("/exhibit-photos/**").permitAll()
 
@@ -72,6 +69,9 @@ public class SecurityConfig {
                 // 3. HIGH COMMAND (DIRECTOR ONLY): Restrict sensitive operations
                 .requestMatchers("/admin/staff/**", "/admin/slots/**", "/admin/report", "/admin/export-excel", "/admin/inject-mock-data",
                                  "/admin/delete/**", "/admin/bans/**", "/admin/employee/add", "/admin/employee/edit/**", "/admin/employee/delete/**").hasRole("DIRECTOR")
+
+                // 3a. 👤 STAFF ACCOUNTS (DIRECTOR ONLY): Director password and Guard credentials, each confirmed by an emailed code
+                .requestMatchers("/admin/api/staff-accounts", "/admin/api/staff-accounts/**").hasRole("DIRECTOR")
 
                 // 3b. WEBSITE CONTENT (DIRECTOR ONLY): announcements, visitor guidelines and exhibit photos
                 .requestMatchers("/admin/content", "/admin/content/**").hasRole("DIRECTOR")
@@ -152,39 +152,11 @@ public class SecurityConfig {
         };
     }
 
-    // 👤 STAFF ACCOUNTS: one Director (the admin role: approvals, KYC review, staff, analytics) and one Guard (gate).
-    // Screens and handlers decide by ROLE, never by username.
-    // 🔒 Passwords come from the environment / .env (see application.properties), never from source code.
-    @Bean
-    public UserDetailsService userDetailsService(
-            @Value("${aerovisit.security.director-password:}") String directorPassword,
-            @Value("${aerovisit.security.guard-password:}") String guardPassword) {
-        return new InMemoryUserDetailsManager(
-            account("director", "DIRECTOR", "AEROVISIT_DIRECTOR_PASSWORD", directorPassword),
-            account("guard", "GUARD", "AEROVISIT_GUARD_PASSWORD", guardPassword));
-    }
+    // 👤 STAFF ACCOUNTS: one Director (the admin role: approvals, KYC review, staff, analytics) and one Guard (gate),
+    // stored in the database (staff_user) and loaded by CustomUserDetailsService, the app's only UserDetailsService,
+    // which Spring Security pairs with the BCrypt encoder below. Screens and handlers decide by ROLE, never by username.
 
-    private UserDetails account(String username, String role, String envVar, String configuredPassword) {
-        return User.builder()
-            .username(username)
-            .password(passwordEncoder().encode(resolvePassword(username, envVar, configuredPassword)))
-            .roles(role)
-            .build();
-    }
-
-    // No password configured → generate a strong one-time password for this run instead of a guessable default
-    private static String resolvePassword(String username, String envVar, String configured) {
-        if (configured != null && !configured.isBlank()) {
-            return configured;
-        }
-        byte[] bytes = new byte[12];
-        new SecureRandom().nextBytes(bytes);
-        String generated = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-        System.err.println("⚠️ " + envVar + " is not set. Temporary password for '" + username + "' (this run only): " + generated);
-        return generated;
-    }
-
-    // PASSWORD ENCODER (Required by Spring Security)
+    // PASSWORD ENCODER (Required by Spring Security): BCrypt, for login checks and for every stored staff password
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();

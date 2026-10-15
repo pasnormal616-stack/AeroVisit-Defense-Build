@@ -26,14 +26,16 @@
 
         <form th:action="@{/login}" method="post">
             <div class="av-field">
-                <!-- Staff accounts: "director" or "guard"; the role comes from the account itself -->
+                <!-- Staff accounts live in the database (staff_user): the Director signs in with the museum's email address,
+                     the Guard with the guard username; the role comes from the account itself -->
                 <label class="form-label-custom" for="username">Staff Username</label>
-                <input type="text" id="username" name="username" class="form-control-custom" placeholder="director or guard" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+                <input type="text" id="username" name="username" class="form-control-custom" placeholder="Director email or guard username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
             </div>
 
             <div class="av-field">
                 <label class="form-label-custom" for="password">Password</label>
                 <input type="password" id="password" name="password" class="form-control-custom" placeholder="Enter your password" autocomplete="current-password" required>
+                <div class="text-end mt-1"><a href="/forgot-password" class="small">Forgot Password?</a></div>
             </div>
 
             <button type="submit" class="btn btn-primary w-100 mt-2">Log in</button>

@@ -73,22 +73,26 @@
             <div class="av-panel h-100 mb-0">
                 <div class="av-panel-head"><span><i class="bi bi-shield-lock me-2"></i>Security</span></div>
                 <div class="av-panel-body">
-                    <form th:action="@{/admin/settings/password}" method="post" autocomplete="off">
-                        <div class="av-field">
+                    <!-- 👤 Director: own password, confirmed by a security code mailed to the museum inbox (StaffManagementController) -->
+                    <form th:if="${isDirector}" id="selfPasswordForm" class="js-staff-request" autocomplete="off">
+                        <input type="hidden" name="target" value="self">
+                        <div class="av-field mb-3">
                             <label class="form-label-custom" for="currentPassword">Current Password</label>
                             <input type="password" id="currentPassword" name="currentPassword" class="form-control-custom" autocomplete="current-password" required>
                         </div>
-                        <div class="av-field">
+                        <div class="av-field mb-3">
                             <label class="form-label-custom" for="newPassword">New Password</label>
-                            <input type="password" id="newPassword" name="newPassword" class="form-control-custom" autocomplete="new-password" minlength="8" required>
+                            <input type="password" id="newPassword" name="newPassword" class="form-control-custom" autocomplete="new-password" minlength="8" maxlength="72" required>
                         </div>
-                        <div class="av-field">
+                        <div class="av-field mb-3">
                             <label class="form-label-custom" for="confirmPassword">Confirm New Password</label>
-                            <input type="password" id="confirmPassword" name="confirmPassword" class="form-control-custom" autocomplete="new-password" minlength="8" required>
+                            <input type="password" id="confirmPassword" name="confirmPassword" class="form-control-custom" autocomplete="new-password" minlength="8" maxlength="72" required>
                         </div>
-                        <button type="submit" class="btn-primary-custom w-100"><i class="bi bi-key"></i>Change Password</button>
-                        <small class="av-hint mt-2"><i class="bi bi-info-circle me-1"></i> Staff accounts are managed by the system administrator in this build.</small>
+                        <button type="submit" class="btn-primary-custom w-100 mt-3"><i class="bi bi-envelope-check"></i>Send Security Code</button>
+                        <small class="av-hint mt-2"><i class="bi bi-info-circle me-1"></i> A code is emailed to the museum inbox. Your password changes only after you enter it.</small>
                     </form>
+                    <!-- Guard: the Director manages this account -->
+                    <p th:unless="${isDirector}" class="mb-0"><i class="bi bi-info-circle me-1"></i> Your password is managed by the Director. Ask the Director if it needs to be changed.</p>
                 </div>
             </div>
         </div>
@@ -108,10 +112,138 @@
         </div>
     </div>
 
+    <!-- 4. STAFF ACCOUNTS (DIRECTOR ONLY): the Guard account, and the security code that confirms any change -->
+    <div th:if="${isDirector}" class="row g-4 mt-4" id="staffAccounts">
+        <div class="col-lg-6">
+            <div class="av-panel h-100 mb-0">
+                <div class="av-panel-head"><span><i class="bi bi-people me-2"></i>Guard Account</span></div>
+                <div class="av-panel-body">
+                    <p class="mb-3 text-muted">Current Username: <strong class="av-mono text-dark" id="guardUsername">loading...</strong></p>
+                    <form id="guardForm" class="js-staff-request" autocomplete="off">
+                        <input type="hidden" name="target" value="guard">
+                        <div class="av-field mb-3">
+                            <label class="form-label-custom" for="guardNewUsername">New Username <span class="text-muted">(optional)</span></label>
+                            <input type="text" id="guardNewUsername" name="newUsername" class="form-control-custom" maxlength="120" autocomplete="off" autocapitalize="none" spellcheck="false">
+                        </div>
+                        <div class="av-field mb-3">
+                            <label class="form-label-custom" for="guardNewPassword">New Password <span class="text-muted">(optional)</span></label>
+                            <input type="password" id="guardNewPassword" name="newPassword" class="form-control-custom" autocomplete="new-password" minlength="8" maxlength="72">
+                        </div>
+                        <div class="av-field mb-3">
+                            <label class="form-label-custom" for="guardConfirmPassword">Confirm New Password</label>
+                            <input type="password" id="guardConfirmPassword" name="confirmPassword" class="form-control-custom" autocomplete="new-password" minlength="8" maxlength="72">
+                        </div>
+                        <button type="submit" class="btn-primary-custom w-100 mt-3"><i class="bi bi-envelope-check"></i>Send Security Code</button>
+                        <small class="av-hint mt-2"><i class="bi bi-info-circle me-1"></i> Change the username, the password, or both. Nothing changes until the emailed code is entered.</small>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="av-panel h-100 mb-0">
+                <div class="av-panel-head"><span><i class="bi bi-shield-check me-2"></i>Confirm With Security Code</span></div>
+                <div class="av-panel-body">
+                    <div id="staffMessage" class="alert d-none" role="status" aria-live="polite"></div>
+                    <p class="mb-3">Codes are sent to <strong class="av-mono" id="securityInbox">the museum inbox</strong> and are valid for 5 minutes.</p>
+                    <form id="staffCodeForm" autocomplete="off">
+                        <div class="av-field mb-3">
+                            <label class="form-label-custom" for="staffCode">6-Digit Security Code</label>
+                            <input type="text" id="staffCode" name="code" class="form-control-custom av-mono" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required disabled>
+                        </div>
+                        <button type="submit" id="staffCodeButton" class="btn-primary-custom w-100 mt-3" disabled><i class="bi bi-check2-circle"></i>Confirm Change</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
 </div>
 </main>
 
 <th:block th:replace="~{fragments/shell :: scripts}"></th:block>
+
+<!-- 👤 Staff Accounts (Director only): step 1 posts a form to /request (a code is mailed), step 2 posts the code to /confirm -->
+<script th:if="${isDirector}">
+(function () {
+    var message = document.getElementById('staffMessage');
+    var codeInput = document.getElementById('staffCode');
+    var codeButton = document.getElementById('staffCodeButton');
+
+    function show(text, ok) {
+        message.textContent = text;
+        message.className = 'alert ' + (ok ? 'alert-success' : 'alert-danger');
+    }
+
+    // Shows a spinner on a submit button while its request runs; returns a function that puts the original label back
+    function busy(button, label) {
+        var original = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>' + label;
+        return function () { button.innerHTML = original; };
+    }
+
+    function post(url, form) {
+        return fetch(url, {
+            method: 'POST',
+            headers: AeroCsrf.headers({'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded'}),
+            body: new URLSearchParams(form).toString()
+        }).then(function (response) {
+            return response.json().catch(function () { return {ok: false, message: 'Unexpected answer from the server.'}; });
+        }).catch(function () {
+            return {ok: false, message: 'The server could not be reached. Please try again.'};
+        });
+    }
+
+    function loadAccounts() {
+        fetch('/admin/api/staff-accounts', {headers: {'Accept': 'application/json'}})
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                document.getElementById('guardUsername').textContent = data.guardUsername || 'none';
+                if (data.securityInbox) document.getElementById('securityInbox').textContent = data.securityInbox;
+            })
+            .catch(function () { document.getElementById('guardUsername').textContent = 'unavailable'; });
+    }
+
+    document.querySelectorAll('.js-staff-request').forEach(function (form) {
+        form.addEventListener('submit', function (event) {
+            event.preventDefault();
+            var button = form.querySelector('button[type="submit"]');
+            var restore = busy(button, 'Sending...');
+            post('/admin/api/staff-accounts/request', new FormData(form)).then(function (data) {
+                restore();
+                button.disabled = false;
+                show(data.message || 'Something went wrong.', data.ok);
+                if (data.ok) {
+                    form.reset();
+                    codeInput.disabled = false;
+                    codeButton.disabled = false;
+                    codeInput.value = '';
+                    codeInput.focus();
+                    document.getElementById('staffAccounts').scrollIntoView({behavior: 'smooth', block: 'start'});
+                }
+            });
+        });
+    });
+
+    document.getElementById('staffCodeForm').addEventListener('submit', function (event) {
+        event.preventDefault();
+        var restore = busy(codeButton, 'Verifying...');
+        post('/admin/api/staff-accounts/confirm', new FormData(event.target)).then(function (data) {
+            restore();
+            show(data.message || 'Something went wrong.', data.ok);
+            var wrongCode = !data.ok && /not correct/.test(data.message || '');
+            codeButton.disabled = !wrongCode;   // a typo can be retried; anything else needs a new request
+            codeInput.disabled = !wrongCode;
+            if (data.ok) {
+                codeInput.value = '';
+                loadAccounts();
+            }
+        });
+    });
+
+    loadAccounts();
+})();
+</script>
 
 </body>
 </html>

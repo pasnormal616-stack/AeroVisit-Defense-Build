@@ -31,7 +31,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
@@ -429,27 +428,8 @@ public class AdminDashboardController {
         return "settings";
     }
 
-    // Change Password form on the Settings page. Staff accounts are fixed in SecurityConfig (in-memory), so this build
-    // cannot change a password: the form is checked, then the user is told plainly that nothing was changed.
-    // The submitted passwords are never stored or logged.
-    @PostMapping("/admin/settings/password")
-    public String changePassword(@RequestParam(value = "currentPassword", required = false) String currentPassword,
-                                 @RequestParam(value = "newPassword", required = false) String newPassword,
-                                 @RequestParam(value = "confirmPassword", required = false) String confirmPassword,
-                                 RedirectAttributes redirectAttributes) {
-        if (currentPassword == null || currentPassword.isEmpty() || newPassword == null || newPassword.isEmpty()
-                || confirmPassword == null || confirmPassword.isEmpty()) {
-            redirectAttributes.addFlashAttribute("error", "Please fill in all three password fields.");
-        } else if (!newPassword.equals(confirmPassword)) {
-            redirectAttributes.addFlashAttribute("error", "The new password and its confirmation do not match.");
-        } else if (newPassword.length() < 8) {
-            redirectAttributes.addFlashAttribute("error", "The new password must be at least 8 characters long.");
-        } else {
-            redirectAttributes.addFlashAttribute("notice", "Password changes are not enabled in this build, so your password has NOT been changed. "
-                    + "Staff accounts are managed by the system administrator.");
-        }
-        return "redirect:/admin/settings";
-    }
+    // Password changes: the Director's "Staff Accounts" panel on the Settings page (StaffManagementController), each
+    // confirmed by a security code mailed to the museum inbox. The Guard's password is managed by the Director.
 
     // Seats per time window on one date, counted the same way as the public calendar: slot capacity minus
     // seat-holding bookings (Visitor.holdsSeat), and zero when a Master Booking buyout or an emergency closure has the day

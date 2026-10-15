@@ -161,6 +161,35 @@ public class EmailService {
         }
     }
 
+    // 🔐 Staff account security code: confirms a password change in the staff portal (sent to the museum's own inbox).
+    // Its own wording, so the Director never receives a "booking" code. Returns false instead of throwing, like the OTP.
+    public boolean sendStaffOtpEmail(String recipientEmail, String otpCode, long ttlMinutes, String requestedChange) {
+        try {
+            sendHtml(recipientEmail, "PAF Aerospace Museum - Staff Account Security Code",
+                    render("staff-otp", vars("otpCode", otpCode, "ttlMinutes", ttlMinutes,
+                            "requestedChange", requestedChange, "internal", true)));
+            System.out.println("🔐 Staff security code sent to " + recipientEmail);
+            return true;
+        } catch (MailDeliveryException e) {
+            System.err.println("❌ Failed to send staff security code: " + e.getMessage());
+            return false;
+        }
+    }
+
+    // 🔑 Forgot Password code (public sign-in page): lets the Director set a new password without being signed in.
+    // Returns false instead of throwing, like the other codes.
+    public boolean sendPasswordResetEmail(String recipientEmail, String otpCode, long ttlMinutes) {
+        try {
+            sendHtml(recipientEmail, "PAF Aerospace Museum - Staff Password Reset Code",
+                    render("forgot-password", vars("otpCode", otpCode, "ttlMinutes", ttlMinutes, "internal", true)));
+            System.out.println("🔑 Password reset code sent to " + recipientEmail);
+            return true;
+        } catch (MailDeliveryException e) {
+            System.err.println("❌ Failed to send password reset code: " + e.getMessage());
+            return false;
+        }
+    }
+
     // --- NEW: THE INSTANT "PENDING REGISTRATION" AUTO-REPLY ---
     public void sendPendingNotification(String toEmail, String name, String date, boolean isMasterBooking) {
         sendPendingNotification(toEmail, name, date, isMasterBooking, null);

@@ -11,7 +11,6 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.model;
@@ -120,7 +119,7 @@ class SettingsAndNotificationsTest {
             .andExpect(model().attribute("accountRole", "Director"))
             .andExpect(model().attribute("serverDate", LocalDate.now()))
             .andExpect(content().string(containsString("Account Profile")))
-            .andExpect(content().string(containsString("Change Password")))
+            .andExpect(content().string(containsString("id=\"selfPasswordForm\"")))
             .andExpect(content().string(containsString("System Information")))
             .andExpect(content().string(containsString("<strong class=\"av-mono\">1.0.0</strong>")))
             .andExpect(content().string(containsString("<strong>Production</strong>")))
@@ -146,20 +145,26 @@ class SettingsAndNotificationsTest {
             .andExpect(model().attribute("accountRole", "Guard"));
     }
 
+    // Password changes moved to the Director's Staff Accounts panel (StaffManagementController, emailed security code)
     @Test
-    void changePasswordChecksTheFormAndNeverClaimsSuccess() throws Exception {
-        mvc.perform(post("/admin/settings/password").with(csrf()).param("currentPassword", "old").param("newPassword", "").param("confirmPassword", ""))
-            .andExpect(redirectedUrl("/admin/settings"))
-            .andExpect(flash().attribute("error", "Please fill in all three password fields."));
-        mvc.perform(post("/admin/settings/password").with(csrf()).param("currentPassword", "old").param("newPassword", "Longenough1").param("confirmPassword", "Different22"))
-            .andExpect(flash().attribute("error", "The new password and its confirmation do not match."));
-        mvc.perform(post("/admin/settings/password").with(csrf()).param("currentPassword", "old").param("newPassword", "short").param("confirmPassword", "short"))
-            .andExpect(flash().attribute("error", "The new password must be at least 8 characters long."));
+    void theDirectorGetsTheStaffAccountsPanelWithTheSecurityCodeStep() throws Exception {
+        String html = mvc.perform(get("/admin/settings")).andReturn().getResponse().getContentAsString();
+        assertThat(html)
+            .contains("id=\"selfPasswordForm\"", "name=\"currentPassword\"")
+            .contains("id=\"staffAccounts\"", "Guard Account", "id=\"guardForm\"", "name=\"newUsername\"")
+            .contains("Confirm With Security Code", "id=\"staffCodeForm\"", "autocomplete=\"one-time-code\"")
+            .contains("fetch('/admin/api/staff-accounts'", "'/admin/api/staff-accounts/request'", "'/admin/api/staff-accounts/confirm'")
+            .contains("AeroCsrf.headers(")
+            .doesNotContain("/admin/settings/password").doesNotContain("managed by the system administrator");
+    }
 
-        mvc.perform(post("/admin/settings/password").with(csrf()).param("currentPassword", "old").param("newPassword", "Longenough1").param("confirmPassword", "Longenough1"))
-            .andExpect(redirectedUrl("/admin/settings"))
-            .andExpect(flash().attribute("notice", containsString("your password has NOT been changed")))
-            .andExpect(flash().attributeCount(1));
+    @Test
+    @WithMockUser(username = "guard", roles = "GUARD")
+    void theGuardSeesNoPasswordFormsAndNoStaffAccountsPanel() throws Exception {
+        String html = mvc.perform(get("/admin/settings")).andReturn().getResponse().getContentAsString();
+        assertThat(html).contains("Your password is managed by the Director.")
+            .doesNotContain("selfPasswordForm").doesNotContain("staffAccounts").doesNotContain("guardForm")
+            .doesNotContain("/admin/api/staff-accounts");
     }
 
     // --- PAF Museum logo branding (admin header + login) ---
@@ -184,5 +189,8 @@ class SettingsAndNotificationsTest {
             "<span class=\"paf-logo-plate av-auth-logo\"><img class=\"paf-logo\" src=\"/images/paflogo.png\" alt=\"Philippine Air Force Museum Logo\"",
             "<section class=\"av-auth-panel\">", "action=\"/login\"");
         assertThat(html).doesNotContain("paflogowhite.jpg");
+        // The Forgot Password link sits under the password field, before the Log in button
+        assertThat(html).containsSubsequence("id=\"password\"", "<a href=\"/forgot-password\" class=\"small\">Forgot Password?</a>",
+            "type=\"submit\"");
     }
 }

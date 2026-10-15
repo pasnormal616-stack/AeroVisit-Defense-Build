@@ -79,8 +79,10 @@
             <div class="av-operator-avatar" aria-hidden="true">
                 <span th:text="${loggedInUser != null ? #strings.substring(loggedInUser,0,1).toUpperCase() : 'U'}">U</span>
             </div>
-            <div class="av-operator-text">
-                <div class="av-operator-name" th:text="${loggedInUser != null ? loggedInUser : 'User'}">User</div>
+            <!-- overflow-hidden lets this flex item shrink, so a long username (the Director's email) is cut with "..."
+                 instead of spilling out of the sidebar; the full name shows on hover -->
+            <div class="av-operator-text overflow-hidden">
+                <div class="av-operator-name text-truncate small" th:text="${loggedInUser != null ? loggedInUser : 'User'}" th:title="${loggedInUser}">User</div>
                 <div class="av-operator-sub"><span class="av-status-dot"></span>Signed in</div>
             </div>
         </div>

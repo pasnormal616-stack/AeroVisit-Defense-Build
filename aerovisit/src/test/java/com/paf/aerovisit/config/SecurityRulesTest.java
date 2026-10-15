@@ -15,24 +15,32 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestBuilders;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors;
 import org.springframework.security.test.web.servlet.response.SecurityMockMvcResultMatchers;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.paf.aerovisit.model.StaffUser;
+import com.paf.aerovisit.repository.StaffUserRepository;
+import com.paf.aerovisit.security.CustomUserDetailsService;
+
 /**
  * Checks the URL rules in SecurityConfig without a database: a stub controller answers every
  * path with 200, so a 403 or login redirect can only come from the security rules.
+ * Staff logins go through the real CustomUserDetailsService and BCrypt encoder over a mocked StaffUserRepository.
  */
 @WebMvcTest(controllers = SecurityRulesTest.StubController.class)
-@Import({SecurityConfig.class, SecurityRulesTest.StubController.class})
+@Import({SecurityConfig.class, CustomUserDetailsService.class, SecurityRulesTest.StubController.class})
 class SecurityRulesTest {
 
     @RestController
     static class StubController {
-        @RequestMapping({"/admin/**", "/uploads/**", "/check-status", "/leave-feedback", "/guard/**", "/api/booking/**"})
+        @RequestMapping({"/admin/**", "/uploads/**", "/check-status", "/leave-feedback", "/guard/**", "/api/booking/**",
+                         "/forgot-password", "/forgot-password/**"})
         String ok() {
             return "ok";
         }
@@ -52,6 +60,21 @@ class SecurityRulesTest {
     @Autowired
     private PasswordEncoder encoder;
 
+    @MockitoBean
+    private StaffUserRepository staffRepo;
+
+    // The two database accounts, as StaffUserSeeder creates them (BCrypt hashes, roles without the ROLE_ prefix)
+    @org.junit.jupiter.api.BeforeEach
+    void staffAccounts() {
+        StaffUser director = new StaffUser("PAFMuseumOfficial@gmail.com", encoder.encode("director-secret"), StaffUser.DIRECTOR);
+        StaffUser guard = new StaffUser("guard", encoder.encode("guard-secret"), StaffUser.GUARD);
+        org.mockito.Mockito.when(staffRepo.findByUsernameIgnoreCase(org.mockito.ArgumentMatchers.anyString()))
+            .thenReturn(java.util.Optional.empty());
+        org.mockito.Mockito.when(staffRepo.findByUsernameIgnoreCase("pafmuseumofficial@gmail.com")).thenReturn(java.util.Optional.of(director));
+        org.mockito.Mockito.when(staffRepo.findByUsernameIgnoreCase("PAFMuseumOfficial@gmail.com")).thenReturn(java.util.Optional.of(director));
+        org.mockito.Mockito.when(staffRepo.findByUsernameIgnoreCase("guard")).thenReturn(java.util.Optional.of(guard));
+    }
+
     @Test
     void anonymousCannotOpenUploadedIdsOrQrCodes() throws Exception {
         mvc.perform(get("/uploads/QR_5.png"))
@@ -69,6 +92,15 @@ class SecurityRulesTest {
     void anonymousCanUsePublicBookingLookupAndFeedback() throws Exception {
         mvc.perform(get("/check-status")).andExpect(status().isOk());
         mvc.perform(get("/leave-feedback")).andExpect(status().isOk());
+    }
+
+    @Test
+    void anonymousCanUseForgotPasswordButOnlyWithTheCsrfToken() throws Exception {
+        mvc.perform(get("/forgot-password")).andExpect(status().isOk());
+        mvc.perform(post("/forgot-password/request").with(csrf())).andExpect(status().isOk());
+        mvc.perform(post("/forgot-password/reset").with(csrf())).andExpect(status().isOk());
+        mvc.perform(post("/forgot-password/request")).andExpect(status().isForbidden());
+        mvc.perform(post("/forgot-password/reset")).andExpect(status().isForbidden());
     }
 
     @Test
@@ -157,43 +189,49 @@ class SecurityRulesTest {
         mvc.perform(post("/admin/api/scan").with(csrf())).andExpect(status().isOk());
     }
 
-    @Test
-    void configuredPasswordsAreUsedAndNoDefaultPasswordExists() {
-        // No passwords configured → each account gets a random one-time password, never the old defaults
-        // (built directly so a developer's local .env cannot change the result)
-        UserDetailsService unconfigured = new SecurityConfig().userDetailsService("", "");
-        for (String username : new String[] {"director", "guard"}) {
-            String hash = unconfigured.loadUserByUsername(username).getPassword();
-            assertThat(encoder.matches("guard123", hash)).isFalse();
-            assertThat(encoder.matches("admin123", hash)).isFalse();
-            assertThat(encoder.matches("", hash)).isFalse();
-        }
+    // --- Staff logins come from the database (staff_user) through CustomUserDetailsService + BCrypt ---
 
-        UserDetailsService configured = new SecurityConfig().userDetailsService("director-secret", "guard-secret");
-        assertThat(encoder.matches("director-secret", configured.loadUserByUsername("director").getPassword())).isTrue();
-        assertThat(encoder.matches("guard-secret", configured.loadUserByUsername("guard").getPassword())).isTrue();
+    @Test
+    void theDirectorLogsInWithTheMuseumEmailAndGetsTheDirectorRole() throws Exception {
+        mvc.perform(SecurityMockMvcRequestBuilders.formLogin("/login").user("PAFMuseumOfficial@gmail.com").password("director-secret"))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl("/admin"))
+            .andExpect(SecurityMockMvcResultMatchers.authenticated()
+                .withUsername("PAFMuseumOfficial@gmail.com").withRoles("DIRECTOR"));
     }
 
-    // --- Exactly two staff accounts: "director" (role DIRECTOR) and "guard" (role GUARD) ---
+    @Test
+    void theGuardLogsInAndGetsOnlyTheGuardRole() throws Exception {
+        mvc.perform(SecurityMockMvcRequestBuilders.formLogin("/login").user("guard").password("guard-secret"))
+            .andExpect(SecurityMockMvcResultMatchers.authenticated().withUsername("guard").withRoles("GUARD"));
+    }
 
     @Test
-    void thereIsOneDirectorAndOneGuardAccount() {
-        assertThat(users.loadUserByUsername("director").getAuthorities()).extracting("authority").containsExactly("ROLE_DIRECTOR");
+    void wrongPasswordsUnknownUsersAndTheOldUsernamesAreRefused() throws Exception {
+        mvc.perform(SecurityMockMvcRequestBuilders.formLogin("/login").user("guard").password("director-secret"))
+            .andExpect(redirectedUrlPattern("/login?error*"))
+            .andExpect(SecurityMockMvcResultMatchers.unauthenticated());
+        // The old in-memory accounts and demo passwords no longer exist
+        for (String[] old : new String[][] {{"director", "admin123"}, {"guard", "guard123"}, {"admin", "admin123"}}) {
+            mvc.perform(SecurityMockMvcRequestBuilders.formLogin("/login").user(old[0]).password(old[1]))
+                .andExpect(SecurityMockMvcResultMatchers.unauthenticated());
+        }
+    }
+
+    @Test
+    void theLoginLookupIgnoresCaseAndSurroundingSpaces() {
+        assertThat(users.loadUserByUsername("  pafmuseumofficial@gmail.com ").getAuthorities())
+            .extracting("authority").containsExactly("ROLE_DIRECTOR");
         assertThat(users.loadUserByUsername("guard").getAuthorities()).extracting("authority").containsExactly("ROLE_GUARD");
-        for (String removed : new String[] {"director_main", "director_backup", "guard_north", "guard_south", "admin"}) {
-            org.assertj.core.api.Assertions.assertThatThrownBy(() -> users.loadUserByUsername(removed))
-                    .isInstanceOf(org.springframework.security.core.userdetails.UsernameNotFoundException.class);
-        }
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> users.loadUserByUsername("director"))
+            .isInstanceOf(org.springframework.security.core.userdetails.UsernameNotFoundException.class);
     }
 
-    // The demo passwords from application.properties (admin123 / guard123) are what this test context loads, unless a
-    // developer's environment overrides them
     @Test
-    void theDemoPasswordsLogIn() {
-        org.junit.jupiter.api.Assumptions.assumeTrue(System.getenv("AEROVISIT_DIRECTOR_PASSWORD") == null
-                && System.getenv("AEROVISIT_GUARD_PASSWORD") == null, "staff passwords overridden by the environment");
-        assertThat(encoder.matches("admin123", users.loadUserByUsername("director").getPassword())).isTrue();
-        assertThat(encoder.matches("guard123", users.loadUserByUsername("guard").getPassword())).isTrue();
+    void storedPasswordsAreBCryptHashesNeverPlainText() {
+        String hash = users.loadUserByUsername("guard").getPassword();
+        assertThat(hash).startsWith("$2").isNotEqualTo("guard-secret");
+        assertThat(encoder).isInstanceOf(org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder.class);
+        assertThat(encoder.matches("guard-secret", hash)).isTrue();
     }
 
     // --- CSRF is on: a state-changing request without the session's token is refused, even for the Director ---

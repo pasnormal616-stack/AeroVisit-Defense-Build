@@ -46,6 +46,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
         perIp("feedback",       "*",    10,  Duration.ofMinutes(10), "/leave-feedback", "/submit-feedback"),
         perIp("booking-page",   "GET",  120, Duration.ofMinutes(1),  "/"),
         perIp("public-api",     "GET",  60,  Duration.ofMinutes(1),  "/api/zones"),
+        // Forgot Password: asking for a code mails the museum inbox, so it is tight; entering the code is looser (a typo
+        // must not use up the budget, and OtpService burns a code after 5 wrong tries anyway)
+        perIp("reset-request",  "POST", 3,   Duration.ofMinutes(15), "/forgot-password/request"),
+        perIp("reset-confirm",  "POST", 10,  Duration.ofMinutes(15), "/forgot-password/reset"),
         // Staff (per username; a signed-out request is left to Spring Security)
         perUser("gate-actions",  "POST", 60, Duration.ofMinutes(1),  "/admin/api/scan", "/admin/manual-checkin",
                 "/admin/api/confirm-check-in", "/admin/api/deny-entry", "/admin/deny-entry"),
@@ -53,7 +57,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
         perUser("bans",          "POST", 20, Duration.ofMinutes(1),  "/admin/biometric-ban/*", "/admin/bans/*/lift"),
         perUser("uploads",       "POST", 20, Duration.ofMinutes(10), "/admin/content/photos/upload"),
         perUser("exports",       "GET",  10, Duration.ofMinutes(1),  "/admin/report", "/admin/export-excel"),
-        perUser("password-form", "POST", 5,  Duration.ofMinutes(10), "/admin/settings/password"),
+        perUser("password-form", "POST", 5,  Duration.ofMinutes(10), "/admin/api/staff-accounts/request",
+                "/admin/api/staff-accounts/confirm"),
         perUser("mock-data",     "GET",  2,  Duration.ofMinutes(10), "/admin/inject-mock-data"));
 
     private final boolean enabled;

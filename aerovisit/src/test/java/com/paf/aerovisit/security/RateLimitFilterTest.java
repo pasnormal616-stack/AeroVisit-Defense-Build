@@ -90,6 +90,36 @@ class RateLimitFilterTest {
     }
 
     @Test
+    void forgotPasswordAllowsThreeCodeRequestsAndTenCodeEntriesPerFifteenMinutesPerIp() throws Exception {
+        for (int i = 0; i < 3; i++) send("POST", "/forgot-password/request", "203.0.113.60");
+        assertThat(reachedApp).isTrue();
+        MockHttpServletResponse refused = send(request("POST", "/forgot-password/request", "203.0.113.60"));
+        assertThat(refused.getStatus()).isEqualTo(429);
+        assertThat(refused.getHeader("Retry-After")).isEqualTo("900");
+
+        // Entering the code has its own, larger budget: a used-up request budget doesn't block it, and a typo costs little
+        for (int i = 0; i < 10; i++) send("POST", "/forgot-password/reset", "203.0.113.60");
+        assertThat(reachedApp).isTrue();
+        assertThat(send("POST", "/forgot-password/reset", "203.0.113.60").getStatus()).isEqualTo(429);
+
+        assertThat(send("POST", "/forgot-password/request", "203.0.113.61").getStatus()).isEqualTo(200); // another visitor
+        now += Duration.ofMinutes(15).toNanos();
+        send("POST", "/forgot-password/request", "203.0.113.60");
+        assertThat(reachedApp).isTrue();                                   // the window moved on
+    }
+
+    @Test
+    void aRefusedForgotPasswordCallGetsJsonForTheFetchScript() throws Exception {
+        for (int i = 0; i < 3; i++) send("POST", "/forgot-password/request", "203.0.113.62");
+        MockHttpServletRequest call = request("POST", "/forgot-password/request", "203.0.113.62");
+        call.addHeader("Accept", "application/json");
+        MockHttpServletResponse refused = send(call);
+        assertThat(refused.getStatus()).isEqualTo(429);
+        assertThat(new JSONObject(refused.getContentAsString()).getString("message"))
+            .isEqualTo("Too many requests. Please wait a moment and try again.");
+    }
+
+    @Test
     void theFeedbackPageAndItsSubmitShareOneBudget() throws Exception {
         for (int i = 0; i < 5; i++) send("GET", "/leave-feedback", "203.0.113.30");
         for (int i = 0; i < 5; i++) send("POST", "/submit-feedback", "203.0.113.30");
@@ -170,7 +200,7 @@ class RateLimitFilterTest {
         int n = 0;
         for (Case c : List.of(new Case("POST", "/api/booking/verify-id", 20), new Case("POST", "/admin/biometric-ban/7", 20),
                               new Case("POST", "/admin/content/photos/upload", 20), new Case("GET", "/admin/report", 10),
-                              new Case("POST", "/admin/settings/password", 5), new Case("GET", "/admin/inject-mock-data", 2))) {
+                              new Case("POST", "/admin/api/staff-accounts/request", 5), new Case("GET", "/admin/inject-mock-data", 2))) {
             signIn("director-" + n++);
             for (int i = 0; i < c.limit(); i++) send(c.method(), c.path(), "10.0.0.6");
             assertThat(reachedApp).as(c.path() + " within limit").isTrue();

@@ -11,6 +11,7 @@ import java.util.Deque;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 import org.springframework.stereotype.Service;
@@ -18,6 +19,10 @@ import org.springframework.stereotype.Service;
 // 📧 EMAIL OTP (replaces reCAPTCHA): a 6-digit code mailed to the booking email, valid for 5 minutes.
 // In memory only (one server, codes live minutes): no new table, and a restart just means "request a new code".
 // Flow: sendCode -> verify -> /save checks isVerified(email) -> consume(email) once the booking is saved.
+// 🔐 Staff password changes (StaffManagementController) use the same rules through sendStaffCode / verifyStaff /
+// consumeStaff, kept under a separate "staff:" key: a booking code can never replace or confirm a staff code, and a
+// staff code never marks the inbox as verified for a booking. The public Forgot Password page has its own "reset:" key
+// (sendResetCode / verifyReset / consumeReset).
 @Service
 public class OtpService {
 
@@ -67,21 +72,64 @@ public class OtpService {
         return email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
     }
 
-    static boolean isValidEmail(String email) {
+    public static boolean isValidEmail(String email) {
         return email.length() <= 254 && EMAIL.matcher(email).matches();
     }
 
+    static final String STAFF_KEY_PREFIX = "staff:";
+
     public SendResult sendCode(String rawEmail, String clientKey) {
         String email = normalize(rawEmail);
+        return issue(email, email, clientKey, code -> emailService.sendOtpEmail(email, code, CODE_TTL.toMinutes()));
+    }
+
+    // Staff security code for a password change, mailed with the staff wording (EmailService.sendStaffOtpEmail)
+    public SendResult sendStaffCode(String rawEmail, String clientKey, String requestedChange) {
+        String email = normalize(rawEmail);
+        return issue(STAFF_KEY_PREFIX + email, email, clientKey,
+                code -> emailService.sendStaffOtpEmail(email, code, CODE_TTL.toMinutes(), requestedChange));
+    }
+
+    public VerifyOutcome verifyStaff(String rawEmail, String rawCode) {
+        return verifyKey(STAFF_KEY_PREFIX + normalize(rawEmail), rawCode);
+    }
+
+    // One staff code = one confirmed change
+    public void consumeStaff(String rawEmail) {
+        challenges.remove(STAFF_KEY_PREFIX + normalize(rawEmail));
+    }
+
+    // 🔑 Forgot Password (public sign-in page, signed out): same rules again, under a third "reset:" key, so a reset code
+    // never mixes with a booking code or a signed-in staff code for the same inbox
+    static final String RESET_KEY_PREFIX = "reset:";
+
+    public SendResult sendResetCode(String rawEmail, String clientKey) {
+        String email = normalize(rawEmail);
+        return issue(RESET_KEY_PREFIX + email, email, clientKey,
+                code -> emailService.sendPasswordResetEmail(email, code, CODE_TTL.toMinutes()));
+    }
+
+    public VerifyOutcome verifyReset(String rawEmail, String rawCode) {
+        return verifyKey(RESET_KEY_PREFIX + normalize(rawEmail), rawCode);
+    }
+
+    // One reset code = one new password
+    public void consumeReset(String rawEmail) {
+        challenges.remove(RESET_KEY_PREFIX + normalize(rawEmail));
+    }
+
+    // key: where the code is kept (the email itself, or a "staff:" / "reset:" prefix + email); mailer sends the code,
+    // false = not delivered
+    private SendResult issue(String key, String email, String clientKey, Predicate<String> mailer) {
         if (!isValidEmail(email)) return new SendResult(SendOutcome.INVALID_EMAIL, 0);
         Instant now = clock.instant();
         sweepIfLarge(now);
 
-        Challenge previous = challenges.get(email);
+        Challenge previous = challenges.get(key);
         if (previous != null && now.isBefore(previous.sentAt.plus(RESEND_COOLDOWN))) {
             return new SendResult(SendOutcome.COOLDOWN, secondsUntil(now, previous.sentAt.plus(RESEND_COOLDOWN)));
         }
-        long emailWait = waitForSlot(sendsByEmail, email, MAX_SENDS_PER_EMAIL, now);
+        long emailWait = waitForSlot(sendsByEmail, key, MAX_SENDS_PER_EMAIL, now);
         long clientWait = waitForSlot(sendsByClient, clientKey == null ? "unknown" : clientKey, MAX_SENDS_PER_CLIENT, now);
         if (emailWait > 0 || clientWait > 0) {
             return new SendResult(SendOutcome.TOO_MANY_REQUESTS, Math.max(emailWait, clientWait));
@@ -89,27 +137,30 @@ public class OtpService {
 
         String code = String.format("%06d", random.nextInt(1_000_000));
         Challenge challenge = new Challenge(code, now);
-        challenges.put(email, challenge); // a new code replaces the old one (and any earlier verification)
-        record(sendsByEmail, email, now);
+        challenges.put(key, challenge); // a new code replaces the old one (and any earlier verification)
+        record(sendsByEmail, key, now);
         record(sendsByClient, clientKey == null ? "unknown" : clientKey, now);
 
-        if (!emailService.sendOtpEmail(email, code, CODE_TTL.toMinutes())) {
-            challenges.remove(email, challenge); // nothing reached the inbox: don't keep a code nobody has
+        if (!mailer.test(code)) {
+            challenges.remove(key, challenge); // nothing reached the inbox: don't keep a code nobody has
             return new SendResult(SendOutcome.MAIL_FAILED, 0);
         }
         return new SendResult(SendOutcome.SENT, RESEND_COOLDOWN.toSeconds());
     }
 
     public VerifyOutcome verify(String rawEmail, String rawCode) {
-        String email = normalize(rawEmail);
+        return verifyKey(normalize(rawEmail), rawCode);
+    }
+
+    private VerifyOutcome verifyKey(String key, String rawCode) {
         String code = rawCode == null ? "" : rawCode.trim();
-        Challenge challenge = challenges.get(email);
+        Challenge challenge = challenges.get(key);
         if (challenge == null) return VerifyOutcome.NO_CODE;
         synchronized (challenge) {
             Instant now = clock.instant();
             if (challenge.verifiedAt != null) return VerifyOutcome.VERIFIED; // double-click on Verify
             if (!now.isBefore(challenge.expiresAt)) {
-                challenges.remove(email, challenge);
+                challenges.remove(key, challenge);
                 return VerifyOutcome.EXPIRED;
             }
             // Constant-time compare, so response timing can't leak how many digits were right
@@ -118,7 +169,7 @@ public class OtpService {
                 return VerifyOutcome.VERIFIED;
             }
             if (++challenge.attempts >= MAX_ATTEMPTS) {
-                challenges.remove(email, challenge);
+                challenges.remove(key, challenge);
                 return VerifyOutcome.TOO_MANY_ATTEMPTS;
             }
             return VerifyOutcome.WRONG_CODE;
