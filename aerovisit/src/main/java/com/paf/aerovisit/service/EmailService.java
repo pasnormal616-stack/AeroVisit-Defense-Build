@@ -2,27 +2,26 @@ package com.paf.aerovisit.service;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.mail.MailException;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestClientException;
-import org.springframework.web.client.RestTemplate;
 import org.thymeleaf.ITemplateEngine;
 import org.thymeleaf.context.Context;
 import org.thymeleaf.spring6.SpringTemplateEngine;
 import org.thymeleaf.templatemode.TemplateMode;
 import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
 
-import java.io.IOException;
+import jakarta.mail.MessagingException;
+import jakarta.mail.internet.MimeMessage;
+
+import java.io.UnsupportedEncodingException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -33,45 +32,39 @@ import com.paf.aerovisit.model.StaffSchedule;
 @Service
 public class EmailService {
 
-    // 📮 Every email goes out through Brevo's HTTP API on port 443, because Railway blocks outgoing SMTP ports
-    static final String BREVO_URL = "https://api.brevo.com/v3/smtp/email";
+    // 📮 Every email goes out through Gmail SMTP (spring.mail.*: smtp.gmail.com:587, STARTTLS, 10 s timeouts)
     static final String SENDER_NAME = "AeroVisit System";
 
-    // ⏱️ Never let a slow or unreachable Brevo hang a booking/approval request
-    static final int CONNECT_TIMEOUT_MS = 5_000;
-    static final int READ_TIMEOUT_MS = 10_000;
+    private final JavaMailSender mailSender;
 
-    private final RestTemplate brevo;
+    // Sender of every email, set in exactly one place: aerovisit.mail.from, which follows spring.mail.username
+    // (PAFMuseumOfficial@gmail.com), so the "From" always matches the account Gmail logs in with
+    @Value("${aerovisit.mail.from:" + DEFAULT_FROM + "}")
+    String fromAddress = DEFAULT_FROM;
+    static final String DEFAULT_FROM = "PAFMuseumOfficial@gmail.com";
 
     // Public address of this site, used to build links in emails (set PUBLIC_BASE_URL when running behind ngrok or a domain)
     private final String publicBaseUrl;
 
-    // Sender of every email (aerovisit.mail.from / MAIL_USERNAME); must be a verified sender in Brevo
-    @Value("${aerovisit.mail.from:" + DEFAULT_FROM + "}")
-    String fromAddress = DEFAULT_FROM;
-    static final String DEFAULT_FROM = "pasnormal616@gmail.com";
-
-    // 🔒 Brevo API key: the BREVO_API_KEY environment variable (Railway) or the local .env file, never source code
-    @Value("${BREVO_API_KEY:}")
-    String brevoApiKey = "";
+    // 🔒 Gmail App Password (AEROVISIT_MAIL_PASSWORD via spring.mail.password). When it is missing, sending fails at once
+    // instead of trying to log in to Gmail without one.
+    @Value("${spring.mail.password:}")
+    String mailPassword = "";
 
     // Renders the HTML email templates (templates/email/*.html); Spring Boot's Thymeleaf engine in production
     private final ITemplateEngine templates;
 
     @Autowired
-    EmailService(@Value("${aerovisit.public-base-url:http://localhost:8081}") String publicBaseUrl, ITemplateEngine templates) {
-        this(createBrevoClient(), publicBaseUrl, templates);
-    }
-
-    // Tests pass a RestTemplate bound to a mock server; the email templates are read from the classpath as in production
-    EmailService(RestTemplate brevo, String publicBaseUrl) {
-        this(brevo, publicBaseUrl, standaloneTemplates());
-    }
-
-    EmailService(RestTemplate brevo, String publicBaseUrl, ITemplateEngine templates) {
-        this.brevo = brevo;
+    EmailService(JavaMailSender mailSender,
+                 @Value("${aerovisit.public-base-url:http://localhost:8081}") String publicBaseUrl, ITemplateEngine templates) {
+        this.mailSender = mailSender;
         this.publicBaseUrl = publicBaseUrl.endsWith("/") ? publicBaseUrl.substring(0, publicBaseUrl.length() - 1) : publicBaseUrl;
         this.templates = templates;
+    }
+
+    // Tests pass a recording JavaMailSender; the email templates are read from the classpath as in production
+    EmailService(JavaMailSender mailSender, String publicBaseUrl) {
+        this(mailSender, publicBaseUrl, standaloneTemplates());
     }
 
     // Same dialect as Spring Boot's engine (SpringEL), reading templates/email/*.html from the classpath
@@ -86,65 +79,47 @@ public class EmailService {
         return engine;
     }
 
-    private static RestTemplate createBrevoClient() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(CONNECT_TIMEOUT_MS);
-        factory.setReadTimeout(READ_TIMEOUT_MS);
-        return new RestTemplate(factory);
-    }
-
-    /** An email could not be delivered: missing API key, unreadable attachment, Brevo error, or network failure. */
+    /** An email could not be delivered: missing password, unreadable attachment, SMTP error, or network failure. */
     public static class MailDeliveryException extends RuntimeException {
         public MailDeliveryException(String message) { super(message); }
         public MailDeliveryException(String message, Throwable cause) { super(message, cause); }
     }
 
-    // One QR code file from uploads/, sent to Brevo as a Base64 attachment named Entry_QRCode.png
-    private static Map<String, String> qrAttachment(String qrCodeFileName) {
+    // One QR code file from uploads/, attached to the email as Entry_QRCode.png
+    private static Path qrFile(String qrCodeFileName) {
         Path qrPath = Paths.get(System.getProperty("user.dir"), "uploads", qrCodeFileName);
-        try {
-            return Map.of("name", "Entry_QRCode.png", "content", Base64.getEncoder().encodeToString(Files.readAllBytes(qrPath)));
-        } catch (IOException e) {
-            throw new MailDeliveryException("QR code attachment unreadable: " + qrPath, e);
+        if (!Files.isReadable(qrPath)) {
+            throw new MailDeliveryException("QR code attachment unreadable: " + qrPath);
         }
+        return qrPath;
     }
 
-    // Sends one email through Brevo. Exactly one of htmlContent / textContent is set; attachment may be null.
-    private void postToBrevo(String toEmail, String subject, String htmlContent, String textContent, Map<String, String> attachment) {
-        if (brevoApiKey == null || brevoApiKey.isBlank()) {
-            throw new MailDeliveryException("BREVO_API_KEY is not set");
+    // Sends one HTML email from the museum's address (fromAddress); qrPath may be null (no attachment).
+    private void send(String toEmail, String subject, String html, Path qrPath) {
+        if (mailPassword == null || mailPassword.isBlank()) {
+            throw new MailDeliveryException("AEROVISIT_MAIL_PASSWORD is not set");
         }
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("api-key", brevoApiKey);
-        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("sender", Map.of("name", SENDER_NAME, "email", fromAddress));
-        body.put("to", List.of(Map.of("email", toEmail)));
-        body.put("subject", subject);
-        if (htmlContent != null) body.put("htmlContent", htmlContent);
-        if (textContent != null) body.put("textContent", textContent);
-        if (attachment != null) body.put("attachment", List.of(attachment));
-
         try {
-            ResponseEntity<String> response = brevo.postForEntity(BREVO_URL, new HttpEntity<>(body, headers), String.class);
-            if (!response.getStatusCode().is2xxSuccessful()) { // Brevo answers 201 Created
-                throw new MailDeliveryException("Brevo answered " + response.getStatusCode());
-            }
-        } catch (RestClientException e) { // 4xx/5xx from Brevo, DNS failure, timeout
-            throw new MailDeliveryException("Brevo request failed: " + e.getMessage(), e);
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, qrPath != null, "UTF-8");
+            helper.setFrom(fromAddress, SENDER_NAME);
+            helper.setTo(toEmail);
+            helper.setSubject(subject);
+            helper.setText(html, true);
+            if (qrPath != null) helper.addAttachment("Entry_QRCode.png", new FileSystemResource(qrPath));
+            mailSender.send(message);
+        } catch (MailException | MessagingException | UnsupportedEncodingException e) { // login refused, SMTP error, timeout
+            throw new MailDeliveryException("SMTP send failed: " + e.getMessage(), e);
         }
     }
 
     private void sendHtml(String toEmail, String subject, String html) {
-        postToBrevo(toEmail, subject, html, null, null);
+        send(toEmail, subject, html, null);
     }
 
     // 🖋 Renders templates/email/<name>.html (shared layout: email/layout.html). Thymeleaf escapes every th:text value,
     // so visitor-typed text (names, feedback, notes) can never inject HTML. A template problem becomes a
-    // MailDeliveryException, so every sender's existing catch handles it exactly like a Brevo failure: a booking,
+    // MailDeliveryException, so every sender's existing catch handles it exactly like a send failure: a booking,
     // approval or check-in never fails because of an email.
     private String render(String template, Map<String, Object> variables) {
         try {
@@ -214,7 +189,7 @@ public class EmailService {
         try {
             String subject = "PAF Aerospace Museum - Visit Approved: Entry Pass Enclosed";
             String emailContent = render("approved", vars("name", visitorName, "date", date, "referenceId", referenceId));
-            postToBrevo(toEmail, subject, emailContent, null, qrAttachment(qrCodeFileName));
+            send(toEmail, subject, emailContent, qrFile(qrCodeFileName));
             System.out.println("✅ Approval email successfully sent to " + toEmail);
 
         } catch (MailDeliveryException e) {
@@ -227,7 +202,7 @@ public class EmailService {
         try {
             String subject = "PAF Aerospace Museum - Visit Reminder for Tomorrow";
             String emailContent = render("reminder", vars("name", visitorName, "date", date));
-            postToBrevo(toEmail, subject, emailContent, null, qrAttachment(qrCodeFileName));
+            send(toEmail, subject, emailContent, qrFile(qrCodeFileName));
             System.out.println("⏰ Auto-Reminder successfully sent to " + toEmail);
 
         } catch (MailDeliveryException e) {

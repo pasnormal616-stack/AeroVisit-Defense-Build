@@ -67,7 +67,7 @@ public class VisitorPortalController {
     @Autowired(required = false)
     private KycService kycService;
 
-    // Inbox for critical-feedback alerts (aerovisit.alerts.email: ALERT_EMAIL, else the system's MAIL_USERNAME)
+    // Inbox for critical-feedback alerts (aerovisit.alerts.email: ALERT_EMAIL, else the system's sending address)
     @Value("${aerovisit.alerts.email:}")
     private String alertEmail;
 

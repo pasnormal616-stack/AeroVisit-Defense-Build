@@ -7,4 +7,4 @@
 - **Pros:** Closes the gap for every upcoming old booking.
 - **Cons:** One new email template and a one-off batch send. Limit it to future visit dates so past visitors aren't emailed.
 - **Context:** Start at the legacy-booking branch of `checkStatus` in `VisitorPortalController` and at `EmailService`. `Visitor`'s `@PrePersist` only fills the ID on insert, so existing rows stay null.
-- **Depends on / blocked by:** A new Gmail app password must be set (`MAIL_PASSWORD`) before sending; the old one was exposed in commit df5aa5b and is being revoked.
+- **Depends on / blocked by:** The Gmail App Password for PAFMuseumOfficial@gmail.com must be set (`AEROVISIT_MAIL_PASSWORD`) before sending.

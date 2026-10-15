@@ -729,9 +729,9 @@ class GuardOperationControllerTest {
 
     @Test
     void failedEmailDoesNotBreakTheScanOrConfirm() throws Exception {
-        org.mockito.Mockito.doThrow(new EmailService.MailDeliveryException("Brevo down"))
+        org.mockito.Mockito.doThrow(new EmailService.MailDeliveryException("SMTP down"))
             .when(emailService).sendCheckInGuidelines(anyString(), anyString(), any());
-        org.mockito.Mockito.doThrow(new EmailService.MailDeliveryException("Brevo down"))
+        org.mockito.Mockito.doThrow(new EmailService.MailDeliveryException("SMTP down"))
             .when(emailService).sendCheckOutFeedback(anyString(), anyString(), anyString());
         Visitor v = booking("APPROVED", LocalDate.now());
         when(repo.findById(5L)).thenReturn(Optional.of(v));

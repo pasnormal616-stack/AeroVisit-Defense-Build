@@ -134,7 +134,7 @@ class GhostSlotTest {
         assertThat(master.getStatus()).isEqualTo("APPROVED");
     }
 
-    // --- Public booking form (/save). The live reCAPTCHA call runs before the slot check, so the check is tested directly. ---
+    // --- Public booking form (/save). The email OTP and selfie KYC checks run before the slot check, so the check is tested directly. ---
 
     private int bookable(LocalDate date, String window) {
         Integer capacity = ReflectionTestUtils.invokeMethod(portal, "bookableSlotCapacity", date, window);

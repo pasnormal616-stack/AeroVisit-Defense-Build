@@ -124,8 +124,8 @@ class EmergencyClosureTest {
         Visitor ok1 = visitor(3, "PENDING");
         Visitor ok2 = visitor(4, "APPROVED");
         when(repo.findByVisitDate(CLOSED)).thenReturn(List.of(smtpDown, badAddress, ok1, ok2));
-        doThrow(new EmailService.MailDeliveryException("Brevo request failed: 503 Service Unavailable")).when(emailService).sendEmergencyCancellation(eq(smtpDown), anyString());
-        doThrow(new EmailService.MailDeliveryException("Brevo request failed: 400 Bad Request (invalid email)")).when(emailService).sendEmergencyCancellation(eq(badAddress), anyString());
+        doThrow(new EmailService.MailDeliveryException("SMTP send failed: 503 Service Unavailable")).when(emailService).sendEmergencyCancellation(eq(smtpDown), anyString());
+        doThrow(new EmailService.MailDeliveryException("SMTP send failed: 400 Bad Request (invalid email)")).when(emailService).sendEmergencyCancellation(eq(badAddress), anyString());
 
         declare(CLOSED.toString(), REASON)
             .andExpect(redirectedUrl("/admin/staff"))

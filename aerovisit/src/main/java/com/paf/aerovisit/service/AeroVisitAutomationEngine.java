@@ -19,7 +19,7 @@ public class AeroVisitAutomationEngine {
     private final VisitorRepository repo;
     private final EmailService emailService;
 
-    // Inbox for the Director's daily report (aerovisit.alerts.email: ALERT_EMAIL, else the system's MAIL_USERNAME)
+    // Inbox for the Director's daily report (aerovisit.alerts.email: ALERT_EMAIL, else the system's sending address)
     @org.springframework.beans.factory.annotation.Value("${aerovisit.alerts.email:}")
     String alertEmail;
 
@@ -81,7 +81,7 @@ public class AeroVisitAutomationEngine {
 
         // 📬 The system alert inbox (aerovisit.alerts.email in application.properties), never an address in the code
         if (alertEmail == null || alertEmail.isBlank()) {
-            System.err.println("⚠️ Director Dispatch skipped: no alert inbox configured (set ALERT_EMAIL or MAIL_USERNAME).");
+            System.err.println("⚠️ Director Dispatch skipped: no alert inbox configured (set ALERT_EMAIL).");
             return;
         }
         emailService.sendDirectorDailyReport(alertEmail, today.toString(), totalExpected, totalCheckedIn, totalNoShows);

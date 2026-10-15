@@ -88,8 +88,15 @@ class AiServiceTimeoutTest {
 
     @Test
     void emailCanNeverHangARequestEither() {
-        // Brevo HTTP calls (EmailService) give up after 5 s connect / 10 s read
-        assertThat(EmailService.CONNECT_TIMEOUT_MS).isEqualTo(5_000);
-        assertThat(EmailService.READ_TIMEOUT_MS).isEqualTo(10_000);
+        // Gmail SMTP (EmailService via spring.mail.*) gives up after 10 s connect / read / write
+        java.util.Properties props = new java.util.Properties();
+        try (java.io.InputStream in = getClass().getClassLoader().getResourceAsStream("application.properties")) {
+            props.load(in);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+        assertThat(props.getProperty("spring.mail.properties.mail.smtp.connectiontimeout")).isEqualTo("10000");
+        assertThat(props.getProperty("spring.mail.properties.mail.smtp.timeout")).isEqualTo("10000");
+        assertThat(props.getProperty("spring.mail.properties.mail.smtp.writetimeout")).isEqualTo("10000");
     }
 }

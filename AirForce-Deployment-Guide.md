@@ -2,7 +2,7 @@
 
 **For:** Air Force IT Department (system administrator)
 **Applies to:** AeroVisit (Spring Boot 3.5), folder `aerovisit/`
-**Purpose:** Replace the developer's testing Gmail account with the Air Force's official SMTP server before go-live.
+**Purpose:** Set the password for the museum's official Gmail account (`PAFMuseumOfficial@gmail.com`), or move AeroVisit to the Air Force's own SMTP server, before go-live.
 
 ---
 
@@ -16,14 +16,16 @@ AeroVisit sends all of its email through **one SMTP account**:
 - staff duty rosters
 - the Director's daily report
 
-During development this account was a **testing Gmail address**. You will change it in **two files**, both inside the `aerovisit/` folder:
+The account is **`PAFMuseumOfficial@gmail.com`** on Gmail SMTP. Its settings live in **two files**, both inside the `aerovisit/` folder:
 
 | File | What goes there | Committed to Git? |
 |---|---|---|
-| `src/main/resources/application.properties` | Server settings: **host, port, encryption** | Yes (no secrets) |
-| `.env` | Secrets: **sender address and password** | **No** (already git-ignored) |
+| `src/main/resources/application.properties` | Server settings: **host, port, encryption, sender address** | Yes (no secrets) |
+| `.env` | Secret: **the account's password** (`AEROVISIT_MAIL_PASSWORD`) | **No** (already git-ignored) |
 
-The sender ("From") address of every email is the SMTP username. No Java code needs to change.
+The sender ("From") address of every email is the SMTP username (`spring.mail.username`). No Java code needs to change.
+
+To keep using the museum's Gmail account, only Section 3 (the password) is needed. Section 2 is for moving to a different mail server or account.
 
 > ⚠️ **Important: no comments at the end of a line.** Both files are read as Java `.properties` files. In that format, `#` starts a comment **only at the beginning of a line**. A line such as `spring.mail.port=587  # change me` would set the port to the text `587  # change me` and break email. In the blocks below, every `# <--- AIR FORCE IT` marker is on **its own line, directly above** the line it refers to. Keep them that way, or delete them after editing.
 
@@ -31,7 +33,7 @@ The sender ("From") address of every email is the SMTP username. No Java code ne
 
 ## 2. Server settings: `aerovisit/src/main/resources/application.properties`
 
-Open the file and find **Section 3, "Email Settings"** (around line 44). Below is that section exactly as it is today, with the `AIR FORCE IT` markers added above the lines to change. Update the host, port and fallback email lines; check the two encryption/login lines; leave the password line alone (it reads from `.env`).
+Only needed when moving to a different mail server or account. Open the file and find **Section 3, "Email Settings"** (around line 44). Below is that section as it is today, with the `AIR FORCE IT` markers added above the lines to change. Update the host, port and username lines; check the encryption/login lines; leave the password line and `aerovisit.mail.from` alone.
 
 ```properties
 # --- 3. Email Settings ---
@@ -39,28 +41,28 @@ Open the file and find **Section 3, "Email Settings"** (around line 44). Below i
 spring.mail.host=smtp.gmail.com
 # <--- AIR FORCE IT: UPDATE THIS (PORT): 587 = STARTTLS (default), 465 = SSL/TLS, 25 = internal relay; see the table below
 spring.mail.port=587
-# <--- AIR FORCE IT: UPDATE THIS (FALLBACK EMAIL): replace pasnormal616@gmail.com (the developer's testing account)
-#      with your official sender address. The real value is set in .env (MAIL_USERNAME); this is only the fallback.
-spring.mail.username=${MAIL_USERNAME:pasnormal616@gmail.com}
-# Gmail App Password (16 letters) — set MAIL_PASSWORD (or GMAIL_APP_PASSWORD), never commit it
+# <--- AIR FORCE IT: UPDATE THIS (ACCOUNT): the SMTP login; it is also the "From" address of every email
+spring.mail.username=PAFMuseumOfficial@gmail.com
 # <--- AIR FORCE IT: DO NOT TYPE THE PASSWORD HERE. Leave this line as it is; the password goes in .env (Section 3 of this guide)
-spring.mail.password=${MAIL_PASSWORD:${GMAIL_APP_PASSWORD:}}
+spring.mail.password=${AEROVISIT_MAIL_PASSWORD:}
 # <--- AIR FORCE IT: set to false ONLY if your relay accepts mail without a login (see the table below)
 spring.mail.properties.mail.smtp.auth=true
-# <--- AIR FORCE IT: CHECK THIS (ENCRYPTION): keep true for port 587; see the table below for 465
+# <--- AIR FORCE IT: CHECK THIS (ENCRYPTION): keep both true for port 587; see the table below for 465
 spring.mail.properties.mail.smtp.starttls.enable=true
-# ⏱️ Never let a slow or unreachable Gmail hang a booking/approval request: give up after 10 seconds
-# (connect, read, write; JavaMail's defaults wait forever)
+spring.mail.properties.mail.smtp.starttls.required=true
+# ⏱️ SMTP gives up after 10 s (connect, read, write; JavaMail's defaults wait forever), so email can never hang a request
 spring.mail.properties.mail.smtp.connectiontimeout=10000
 spring.mail.properties.mail.smtp.timeout=10000
 spring.mail.properties.mail.smtp.writetimeout=10000
+# "From" of every email: always the account above (Gmail rewrites or rejects a different sender)
+aerovisit.mail.from=${spring.mail.username}
 ```
 
 ### Choosing port and encryption
 
 Ask your mail team which of these your server uses, then set the lines in the block above to match:
 
-| Your server uses | `spring.mail.port` | `...smtp.starttls.enable` | Add this line | `...smtp.auth` |
+| Your server uses | `spring.mail.port` | `...smtp.starttls.enable` and `...starttls.required` | Add this line | `...smtp.auth` |
 |---|---|---|---|---|
 | **Submission with STARTTLS** (most common) | `587` | `true` | — | `true` |
 | **Implicit SSL/TLS** ("SMTPS") | `465` | `false` | `spring.mail.properties.mail.smtp.ssl.enable=true` | `true` |
@@ -77,13 +79,13 @@ Ask your mail team which of these your server uses, then set the lines in the bl
 
 This file sits in the `aerovisit/` folder, next to `pom.xml`. AeroVisit reads it when it starts. It is **git-ignored**, so passwords never end up in source control. The full list of supported names is in `aerovisit/.env.example`.
 
-Add or replace these lines. **Delete the developer's existing `MAIL_PASSWORD` line**, which is a Gmail App Password for the testing account.
+Add or replace these lines. The sender address is not set here: it is `spring.mail.username` in `application.properties` (Section 2).
 
 ```properties
-# <--- AIR FORCE IT: UPDATE THIS (EMAIL): official sender address; it is also the SMTP login and the "From" of every email
-MAIL_USERNAME=aerovisit-noreply@your-official-domain
-# <--- AIR FORCE IT: UPDATE THIS (PASSWORD): the SMTP password for the account above
-MAIL_PASSWORD=your-official-smtp-password
+# <--- AIR FORCE IT: UPDATE THIS (PASSWORD): for PAFMuseumOfficial@gmail.com, a Gmail App Password (Google Account >
+#      Security > 2-Step Verification > App passwords; 16 letters), NOT the normal account password.
+#      For a different mail server, the SMTP password of the account in spring.mail.username.
+AEROVISIT_MAIL_PASSWORD=your-app-password
 # <--- AIR FORCE IT: UPDATE THIS (DIRECTOR INBOX): where the Director's daily report and critical-feedback alerts go
 ALERT_EMAIL=director-inbox@your-official-domain
 # <--- AIR FORCE IT: UPDATE THIS (SITE ADDRESS): public address of the site, used for links inside emails (feedback, "Book a new visit")
@@ -93,7 +95,7 @@ PUBLIC_BASE_URL=https://aerovisit.your-official-domain
 **Writing values in `.env`:**
 - Write values **without quotes** and **without trailing spaces**. Both would become part of the value.
 - If the password contains a backslash `\`, write it twice (`\\`).
-- If `ALERT_EMAIL` is left out, the daily report goes to `MAIL_USERNAME` itself.
+- If `ALERT_EMAIL` is left out, the daily report and alerts go to the sending account itself (`PAFMuseumOfficial@gmail.com`).
 
 **Alternative:** you can set the same names as operating-system environment variables, for example in a Windows Service or a container definition. Environment variables take priority over `.env`.
 
@@ -119,11 +121,8 @@ PUBLIC_BASE_URL=https://aerovisit.your-official-domain
 
 ## 6. Handover checklist
 
-- [ ] `spring.mail.host` and `spring.mail.port` point to the official server (`application.properties`)
-- [ ] Encryption lines match the server (Section 2 table)
-- [ ] The `pasnormal616@gmail.com` fallback in `spring.mail.username` is replaced with the official address
-- [ ] `MAIL_USERNAME`, `MAIL_PASSWORD`, `ALERT_EMAIL` and `PUBLIC_BASE_URL` are set in `.env` (or as environment variables)
-- [ ] The developer's old `MAIL_PASSWORD` is removed from `.env`
+- [ ] Only when moving off Gmail: `spring.mail.host`, `spring.mail.port`, `spring.mail.username` and the encryption lines match the official server (Section 2)
+- [ ] `AEROVISIT_MAIL_PASSWORD`, `ALERT_EMAIL` and `PUBLIC_BASE_URL` are set in `.env` (or as environment variables)
 - [ ] The application was restarted from the `aerovisit/` folder
 - [ ] A verification code was received from the official address (Section 5)
-- [ ] **Developer:** revoke the testing Gmail App Password at https://myaccount.google.com/apppasswords after handover
+- [ ] **Developer:** revoke the old testing-account Gmail App Password at https://myaccount.google.com/apppasswords (no longer used by AeroVisit)

@@ -111,24 +111,32 @@ from kyc import router as kyc_router
 app.include_router(kyc_router, dependencies=[global_limit(KYC_PER_MINUTE)])
 
 # --- INITIALIZE THE AI REVIEW READER ---
-# 🔥 FIXED: Added local_files_only=True so it boots instantly from your RAM/Cache without downloading
-print("Loading AI NLP Engine from Local Cache... (This should be instant)")
-try:
-    NLP_MODEL = "cardiffnlp/twitter-xlm-roberta-base-sentiment"  # XLM-R: reads Tagalog/Taglish (needs: pip install sentencepiece)
-    NLP_LOCAL_ONLY = os.getenv("HF_LOCAL_ONLY", "1") == "1"       # Railway: HF_LOCAL_ONLY=0 so it can download once
+NLP_MODEL = "cardiffnlp/twitter-xlm-roberta-base-sentiment"  # XLM-R: reads Tagalog/Taglish (needs sentencepiece + protobuf)
+sentiment_analyzer = None
+
+def load_sentiment_analyzer(local_only):
     # fix_mistral_regex=False on purpose: transformers' Mistral check misfires on this XLM-R model (its config.json has
     # no transformers_version). False only silences that warning; True would insert Mistral's split rule and change
     # the tokens (a stray "▁" before every comma), which lowered the sentiment scores on Taglish reviews in testing.
-    nlp_tokenizer = AutoTokenizer.from_pretrained(NLP_MODEL, local_files_only=NLP_LOCAL_ONLY, fix_mistral_regex=False)
-    sentiment_analyzer = pipeline(
-        "sentiment-analysis",
-        model=NLP_MODEL,
-        tokenizer=nlp_tokenizer,
-        local_files_only=NLP_LOCAL_ONLY
-    )
-    print("✅ AI NLP Engine Ready!")
+    # force_download on the online attempt: a plain download would trust the broken file already in the cache.
+    tokenizer = AutoTokenizer.from_pretrained(NLP_MODEL, local_files_only=local_only,
+                                              force_download=not local_only, fix_mistral_regex=False)
+    return pipeline("sentiment-analysis", model=NLP_MODEL, tokenizer=tokenizer, local_files_only=local_only,
+                    model_kwargs={} if local_only else {"force_download": True})
+
+# flush=True: if the container is killed mid-load (out of memory), the last step still reaches the Railway log.
+print("🧠 [NLP] Step 1/2: loading sentiment model from local cache...", flush=True)
+try:
+    sentiment_analyzer = load_sentiment_analyzer(local_only=True)
+    print("✅ [NLP] Loaded from local cache.", flush=True)
 except Exception as e:
-    print(f"🔴 Error loading local model cache: {e}. Try running once without local_files_only=True to download it.")
+    print(f"⚠️ [NLP] Local cache failed ({type(e).__name__}: {e}).", flush=True)
+    print("🌐 [NLP] Step 2/2: re-downloading from Hugging Face (ignores HF_LOCAL_ONLY)...", flush=True)
+    try:
+        sentiment_analyzer = load_sentiment_analyzer(local_only=False)
+        print("✅ [NLP] Downloaded and loaded from Hugging Face.", flush=True)
+    except Exception as e2:
+        print(f"🔴 [NLP] Download failed too ({type(e2).__name__}: {e2}). /analyze will return errors.", flush=True)
 
 # --- FALLBACK BASELINE DATA & ML ENGINE ---
 X_train = [[1,1],[2,1],[3,2],[4,1],[5,3],[6,1],[7,1],[1,3],[3,4],[6,3],[7,4],[6,1],[7,2],[5,1]]

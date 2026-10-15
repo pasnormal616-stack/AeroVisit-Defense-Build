@@ -418,7 +418,7 @@ class ShiftTemplateRosterTest {
             employee("Sgt. Reyes", "Gate Guard", "reyes@example.com", null, null),
             employee("Sgt. Legacy", "Admin", null, null, null),
             employee("Sgt. Cruz", "Admin", "cruz@example.com", null, null)));
-        doThrow(new EmailService.MailDeliveryException("Brevo request failed: 503 Service Unavailable")).when(emailService).sendStaffScheduleEmail(eq("cruz@example.com"), anyString(), anyList());
+        doThrow(new EmailService.MailDeliveryException("SMTP send failed: 503 Service Unavailable")).when(emailService).sendStaffScheduleEmail(eq("cruz@example.com"), anyString(), anyList());
 
         mvc.perform(post("/admin/staff/publish-roster").with(csrf()))
             .andExpect(flash().attribute("success", "📨 Roster published and 1 email sent!"));
