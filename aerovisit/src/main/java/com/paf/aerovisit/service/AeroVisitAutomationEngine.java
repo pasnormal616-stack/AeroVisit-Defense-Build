@@ -8,10 +8,23 @@ import org.springframework.stereotype.Service;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.IntSummaryStatistics;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class AeroVisitAutomationEngine {
@@ -73,19 +86,74 @@ public class AeroVisitAutomationEngine {
         System.out.println("📊 [AUTOMATION] Compiling Daily Security Dispatch...");
         LocalDate today = reportDay(now);
         
-        long totalExpected = repo.findByVisitDate(today).size();
+        // Expected = the day's approved demand (same four statuses as the Analytics funnel); the rows below are parts of it
+        List<Visitor> expected = repo.findByVisitDate(today).stream()
+            .filter(v -> v.getStatus() != null && EXPECTED_STATUSES.contains(v.getStatus())).toList();
         // Everyone who entered: still inside, or already checked out (by the guard or the 11:59 PM sweep)
-        long totalCheckedIn = repo.countByVisitDateAndStatus(today, "CHECKED-IN") + repo.countByVisitDateAndStatus(today, "CHECKED-OUT");
-        long totalRejected = repo.countByVisitDateAndStatus(today, "REJECTED");
-        long totalNoShows = totalExpected - totalCheckedIn - totalRejected;
+        List<Visitor> checkedIn = expected.stream().filter(v -> "CHECKED-IN".equals(v.getStatus()) || "CHECKED-OUT".equals(v.getStatus())).toList();
+        List<Visitor> noShows = expected.stream().filter(v -> "NO_SHOW".equals(v.getStatus())).toList();
+        // Still APPROVED at midnight: a label the sweep can't read (e.g. a Master Booking) is resolved the next night
+        long stillOpen = expected.stream().filter(v -> "APPROVED".equals(v.getStatus())).count();
+        LocalDate nextDay = today.plusDays(1);
+        long pendingNextDay = repo.findByVisitDate(nextDay).stream().filter(Visitor::awaitsApproval).count();
 
         // 📬 The system alert inbox (aerovisit.alerts.email in application.properties), never an address in the code
         if (alertEmail == null || alertEmail.isBlank()) {
             System.err.println("⚠️ Director Dispatch skipped: no alert inbox configured (set ALERT_EMAIL).");
             return;
         }
-        emailService.sendDirectorDailyReport(alertEmail, today.toString(), totalExpected, totalCheckedIn, totalNoShows);
+        emailService.sendDirectorDailyReport(alertEmail, new EmailService.DailyReport(today.toString(),
+            expected.size(), guests(expected), checkedIn.size(), guests(checkedIn), noShows.size(), guests(noShows),
+            stillOpen, repo.countTotalNoShows(), nextDay.toString(), pendingNextDay, insights(checkedIn)));
         System.out.println("✅ Director Dispatch successfully sent to: " + alertEmail);
+    }
+
+    static final Set<String> EXPECTED_STATUSES = Set.of("APPROVED", "CHECKED-IN", "CHECKED-OUT", "NO_SHOW");
+
+    private static long guests(List<Visitor> visitors) {
+        return visitors.stream().mapToLong(v -> Math.max(1, v.getGroupSize())).sum();
+    }
+
+    private static final DateTimeFormatter HOUR = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH);
+
+    // Visit insights from data the Visitor row already holds (no schema change). Actual attendees only (CHECKED-IN / CHECKED-OUT).
+    static EmailService.Insights insights(List<Visitor> checkedIn) {
+        // Peak arrival hour: guests per check-in hour (same weighting as the Analytics heatmap); a tie goes to the earlier hour
+        Map<Integer, Long> guestsByHour = checkedIn.stream().filter(v -> v.getCheckInTime() != null)
+            .collect(Collectors.groupingBy(v -> v.getCheckInTime().getHour(), TreeMap::new,
+                     Collectors.summingLong(v -> Math.max(1, v.getGroupSize()))));
+        Map.Entry<Integer, Long> peak = guestsByHour.entrySet().stream()
+            .max(Map.Entry.<Integer, Long>comparingByValue().thenComparing(Map.Entry.comparingByKey(Comparator.reverseOrder())))
+            .orElse(null);
+        String peakHour = peak == null ? null
+            : HOUR.format(LocalTime.of(peak.getKey(), 0)) + " - " + HOUR.format(LocalTime.of(peak.getKey(), 0).plusHours(1));
+
+        // Visit duration: guard check-outs only. A sweep check-out is stamped with the sweep's time (5:30 PM or 11:59 PM),
+        // not the visitor's real exit, and autoCheckOut marks it "(Auto-Sweep)" in checkedInBy
+        long[] minutes = checkedIn.stream()
+            .filter(v -> v.getCheckInTime() != null && v.getCheckOutTime() != null && !v.getCheckOutTime().isBefore(v.getCheckInTime()))
+            .filter(v -> v.getCheckedInBy() == null || !v.getCheckedInBy().contains("(Auto-Sweep)"))
+            .mapToLong(v -> Duration.between(v.getCheckInTime(), v.getCheckOutTime()).toMinutes()).toArray();
+        Long avgMinutes = minutes.length == 0 ? null : Math.round(Arrays.stream(minutes).average().getAsDouble());
+
+        // Satisfaction: ratings this day's visitors have sent so far (a rating has no timestamp of its own)
+        IntSummaryStatistics ratings = checkedIn.stream().map(Visitor::getRating).filter(Objects::nonNull)
+            .mapToInt(Integer::intValue).summaryStatistics();
+        Double avgRating = ratings.getCount() == 0 ? null : Math.round(ratings.getAverage() * 10.0) / 10.0;
+
+        // Demographics describe the lead visitor of each booking (companions are stored as names only)
+        return new EmailService.Insights(peakHour, peak == null ? 0 : peak.getValue(), avgMinutes, minutes.length,
+            countBy(checkedIn, Visitor::getVisitorType), countBy(checkedIn, Visitor::getSex), avgRating, ratings.getCount());
+    }
+
+    // Lead visitors per value, largest first (ties alphabetical); a blank value is "Not stated"
+    private static Map<String, Long> countBy(List<Visitor> visitors, Function<Visitor, String> field) {
+        return visitors.stream()
+            .collect(Collectors.groupingBy(v -> { String s = field.apply(v); return s == null || s.isBlank() ? "Not stated" : s.trim(); },
+                     Collectors.counting()))
+            .entrySet().stream()
+            .sorted(Map.Entry.<String, Long>comparingByValue().reversed().thenComparing(Map.Entry.comparingByKey()))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> a, LinkedHashMap::new));
     }
 
     // =========================================================================

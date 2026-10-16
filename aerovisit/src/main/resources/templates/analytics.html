@@ -130,7 +130,7 @@
 
     <!-- DIRECTOR CHARTS ROW -->
     <div class="row g-4 mb-4" th:if="${isDirector}">
-        <div class="col-md-5">
+        <div class="col-md-12 col-xl-5">
             <div class="av-panel h-100 mb-0">
                 <div class="av-panel-head">
                     <span>AI Traffic Forecast (37-Day)</span>
@@ -146,7 +146,7 @@
             </div>
         </div>
 
-        <div class="col-md-4">
+        <div class="col-md-6 col-xl-4">
             <div class="av-panel h-100 mb-0">
                 <div class="av-panel-head">
                     <span>Peak Arrival Heatmap</span>
@@ -162,7 +162,7 @@
             </div>
         </div>
 
-        <div class="col-md-3">
+        <div class="col-md-6 col-xl-3">
             <div class="av-panel h-100 mb-0">
                 <div class="av-panel-head"><span>Attrition Funnel</span></div>
                 <div class="av-chart-box">
@@ -588,16 +588,17 @@
         var totalReg = /*[[${totalRegistered}]]*/ 0;
         var totalApp = /*[[${totalApproved}]]*/ 0;
         var totalCheck = /*[[${totalCheckedIn}]]*/ 0;
+        var totalNoShow = /*[[${totalNoShows}]]*/ 0;
 
         var ctxFunnel = document.getElementById('attritionFunnel').getContext('2d');
         new Chart(ctxFunnel, {
             type: 'bar',
             data: {
-                labels: ['1. Portal Registered', '2. Admin Approved', '3. Base Checked-In'],
+                labels: ['1. Portal Registered', '2. Admin Approved', '3. Base Checked-In', '4. No-Show'],
                 datasets: [{
-                    data: [totalReg, totalApp, totalCheck],
-                    backgroundColor: [C('--chart-muted'), C('--chart-2'), C('--chart-1')],
-                    avColors: { backgroundColor: ['--chart-muted', '--chart-2', '--chart-1'] },
+                    data: [totalReg, totalApp, totalCheck, totalNoShow],
+                    backgroundColor: [C('--chart-muted'), C('--chart-2'), C('--chart-1'), C('--chart-3')],
+                    avColors: { backgroundColor: ['--chart-muted', '--chart-2', '--chart-1', '--chart-3'] },
                     borderRadius: 0,
                     barPercentage: 0.5
                 }]
@@ -614,7 +615,11 @@
                     legend: { display: false },
                     tooltip: {
                         callbacks: {
-                            label: function(context) { return " " + context.raw + " Civilians"; }
+                            label: function(context) {
+                                var s = " " + context.raw + " Civilians";
+                                if (context.dataIndex === 3 && totalApp > 0) s += " (" + Math.round(context.raw / totalApp * 100) + "% of approved)";
+                                return s;
+                            }
                         }
                     }
                 }

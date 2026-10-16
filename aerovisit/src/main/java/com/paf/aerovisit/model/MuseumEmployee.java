@@ -31,6 +31,11 @@ public class MuseumEmployee {
     // "Morning", "Afternoon" or "Full Day"
     private String defaultShift;
 
+    // 👻 GHOST RULE: a deactivated officer stays in the directory (history keeps their name) but is never scheduled again.
+    // ddl-auto=update adds the column with this default, so every existing officer starts active.
+    @Column(nullable = false, columnDefinition = "boolean default true")
+    private boolean active = true;
+
     public MuseumEmployee() {}
 
     public Long getId() { return id; }
@@ -52,6 +57,8 @@ public class MuseumEmployee {
     public void setWorkingDays(String workingDays) { this.workingDays = workingDays; }
 
     public String getDefaultShift() { return defaultShift; }
+    public boolean isActive() { return active; }
+    public void setActive(boolean active) { this.active = active; }
     public void setDefaultShift(String defaultShift) { this.defaultShift = defaultShift; }
 
     // True when this officer's shift template includes the given day of the week

@@ -239,12 +239,29 @@ public class EmailService {
         }
     }
 
+    // Figures for the Director's end-of-day email. Counts are bookings; *Guests sum groupSize (a Master Booking is one booking, many guests).
+    public record DailyReport(String date, long expected, long expectedGuests, long checkedIn, long checkedInGuests,
+                              long noShows, long noShowGuests, long stillOpen, long noShowsAllTime,
+                              String nextDate, long pendingNextDay, Insights insights) {
+        public Long checkInRate() { return expected > 0 ? Math.round(checkedIn * 100.0 / expected) : null; }
+    }
+
+    // Visit insights from data each Visitor row already holds. Null / empty = nothing to report that day.
+    public record Insights(String peakHour, long peakHourGuests, Long avgVisitMinutes, long timedVisits,
+                           Map<String, Long> visitorTypes, Map<String, Long> sexes, Double avgRating, long ratingCount) {
+        public static final Insights NONE = new Insights(null, 0, null, 0, Map.of(), Map.of(), null, 0);
+
+        public String avgVisit() {
+            if (avgVisitMinutes == null) return null;
+            return (avgVisitMinutes >= 60 ? avgVisitMinutes / 60 + " h " : "") + avgVisitMinutes % 60 + " min";
+        }
+    }
+
     // --- 3. THE END-OF-DAY DIRECTOR REPORT ---
-    public void sendDirectorDailyReport(String directorEmail, String date, long expected, long checkedIn, long noShows) {
+    public void sendDirectorDailyReport(String directorEmail, DailyReport report) {
         try {
-            String subject = "PAF Aerospace Museum - Daily Visitor Summary - " + date;
-            String emailContent = render("daily-report", vars("date", date, "expected", expected, "checkedIn", checkedIn,
-                    "noShows", noShows, "internal", true));
+            String subject = "PAF Aerospace Museum - Daily Visitor Summary - " + report.date();
+            String emailContent = render("daily-report", vars("r", report, "date", report.date(), "internal", true));
             sendHtml(directorEmail, subject, emailContent);
             System.out.println("📊 Daily Director Report successfully dispatched!");
 

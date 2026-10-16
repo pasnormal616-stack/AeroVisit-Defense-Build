@@ -314,7 +314,7 @@
                                     <select id="staffName" class="form-control-custom" name="staffName" required>
                                         <option value="⚠️ OPEN SHIFT (AI)">-- Leave Unassigned (Open Shift) --</option>
                                         <optgroup label="Official Staff Roster">
-                                            <option th:each="emp : ${employees}" th:value="${emp.name}" th:text="${emp.name} + ' (' + ${emp.role} + ')'"></option>
+                                            <option th:each="emp : ${activeEmployees}" th:value="${emp.name}" th:text="${emp.name} + ' (' + ${emp.role} + ')'"></option>
                                         </optgroup>
                                     </select>
                                 </div>
@@ -492,7 +492,8 @@
                             <tbody>
                                 <tr th:each="emp : ${employees}">
                                     <td class="ps-4">
-                                        <div class="av-cell-strong" th:text="${emp.name}"></div>
+                                        <div class="av-cell-strong"><span th:text="${emp.name}"></span>
+                                            <span th:unless="${emp.active}" class="av-badge av-badge--warn ms-1">Inactive</span></div>
                                         <div class="av-cell-sub" th:text="${#strings.isEmpty(emp.email) ? 'No email on file' : emp.email}"></div>
                                     </td>
                                     <td><span class="av-badge av-badge--info" th:text="${emp.role}"></span></td>
@@ -507,6 +508,13 @@
                                         <button type="button" class="btn btn-sm btn-light text-primary p-1" title="Edit" aria-label="Edit employee" onclick="openEmployeeModal(this)"
                                                 th:data-id="${emp.id}" th:data-name="${emp.name}" th:data-role="${emp.role}" th:data-email="${emp.email}"
                                                 th:data-days="${emp.workingDays}" th:data-shift="${emp.defaultShift}"><i class="bi bi-pencil"></i></button>
+                                        <form th:if="${emp.active}" th:action="@{/admin/employee/deactivate/{id}(id=${emp.id})}" method="post" class="d-inline m-0"
+                                              onsubmit="return confirm('Deactivate this officer? Their upcoming shifts become open shifts.')">
+                                            <button type="submit" class="btn btn-sm btn-light text-warning p-1" title="Deactivate" aria-label="Deactivate employee"><i class="bi bi-person-slash"></i></button>
+                                        </form>
+                                        <form th:unless="${emp.active}" th:action="@{/admin/employee/reactivate/{id}(id=${emp.id})}" method="post" class="d-inline m-0">
+                                            <button type="submit" class="btn btn-sm btn-light text-success p-1" title="Reactivate" aria-label="Reactivate employee"><i class="bi bi-person-check"></i></button>
+                                        </form>
                                         <form th:action="@{/admin/employee/delete/{id}(id=${emp.id})}" method="post" class="d-inline m-0">
                                             <button type="submit" class="btn btn-sm btn-light text-danger p-1" title="Remove" aria-label="Remove employee"><i class="bi bi-person-dash"></i></button>
                                         </form>
@@ -514,6 +522,69 @@
                                 </tr>
                                 <tr th:if="${#lists.isEmpty(employees)}">
                                     <td colspan="4" class="av-empty">No official employees added yet. Add them on the left.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 🏖️ STAFF LEAVE (Vacation Rule): an officer on approved leave is never scheduled in that period -->
+            <div class="row g-4 mt-1">
+                <div class="col-lg-4">
+                    <div class="av-panel h-100 mb-0">
+                        <div class="av-panel-head"><span><i class="bi bi-airplane me-2"></i>Record Staff Leave</span></div>
+                        <div class="av-panel-body">
+                            <form action="/admin/staff/leave" method="post" id="staffLeaveForm">
+                                <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="leaveStaffName">Officer</label>
+                                    <select id="leaveStaffName" name="staffName" class="form-control-custom" required>
+                                        <option value="" disabled selected>Choose an officer...</option>
+                                        <option th:each="emp : ${activeEmployees}" th:value="${emp.name}" th:text="${emp.name} + ' (' + ${emp.role} + ')'"></option>
+                                    </select>
+                                </div>
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="leaveStartDate">From</label>
+                                    <input type="date" id="leaveStartDate" name="startDate" class="form-control-custom" required>
+                                </div>
+                                <div class="av-field">
+                                    <label class="form-label-custom" for="leaveEndDate">To (inclusive)</label>
+                                    <input type="date" id="leaveEndDate" name="endDate" class="form-control-custom" required>
+                                    <small class="av-hint"><i class="bi bi-info-circle me-1"></i> Shifts this officer already holds in the period become open shifts.</small>
+                                </div>
+                                <button type="submit" class="btn-primary-custom w-100"><i class="bi bi-calendar-x"></i>Record Leave</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-lg-8">
+                    <div class="av-panel h-100 mb-0">
+                        <div class="av-panel-head"><span>Upcoming Staff Leave</span></div>
+                        <table class="table table-custom mb-0" id="staffLeaveTable">
+                            <thead>
+                                <tr>
+                                    <th class="ps-4">Officer</th>
+                                    <th>From</th>
+                                    <th>To</th>
+                                    <th class="text-end pe-4">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr th:each="leave : ${upcomingLeaves}">
+                                    <td class="ps-4"><div class="av-cell-strong" th:text="${leave.staffName}"></div></td>
+                                    <td class="av-mono" th:text="${leave.startDate}"></td>
+                                    <td class="av-mono" th:text="${leave.endDate}"></td>
+                                    <td class="text-end pe-4">
+                                        <form th:action="@{/admin/staff/leave/delete/{id}(id=${leave.id})}" method="post" class="d-inline m-0"
+                                              onsubmit="return confirm('Cancel this leave? Shifts opened for it stay open.')">
+                                            <button type="submit" class="btn btn-sm btn-light text-danger p-1" title="Cancel leave" aria-label="Cancel leave"><i class="bi bi-x-circle"></i></button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                <tr th:if="${#lists.isEmpty(upcomingLeaves)}">
+                                    <td colspan="4" class="av-empty">No upcoming leave recorded.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -652,7 +723,7 @@
                         <select id="editStaffName" name="staffName" class="form-control-custom" required>
                             <option value="⚠️ OPEN SHIFT (AI)">-- Leave Unassigned (Open Shift) --</option>
                             <optgroup label="Official Staff Roster">
-                                <option th:each="emp : ${employees}" th:value="${emp.name}" th:text="${emp.name} + ' (' + ${emp.role} + ')'"></option>
+                                <option th:each="emp : ${activeEmployees}" th:value="${emp.name}" th:text="${emp.name} + ' (' + ${emp.role} + ')'"></option>
                             </optgroup>
                         </select>
                         <small class="av-hint">Pick an officer from the staff roster to fill an open AI shift.</small>

@@ -67,6 +67,15 @@ class TimeWindowControllerTest {
         verify(windowRepo, never()).save(any());
     }
 
+    // Deliberate constraint: shifts use time windows, and a window never crosses midnight (the gate check, the 11:59 PM
+    // no-show sweep and auto check-out all assume a same-day window)
+    @Test
+    void anOvernightWindowIsRefusedSoNoShiftCanCrossMidnight() throws Exception {
+        mvc.perform(post("/admin/slots/windows/add").with(csrf()).param("name", "Night Watch").param("startTime", "22:00").param("endTime", "06:00"))
+            .andExpect(flash().attribute("error", "The end time must be later than the start time."));
+        verify(windowRepo, never()).save(any());
+    }
+
     @Test
     void duplicateWindowIsRefused() throws Exception {
         when(windowRepo.findAll()).thenReturn(List.of(window(1L, "Morning", 8, 12)));

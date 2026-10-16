@@ -68,7 +68,8 @@ public class SecurityConfig {
 
                 // 3. HIGH COMMAND (DIRECTOR ONLY): Restrict sensitive operations
                 .requestMatchers("/admin/staff/**", "/admin/slots/**", "/admin/report", "/admin/export-excel", "/admin/inject-mock-data",
-                                 "/admin/delete/**", "/admin/bans/**", "/admin/employee/add", "/admin/employee/edit/**", "/admin/employee/delete/**").hasRole("DIRECTOR")
+                                 "/admin/delete/**", "/admin/bans/**", "/admin/employee/add", "/admin/employee/edit/**", "/admin/employee/delete/**",
+                                 "/admin/employee/deactivate/**", "/admin/employee/reactivate/**").hasRole("DIRECTOR")
 
                 // 3a. 👤 STAFF ACCOUNTS (DIRECTOR ONLY): Director password and Guard credentials, each confirmed by an emailed code
                 .requestMatchers("/admin/api/staff-accounts", "/admin/api/staff-accounts/**").hasRole("DIRECTOR")

@@ -48,7 +48,7 @@ class AnalyticsPageTest {
     };
     private static final String[] ANALYTICS_MODEL = {
         "chartDates", "chartHistorical", "chartPredictive", "peakHourLabels", "peakHourData", "walkIns", "preBooked",
-        "totalPrediction", "facilityProtocol", "totalRegistered", "totalApproved", "totalCheckedIn", "averageRating", "reviewCount"
+        "totalPrediction", "facilityProtocol", "totalRegistered", "totalApproved", "totalCheckedIn", "totalNoShows", "averageRating", "reviewCount"
     };
 
     @Autowired
@@ -87,6 +87,20 @@ class AnalyticsPageTest {
         for (String key : ANALYTICS_MODEL) {
             result.andExpect(model().attributeExists(key));
         }
+    }
+
+    @Test
+    void attritionFunnelShowsNoShowsAsAFourthStage() throws Exception {
+        when(repo.countTotalApproved()).thenReturn(10L);
+        when(repo.countTotalCheckedIn()).thenReturn(6L);
+        when(repo.countTotalNoShows()).thenReturn(4L);
+
+        mvc.perform(get("/admin/analytics"))
+            .andExpect(status().isOk())
+            .andExpect(model().attribute("totalNoShows", 4L))
+            .andExpect(content().string(containsString("var totalNoShow = 4;")))
+            .andExpect(content().string(containsString("'4. No-Show'")))
+            .andExpect(content().string(containsString("'--chart-3'")));
     }
 
     @Test

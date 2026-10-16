@@ -313,6 +313,7 @@ public class AdminDashboardController {
         model.addAttribute("totalRegistered", repo.countTotalRegistered());
         model.addAttribute("totalApproved", repo.countTotalApproved());
         model.addAttribute("totalCheckedIn", repo.countTotalCheckedIn());
+        model.addAttribute("totalNoShows", repo.countTotalNoShows());
 
         List<Visitor> allVisitors = repo.findAll();
         double totalStars = 0;
@@ -633,6 +634,7 @@ public class AdminDashboardController {
         long totalReg = repo.countTotalRegistered();
         long totalApp = repo.countTotalApproved();
         long totalCheck = repo.countTotalCheckedIn();
+        long totalNoShow = repo.countTotalNoShows();
 
         Document document = new Document(PageSize.A4);
         PdfWriter.getInstance(document, response.getOutputStream());
@@ -686,6 +688,8 @@ public class AdminDashboardController {
         rightMetrics.addCell(new Phrase(String.valueOf(totalApp), fontMetricValue));
         rightMetrics.addCell(new Phrase("Total Base Check-Ins:", fontMetricLabel));
         rightMetrics.addCell(new Phrase(String.valueOf(totalCheck), fontMetricValue));
+        rightMetrics.addCell(new Phrase("Total No-Shows:", fontMetricLabel));
+        rightMetrics.addCell(new Phrase(String.valueOf(totalNoShow), fontMetricValue));
         
         PdfPCell leftContainer = new PdfPCell(leftMetrics); leftContainer.setBorder(0);
         PdfPCell rightContainer = new PdfPCell(rightMetrics); rightContainer.setBorder(0);

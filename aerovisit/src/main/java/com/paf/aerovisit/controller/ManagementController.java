@@ -4,8 +4,10 @@ import com.paf.aerovisit.model.BookingSlot;
 import com.paf.aerovisit.model.StaffSchedule;
 import com.paf.aerovisit.model.MuseumEmployee;
 import com.paf.aerovisit.model.MuseumClosure;
+import com.paf.aerovisit.model.StaffLeave;
 import com.paf.aerovisit.model.Visitor;
 import com.paf.aerovisit.repository.BookingSlotRepository;
+import com.paf.aerovisit.repository.StaffLeaveRepository;
 import com.paf.aerovisit.repository.StaffScheduleRepository;
 import com.paf.aerovisit.repository.MuseumEmployeeRepository;
 import com.paf.aerovisit.repository.MuseumClosureRepository;
@@ -14,6 +16,7 @@ import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
@@ -24,6 +27,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -40,6 +44,10 @@ public class ManagementController {
     private final PredictiveAdvisorService aiService;
     private final TimeWindowConfigRepository timeWindowRepo;
     private final MuseumClosureRepository closureRepo;
+
+    // 🏖️ VACATION RULE: optional, so the ManagementController test slices that never touch leave need no extra mock
+    @Autowired(required = false)
+    private StaffLeaveRepository leaveRepo;
 
     // 🧬 Face ban list (the only ban). Optional, so web-layer test slices without it still start (a ban then reports an error).
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -302,10 +310,14 @@ public class ManagementController {
                 .map(LocalDate::toString)
                 .collect(Collectors.toCollection(TreeSet::new)));
         model.addAttribute("newSlot", new BookingSlot());
-        model.addAttribute("employees", employeeRepo.findAll());
+        List<MuseumEmployee> employees = employeeRepo.findAll();
+        model.addAttribute("employees", employees);
+        // 👻 GHOST RULE: the shift dropdowns only offer officers who can still be scheduled
+        model.addAttribute("activeEmployees", employees.stream().filter(MuseumEmployee::isActive).collect(Collectors.toList()));
         model.addAttribute("timeWindows", timeWindowRepo.findAllByOrderByStartTimeAsc());
         model.addAttribute("shiftOptions", windowShiftOptions()); // AI roster preview: only real time windows
         model.addAttribute("upcomingClosures", closureRepo.findByClosureDateGreaterThanEqualOrderByClosureDateAsc(LocalDate.now()));
+        model.addAttribute("upcomingLeaves", leaveRepo == null ? List.of() : leaveRepo.findByEndDateGreaterThanEqualOrderByStartDateAsc(LocalDate.now()));
         return "staff"; 
     }
 
@@ -510,6 +522,59 @@ public class ManagementController {
                 .orElse(DUTY_SHIFTS.get("Morning"));
     }
 
+    // ⛔ CLONING RULE: one officer can't hold two overlapping shifts on the same date.
+    private static final Pattern MILITARY_WINDOW = Pattern.compile("(\\d{2})(\\d{2})H\\s*-\\s*(\\d{2})(\\d{2})H");
+
+    // {start, end} of a shift label: "Midday (11:00 AM - 02:00 PM)" (configured windows, read by the gate's own parser)
+    // or "Morning (0800H-1200H)" (the three original shifts). Null when the label can't be read or the end isn't after the start.
+    static LocalTime[] shiftHours(String shiftTime) {
+        if (shiftTime == null) return null;
+        LocalTime[] clock = GuardOperationController.parseTimeWindow(shiftTime);
+        if (clock != null) return clock;
+        Matcher m = MILITARY_WINDOW.matcher(shiftTime);
+        if (!m.find()) return null;
+        int sh = Integer.parseInt(m.group(1)), sm = Integer.parseInt(m.group(2));
+        int eh = Integer.parseInt(m.group(3)), em = Integer.parseInt(m.group(4));
+        if (sh > 23 || eh > 23 || sm > 59 || em > 59) return null;
+        LocalTime start = LocalTime.of(sh, sm), end = LocalTime.of(eh, em);
+        return end.isAfter(start) ? new LocalTime[] { start, end } : null;
+    }
+
+    // startA < endB && startB < endA: a shift ending at 12:00 and one starting at 12:00 do not overlap.
+    // If either label can't be read, only an identical label counts as a clash (never a guess).
+    static boolean shiftsOverlap(String a, String b) {
+        LocalTime[] x = shiftHours(a), y = shiftHours(b);
+        if (x == null || y == null) return a != null && b != null && a.trim().equalsIgnoreCase(b.trim());
+        return x[0].isBefore(y[1]) && y[0].isBefore(x[1]);
+    }
+
+    // Officer identity for matching: trimmed, inner spaces collapsed, case ignored. Null (= never checked) for blank names
+    // and AI placeholders ("⚠️ OPEN SHIFT (AI)").
+    static String officerKey(String staffName) {
+        if (staffName == null) return null;
+        String key = staffName.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
+        return key.isEmpty() || key.contains("open shift") ? null : key;
+    }
+
+    // The officer's shift on that date that the new one would overlap, or null. sameDay = that date's shifts (plus rows
+    // planned earlier in the same request); ignoreId = the shift being edited. Archived shifts are history and never clash.
+    static StaffSchedule overlappingShift(String staffName, LocalDate date, String shiftTime, Long ignoreId, List<StaffSchedule> sameDay) {
+        String key = officerKey(staffName);
+        if (key == null || date == null) return null;
+        for (StaffSchedule s : sameDay) {
+            if (s.isArchived() || (ignoreId != null && ignoreId.equals(s.getId()))) continue;
+            if (date.equals(s.getDutyDate()) && key.equals(officerKey(s.getStaffName())) && shiftsOverlap(shiftTime, s.getShiftTime())) {
+                return s;
+            }
+        }
+        return null;
+    }
+
+    private static String overlapError(String staffName, LocalDate date, String shiftTime, StaffSchedule clash) {
+        return "⛔ " + staffName.trim() + " is already on duty " + clash.getShiftTime() + " on " + date
+             + ", which overlaps " + shiftTime + ". Nothing was saved.";
+    }
+
     private List<com.paf.aerovisit.model.TimeWindowConfig> configuredWindows() {
         return timeWindowRepo.findAllByOrderByStartTimeAsc().stream()
                 .filter(w -> w.getName() != null && !w.getName().isBlank() && w.getStartTime() != null && w.getEndTime() != null)
@@ -550,6 +615,127 @@ public class ManagementController {
         return "redirect:/admin/staff";
     }
 
+    // 👻 GHOST RULE: deactivating keeps the officer and every past shift, but takes them out of every scheduling list.
+    // Their upcoming shifts (today on, not archived) become open shifts, so the roster never shows someone who won't come.
+    @PostMapping("/admin/employee/deactivate/{id}")
+    public String deactivateEmployee(@PathVariable Long id, RedirectAttributes redirectAttributes) {
+        MuseumEmployee emp = employeeRepo.findById(id).orElse(null);
+        if (emp == null) {
+            redirectAttributes.addFlashAttribute("error", "That officer is no longer on the roster.");
+            return "redirect:/admin/staff";
+        }
+        emp.setActive(false);
+        employeeRepo.save(emp);
+
+        String key = officerKey(emp.getName());
+        LocalDate today = LocalDate.now();
+        List<StaffSchedule> upcoming = key == null ? List.of() : staffRepo.findByArchivedFalseOrderByDutyDateAscStaffNameAsc().stream()
+                .filter(s -> s.getDutyDate() != null && !s.getDutyDate().isBefore(today) && key.equals(officerKey(s.getStaffName())))
+                .collect(Collectors.toList());
+        upcoming.forEach(s -> { s.setStaffName("⚠️ OPEN SHIFT (AI)"); s.setRosterNotified(false); });
+        staffRepo.saveAll(upcoming);
+
+        redirectAttributes.addFlashAttribute("success", "👻 " + emp.getName() + " was deactivated and will not be scheduled again."
+                + (upcoming.isEmpty() ? "" : " " + upcoming.size() + " upcoming shift(s) are now open shifts."));
+        return "redirect:/admin/staff";
+    }
+
+    @PostMapping("/admin/employee/reactivate/{id}")
+    public String reactivateEmployee(@PathVariable Long id, RedirectAttributes redirectAttributes) {
+        MuseumEmployee emp = employeeRepo.findById(id).orElse(null);
+        if (emp == null) {
+            redirectAttributes.addFlashAttribute("error", "That officer is no longer on the roster.");
+            return "redirect:/admin/staff";
+        }
+        emp.setActive(true);
+        employeeRepo.save(emp);
+        redirectAttributes.addFlashAttribute("success", "✅ " + emp.getName() + " is active again. Shifts opened at deactivation stay open; assign them again if needed.");
+        return "redirect:/admin/staff";
+    }
+
+    // 👻 GHOST RULE: the first name in the list that belongs to a deactivated officer, or null
+    private String deactivatedOfficer(Collection<String> staffNames) {
+        Set<String> wanted = staffNames.stream().map(ManagementController::officerKey).filter(Objects::nonNull).collect(Collectors.toSet());
+        if (wanted.isEmpty()) return null;
+        return employeeRepo.findAll().stream()
+                .filter(e -> !e.isActive() && wanted.contains(officerKey(e.getName())))
+                .map(MuseumEmployee::getName).findFirst().orElse(null);
+    }
+
+    private static String deactivatedError(String name) {
+        return "⛔ " + name + " is deactivated and can't be scheduled. Reactivate them in the Staff Directory first. Nothing was saved.";
+    }
+
+    // 🏖️ VACATION RULE: record approved leave. Shifts the officer already holds in that range (today on) become open
+    // shifts, like a deactivation, so the roster never shows someone who is away.
+    @PostMapping("/admin/staff/leave")
+    public String addLeave(@RequestParam("staffName") String staffName, @RequestParam("startDate") String startDateStr,
+                           @RequestParam("endDate") String endDateStr, RedirectAttributes redirectAttributes) {
+        if (leaveRepo == null) {
+            redirectAttributes.addFlashAttribute("error", "Leave tracking is not available.");
+            return "redirect:/admin/staff";
+        }
+        String key = officerKey(staffName);
+        if (key == null) {
+            redirectAttributes.addFlashAttribute("error", "Choose the officer going on leave.");
+            return "redirect:/admin/staff";
+        }
+        LocalDate start;
+        LocalDate end;
+        try {
+            start = LocalDate.parse(startDateStr);
+            end = LocalDate.parse(endDateStr);
+        } catch (Exception e) {
+            redirectAttributes.addFlashAttribute("error", "Please enter valid leave dates.");
+            return "redirect:/admin/staff";
+        }
+        if (start.isAfter(end)) {
+            redirectAttributes.addFlashAttribute("error", "Time Paradox: the leave cannot end before it starts.");
+            return "redirect:/admin/staff";
+        }
+
+        String name = staffName.trim();
+        leaveRepo.save(new StaffLeave(name, start, end));
+        LocalDate today = LocalDate.now();
+        List<StaffSchedule> freed = end.isBefore(today) ? List.of()
+                : staffRepo.findByArchivedFalseAndDutyDateBetween(start.isBefore(today) ? today : start, end).stream()
+                    .filter(s -> key.equals(officerKey(s.getStaffName())))
+                    .collect(Collectors.toList());
+        freed.forEach(s -> { s.setStaffName("⚠️ OPEN SHIFT (AI)"); s.setRosterNotified(false); });
+        staffRepo.saveAll(freed);
+
+        redirectAttributes.addFlashAttribute("success", "🏖️ Leave recorded for " + name + " from " + start + " to " + end + "."
+                + (freed.isEmpty() ? "" : " " + freed.size() + " shift(s) in that period are now open shifts."));
+        return "redirect:/admin/staff";
+    }
+
+    @PostMapping("/admin/staff/leave/delete/{id}")
+    public String deleteLeave(@PathVariable Long id, RedirectAttributes redirectAttributes) {
+        if (leaveRepo != null && id != null) {
+            leaveRepo.deleteById(id);
+            redirectAttributes.addFlashAttribute("success", "Leave cancelled. Shifts opened for it stay open; assign them again if needed.");
+        }
+        return "redirect:/admin/staff";
+    }
+
+    // Leave blocks touching [from, to]; none when leave tracking isn't wired (test slices)
+    private List<StaffLeave> leavesBetween(LocalDate from, LocalDate to) {
+        return leaveRepo == null || from == null || to == null ? List.of()
+             : leaveRepo.findByStartDateLessThanEqualAndEndDateGreaterThanEqual(to, from);
+    }
+
+    // The officer's leave covering that date, or null (same name matching as the Cloning Rule)
+    static StaffLeave leaveOn(String staffName, LocalDate date, List<StaffLeave> leaves) {
+        String key = officerKey(staffName);
+        if (key == null) return null;
+        return leaves.stream().filter(l -> key.equals(officerKey(l.getStaffName())) && l.covers(date)).findFirst().orElse(null);
+    }
+
+    private static String leaveError(String staffName, LocalDate date, StaffLeave leave) {
+        return "⛔ " + staffName.trim() + " is on approved leave from " + leave.getStartDate() + " to " + leave.getEndDate()
+             + ", so they can't be scheduled on " + date + ". Nothing was saved.";
+    }
+
     @PostMapping("/admin/staff/add")
     public String addStaffSchedule(
             @RequestParam("staffName") String staffName,
@@ -580,30 +766,55 @@ public class ManagementController {
                     .collect(Collectors.toCollection(HashSet::new));
             openMuseumDates.addAll(repo.findBuyoutDates()); // VIP buyouts can fall on days with no public slots
 
-            int shiftsAssigned = 0;
+            List<StaffSchedule> toSave = new ArrayList<>();
             int shiftsSkipped = 0;
             LocalDate currentDate = startDate;
 
             while (!currentDate.isAfter(endDate)) {
-                boolean isWeekend = (currentDate.getDayOfWeek() == java.time.DayOfWeek.SATURDAY || 
+                boolean isWeekend = (currentDate.getDayOfWeek() == java.time.DayOfWeek.SATURDAY ||
                                      currentDate.getDayOfWeek() == java.time.DayOfWeek.SUNDAY);
 
                 if (!excludeWeekends || !isWeekend) {
                     if (openMuseumDates.contains(currentDate)) {
                         StaffSchedule sched = new StaffSchedule();
-                        sched.setStaffName(staffName);
+                        sched.setStaffName(staffName.trim());
                         sched.setRole(role);
                         sched.setDutyDate(currentDate);
                         sched.setShiftTime(shiftTime);
-                        staffRepo.save(sched);
-                        shiftsAssigned++;
+                        toSave.add(sched);
                     } else {
                         shiftsSkipped++;
                     }
                 }
                 currentDate = currentDate.plusDays(1);
             }
-            
+
+            String ghost = toSave.isEmpty() ? null : deactivatedOfficer(List.of(staffName));
+            if (ghost != null) {
+                redirectAttributes.addFlashAttribute("error", deactivatedError(ghost));
+                return "redirect:/admin/staff";
+            }
+            // 🏖️ VACATION RULE: any date on leave refuses the whole range
+            List<StaffLeave> leaves = toSave.isEmpty() ? List.of() : leavesBetween(startDate, endDate);
+            for (StaffSchedule sched : toSave) {
+                StaffLeave leave = leaveOn(staffName, sched.getDutyDate(), leaves);
+                if (leave != null) {
+                    redirectAttributes.addFlashAttribute("error", leaveError(staffName, sched.getDutyDate(), leave));
+                    return "redirect:/admin/staff";
+                }
+            }
+            // ⛔ CLONING RULE: any clash refuses the whole range, so nothing is half-saved
+            for (StaffSchedule sched : toSave) {
+                StaffSchedule clash = overlappingShift(staffName, sched.getDutyDate(), shiftTime, null,
+                        staffRepo.findByDutyDateOrderByStaffNameAsc(sched.getDutyDate()));
+                if (clash != null) {
+                    redirectAttributes.addFlashAttribute("error", overlapError(staffName, sched.getDutyDate(), shiftTime, clash));
+                    return "redirect:/admin/staff";
+                }
+            }
+            toSave.forEach(staffRepo::save);
+            int shiftsAssigned = toSave.size();
+
             if (shiftsAssigned > 0) {
                 String msg = "✅ Scheduled " + shiftsAssigned + " shifts for " + staffName + ".";
                 if (shiftsSkipped > 0) msg += " (" + shiftsSkipped + " dates skipped because there are no public booking slots open).";
@@ -702,11 +913,28 @@ public class ManagementController {
                 return "redirect:/admin/staff";
             }
             if (sched != null) {
+                // 👻 GHOST RULE: from today on only (correcting a past shift of a now-deactivated officer is still allowed)
+                String ghost = newDate.isBefore(LocalDate.now()) ? null : deactivatedOfficer(List.of(staffName));
+                if (ghost != null) {
+                    redirectAttributes.addFlashAttribute("error", deactivatedError(ghost));
+                    return "redirect:/admin/staff";
+                }
+                StaffLeave leave = leaveOn(staffName, newDate, leavesBetween(newDate, newDate)); // 🏖️ VACATION RULE
+                if (leave != null) {
+                    redirectAttributes.addFlashAttribute("error", leaveError(staffName, newDate, leave));
+                    return "redirect:/admin/staff";
+                }
+                StaffSchedule clash = overlappingShift(staffName, newDate, shiftTime, sched.getId(),
+                        staffRepo.findByDutyDateOrderByStaffNameAsc(newDate));
+                if (clash != null) {
+                    redirectAttributes.addFlashAttribute("error", overlapError(staffName, newDate, shiftTime, clash));
+                    return "redirect:/admin/staff";
+                }
                 // 📨 A shift that moved to another officer, date or time must be emailed again on the next publish
-                if (!staffName.equals(sched.getStaffName()) || !newDate.equals(sched.getDutyDate()) || !shiftTime.equals(sched.getShiftTime())) {
+                if (!staffName.trim().equals(sched.getStaffName()) || !newDate.equals(sched.getDutyDate()) || !shiftTime.equals(sched.getShiftTime())) {
                     sched.setRosterNotified(false);
                 }
-                sched.setStaffName(staffName);
+                sched.setStaffName(staffName.trim());
                 sched.setRole(role);
                 sched.setDutyDate(newDate);
                 sched.setShiftTime(shiftTime);
@@ -807,12 +1035,19 @@ public class ManagementController {
                 return "redirect:/admin/staff";
             }
 
-            List<MuseumEmployee> activeStaff = employeeRepo.findAll();
+            List<MuseumEmployee> activeStaff = employeeRepo.findAll().stream().filter(MuseumEmployee::isActive).collect(Collectors.toList()); // 👻 GHOST RULE
 
             // 🗓️ SHIFT TEMPLATES: suggest officers in the preview, so the Director reviews the names before deploying
             Set<String> alreadyOnDuty = staffRepo.findByArchivedFalseOrderByDutyDateAscStaffNameAsc().stream()
                     .map(s -> s.getStaffName() + "|" + s.getDutyDate())
                     .collect(Collectors.toCollection(HashSet::new));
+            // 🏖️ VACATION RULE: an officer on leave that day is never suggested (treated as already on duty)
+            List<StaffLeave> leaves = leavesBetween(startDate, endDate);
+            for (MuseumEmployee emp : activeStaff) {
+                for (LocalDate date : groupedShifts.keySet()) {
+                    if (emp.getName() != null && leaveOn(emp.getName(), date, leaves) != null) alreadyOnDuty.add(emp.getName() + "|" + date);
+                }
+            }
             Map<String, String> dutyShifts = dutyShifts();
             dutyShifts.values().retainAll(windowShiftOptions()); // a template pointing at a deleted window suggests nobody
             groupedShifts.forEach((date, dailyShifts) -> prefillFromShiftTemplates(dailyShifts, date, activeStaff, alreadyOnDuty, dutyShifts));
@@ -854,15 +1089,46 @@ public class ManagementController {
             }
         }
 
+        String ghost = deactivatedOfficer(staffNames);
+        if (ghost != null) {
+            redirectAttributes.addFlashAttribute("error", deactivatedError(ghost));
+            return "redirect:/admin/staff";
+        }
+        // ⛔ CLONING RULE / 🏖️ VACATION RULE: checked for every row first, so a clash or a leave saves nothing
+        List<LocalDate> rowDates = dutyDates.stream().map(LocalDate::parse).collect(Collectors.toList());
+        List<StaffLeave> leaves = leavesBetween(Collections.min(rowDates), Collections.max(rowDates));
+        Map<LocalDate, List<StaffSchedule>> rosterByDate = new HashMap<>();
+        for (int i = 0; i < staffNames.size(); i++) {
+            LocalDate date = rowDates.get(i);
+            StaffLeave leave = leaveOn(staffNames.get(i), date, leaves);
+            if (leave != null) {
+                redirectAttributes.addFlashAttribute("error", "Row " + (i + 1) + ": " + leaveError(staffNames.get(i), date, leave));
+                return "redirect:/admin/staff";
+            }
+            List<StaffSchedule> sameDay = rosterByDate.computeIfAbsent(date,
+                    d -> new ArrayList<>(staffRepo.findByDutyDateOrderByStaffNameAsc(d)));
+            StaffSchedule clash = overlappingShift(staffNames.get(i), date, shiftTimes.get(i), null, sameDay);
+            if (clash != null) {
+                redirectAttributes.addFlashAttribute("error", "Row " + (i + 1) + ": "
+                        + overlapError(staffNames.get(i), date, shiftTimes.get(i), clash));
+                return "redirect:/admin/staff";
+            }
+            StaffSchedule planned = new StaffSchedule();
+            planned.setStaffName(staffNames.get(i));
+            planned.setDutyDate(date);
+            planned.setShiftTime(shiftTimes.get(i));
+            sameDay.add(planned);                                       // later rows are checked against this one too
+        }
+
         int count = 0;
         for (int i = 0; i < staffNames.size(); i++) {
             String name = staffNames.get(i);
             if (name == null || name.trim().isEmpty()) {
-                name = "⚠️ OPEN SHIFT (AI)"; 
+                name = "⚠️ OPEN SHIFT (AI)";
             }
-            
+
             StaffSchedule s = new StaffSchedule();
-            s.setStaffName(name);
+            s.setStaffName(name.trim());
             s.setRole(roles.get(i));
             s.setDutyDate(LocalDate.parse(dutyDates.get(i)));
             s.setShiftTime(shiftTimes.get(i));

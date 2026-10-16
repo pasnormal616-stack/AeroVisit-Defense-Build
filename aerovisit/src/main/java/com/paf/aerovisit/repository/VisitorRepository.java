@@ -112,6 +112,9 @@ public interface VisitorRepository extends JpaRepository<Visitor, Long> {
     @Query("SELECT COUNT(v) FROM Visitor v WHERE v.status IN ('CHECKED-IN', 'CHECKED-OUT') AND v.purpose != 'Historical Baseline'")
     long countTotalCheckedIn();
 
+    @Query("SELECT COUNT(v) FROM Visitor v WHERE v.status = 'NO_SHOW' AND v.purpose != 'Historical Baseline'") // set by the 11:59 PM sweep
+    long countTotalNoShows();
+
     // 11. Race-safe capacity check (SeatReservationService): seats held in one date + time window, read straight from
     // the database (an aggregate, so no stale cached Visitor rows), leaving out the booking being saved.
     @Query("SELECT COALESCE(SUM(CASE WHEN v.groupSize < 1 THEN 1 ELSE v.groupSize END), 0) FROM Visitor v"

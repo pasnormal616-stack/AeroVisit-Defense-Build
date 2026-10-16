@@ -1,23 +1,62 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org" lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Daily Visitor Summary</title></head>
-<!--/* Internal (sent to the Director). Variables: date, expected, checkedIn, noShows, internal = true */-->
+<!--/* Internal (sent to the Director). Variables: r (EmailService.DailyReport incl. insights), date, internal = true */-->
 <body th:replace="~{email/layout :: layout('Daily Visitor Summary', ~{::content})}">
 <div th:fragment="content">
   <p style="margin:0 0 14px;">Good evening, Director.</p>
   <p style="margin:0 0 16px;">Please find below the daily attendance summary for <strong th:text="${date}" style="white-space:nowrap;">2026-10-20</strong>.</p>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px; border-collapse:collapse;">
     <tr>
-      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#374151;">Total expected visitors</td>
-      <td th:text="${expected}" style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:bold; color:#111827; text-align:right;">40</td>
+      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#374151;">Expected visitors (approved bookings)</td>
+      <td th:text="|${r.expected} bookings, ${r.expectedGuests} guests|" style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:bold; color:#111827; text-align:right;">12 bookings, 47 guests</td>
     </tr>
     <tr>
-      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#374151;">Total checked in</td>
-      <td th:text="${checkedIn}" style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:bold; color:#111827; text-align:right;">35</td>
+      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#374151;">Actual check-ins</td>
+      <td th:text="|${r.checkedIn} bookings, ${r.checkedInGuests} guests| + (${r.checkInRate() != null} ? | (${r.checkInRate()}%)| : '')" style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:bold; color:#111827; text-align:right;">10 bookings, 41 guests (83%)</td>
     </tr>
     <tr>
-      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#374151;">Total no-shows, pending or rejected</td>
-      <td th:text="${noShows}" style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:bold; color:#111827; text-align:right;">5</td>
+      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#374151;">No-shows</td>
+      <td th:text="|${r.noShows} bookings, ${r.noShowGuests} guests|" style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:bold; color:#111827; text-align:right;">2 bookings, 6 guests</td>
+    </tr>
+    <tr th:if="${r.stillOpen > 0}">
+      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#374151;">Still open (resolved by the next night's sweep)</td>
+      <td th:text="|${r.stillOpen} bookings|" style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:bold; color:#111827; text-align:right;">1 bookings</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#374151;">Walk-ins</td>
+      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:bold; color:#111827; text-align:right;">Not recorded</td>
+    </tr>
+    <tr>
+      <td th:text="|Pending approvals for ${r.nextDate}|" style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#374151;">Pending approvals for 2026-10-21</td>
+      <td th:text="${r.pendingNextDay}" style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:bold; color:#111827; text-align:right;">3</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#374151;">No-shows to date (all time)</td>
+      <td th:text="${r.noShowsAllTime}" style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:bold; color:#111827; text-align:right;">148</td>
+    </tr>
+  </table>
+  <p style="margin:0 0 8px; font-weight:bold;">Visit insights</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px; border-collapse:collapse;">
+    <tr>
+      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#374151;">Peak arrival hour</td>
+      <td th:text="${r.insights.peakHour != null} ? |${r.insights.peakHour} (${r.insights.peakHourGuests} guests)| : 'No check-ins'" style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:bold; color:#111827; text-align:right;">10:00 AM - 11:00 AM (14 guests)</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#374151;">Average visit duration</td>
+      <td th:text="${r.insights.avgVisit() != null} ? |${r.insights.avgVisit()} (${r.insights.timedVisits} guard check-outs)| : 'Not available (no guard check-outs)'" style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:bold; color:#111827; text-align:right;">1 h 25 min (8 guard check-outs)</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#374151;">Visitor type (lead visitor)</td>
+      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:bold; color:#111827; text-align:right;"><div th:each="e : ${r.insights.visitorTypes}" th:text="|${e.key}: ${e.value}|">Active Military Personnel: 4</div><span th:if="${r.insights.visitorTypes.isEmpty()}">None</span></td>
+    </tr>
+    <tr>
+      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#374151;">Sex (lead visitor)</td>
+      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:bold; color:#111827; text-align:right;"><div th:each="e : ${r.insights.sexes}" th:text="|${e.key}: ${e.value}|">Male: 6</div><span th:if="${r.insights.sexes.isEmpty()}">None</span></td>
+    </tr>
+    <tr>
+      <td style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#374151;">Satisfaction (ratings received so far)</td>
+      <td th:text="${r.insights.avgRating != null} ? |${r.insights.avgRating} / 5 (${r.insights.ratingCount} ratings)| : 'No ratings yet'" style="padding:10px 14px; border:1px solid #d1d5db; font-family:Arial, Helvetica, sans-serif; font-size:14px; font-weight:bold; color:#111827; text-align:right;">4.3 / 5 (12 ratings)</td>
     </tr>
   </table>
   <p style="margin:0;">Full details are available on the Admin Dashboard.</p>

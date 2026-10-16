@@ -394,7 +394,7 @@ class EmailServiceTest {
         formal.add(sent.remove(0));
         sendWithQrFile(file -> emailService.sendReminderEmailWithQR("v@example.com", "Juan", "2026-10-01", file));
         formal.add(sent.remove(0));
-        emailService.sendDirectorDailyReport("d@example.com", "2026-10-01", 40, 35, 5);
+        emailService.sendDirectorDailyReport("d@example.com", DAILY);
         emailService.sendCriticalFeedbackAlert("d@example.com", "Juan", "Closed exhibit", -0.9);
         List<SentEmail> internal = new ArrayList<>(sent);
 
@@ -426,12 +426,43 @@ class EmailServiceTest {
         return all;
     }
 
+    private static final EmailService.DailyReport DAILY =
+            new EmailService.DailyReport("2026-10-01", 12, 47, 10, 41, 2, 6, 0, 148, "2026-10-02", 3,
+                    new EmailService.Insights("10:00 AM - 11:00 AM", 14, 85L, 8,
+                            new java.util.LinkedHashMap<>(java.util.Map.of("Active Military Personnel", 4L)),
+                            java.util.Map.of("Male", 6L), 4.3, 12));
+
     @Test
-    void theDailySummaryIsHtmlWithTheThreeFigures() {
-        emailService.sendDirectorDailyReport("d@example.com", "2026-10-01", 40, 35, 5);
+    void theDailySummaryIsHtmlWithCheckInsNoShowsWalkInsAndPendingApprovals() {
+        emailService.sendDirectorDailyReport("d@example.com", DAILY);
         SentEmail email = sentEmail();
         assertThat(email.subject()).isEqualTo("PAF Aerospace Museum - Daily Visitor Summary - 2026-10-01");
-        assertThat(email.html()).contains(">40</td>").contains(">35</td>").contains(">5</td>");
+        assertThat(email.html())
+            .contains(">12 bookings, 47 guests</td>")
+            .contains(">10 bookings, 41 guests (83%)</td>")
+            .contains(">2 bookings, 6 guests</td>")
+            .contains(">Walk-ins</td>").contains(">Not recorded</td>")
+            .contains(">Pending approvals for 2026-10-02</td>").contains(">3</td>")
+            .contains(">No-shows to date (all time)</td>").contains(">148</td>")
+            .doesNotContain("Still open")    // only shown when a booking is still APPROVED at midnight
+            .contains(">10:00 AM - 11:00 AM (14 guests)</td>")
+            .contains(">1 h 25 min (8 guard check-outs)</td>")
+            .contains(">Active Military Personnel: 4</div>").contains(">Male: 6</div>")
+            .contains(">4.3 / 5 (12 ratings)</td>");
+    }
+
+    @Test
+    void theDailySummaryShowsStillOpenBookingsAndNoRateOnAnEmptyDay() {
+        emailService.sendDirectorDailyReport("d@example.com",
+                new EmailService.DailyReport("2026-10-01", 0, 0, 0, 0, 0, 0, 0, 0, "2026-10-02", 0, EmailService.Insights.NONE));
+        assertThat(sentHtml()).contains(">0 bookings, 0 guests</td>").doesNotContain("%)")
+            .contains(">No check-ins</td>").contains(">Not available (no guard check-outs)</td>")
+            .contains("<span>None</span>").contains(">No ratings yet</td>");
+        sent.clear();
+
+        emailService.sendDirectorDailyReport("d@example.com",
+                new EmailService.DailyReport("2026-10-01", 1, 40, 0, 0, 0, 0, 1, 0, "2026-10-02", 0, EmailService.Insights.NONE));
+        assertThat(sentHtml()).contains("Still open (resolved by the next night").contains(">1 bookings</td>");
     }
 
     @Test

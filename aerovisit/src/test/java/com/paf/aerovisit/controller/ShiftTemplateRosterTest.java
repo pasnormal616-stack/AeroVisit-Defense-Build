@@ -43,8 +43,10 @@ import com.paf.aerovisit.config.SecurityConfig;
 import com.paf.aerovisit.model.BookingSlot;
 import com.paf.aerovisit.model.MuseumEmployee;
 import com.paf.aerovisit.model.MuseumPrediction;
+import com.paf.aerovisit.model.StaffLeave;
 import com.paf.aerovisit.model.StaffSchedule;
 import com.paf.aerovisit.repository.BookingSlotRepository;
+import com.paf.aerovisit.repository.StaffLeaveRepository;
 import com.paf.aerovisit.repository.MuseumClosureRepository;
 import com.paf.aerovisit.repository.MuseumEmployeeRepository;
 import com.paf.aerovisit.repository.StaffScheduleRepository;
@@ -73,6 +75,7 @@ class ShiftTemplateRosterTest {
     @MockitoBean private EmailService emailService;
     @MockitoBean private TimeWindowConfigRepository timeWindowRepo;
     @MockitoBean private MuseumClosureRepository closureRepo;
+    @MockitoBean private StaffLeaveRepository leaveRepo;
 
     private static MuseumEmployee employee(String name, String role, String email, String workingDays, String defaultShift) {
         MuseumEmployee e = new MuseumEmployee();
@@ -282,6 +285,29 @@ class ShiftTemplateRosterTest {
             .andExpect(flash().attribute("success", "🤖 Successfully deployed 2 AI-planned shifts to the Master Duty Roster."));
 
         assertThat(savedShifts(2)).extracting(StaffSchedule::getStaffName).containsExactly(OPEN, "Sgt. Dizon");
+    }
+
+    @Test
+    void deployRefusesAClashWithTheRosterOrWithinTheBatchAndSavesNothing() throws Exception {
+        when(staffRepo.findByDutyDateOrderByStaffNameAsc(MONDAY)).thenReturn(List.of(shift("Sgt. Dizon", MONDAY, FULL)));
+        deploy(new Object[] {"Sgt. Reyes", "Gate Guard", MONDAY, AM}, new Object[] {"sgt. dizon", "Gate Guard", MONDAY, PM})
+            .andExpect(flash().attribute("error", "Row 2: ⛔ sgt. dizon is already on duty " + FULL + " on " + MONDAY
+                    + ", which overlaps " + PM + ". Nothing was saved."));
+
+        // The same officer twice in one batch
+        LocalDate tuesday = MONDAY.plusDays(1);
+        deploy(new Object[] {"Sgt. Reyes", "Gate Guard", tuesday, FULL}, new Object[] {"Sgt. Reyes", "Gate Guard", tuesday, AM})
+            .andExpect(flash().attribute("error", "Row 2: ⛔ Sgt. Reyes is already on duty " + FULL + " on " + tuesday
+                    + ", which overlaps " + AM + ". Nothing was saved."));
+        verify(staffRepo, never()).save(any());
+    }
+
+    @Test
+    void openShiftsNeverClashAndDeployedNamesAreTrimmed() throws Exception {
+        deploy(new Object[] {OPEN, "Gate Guard", MONDAY, AM}, new Object[] {OPEN, "Gate Guard", MONDAY, AM},
+               new Object[] {"  Sgt. Reyes  ", "Gate Guard", MONDAY, PM})
+            .andExpect(flash().attribute("success", "🤖 Successfully deployed 3 AI-planned shifts to the Master Duty Roster."));
+        assertThat(savedShifts(3)).extracting(StaffSchedule::getStaffName).containsExactly(OPEN, OPEN, "Sgt. Reyes");
     }
 
     // --- Master Duty Roster calendar: open days and Clear Date Range ---
@@ -682,5 +708,279 @@ class ShiftTemplateRosterTest {
     void guardDoesNotGetThePublishEndpointFromTheStaffPage() throws Exception {
         mvc.perform(get("/admin/staff")).andExpect(status().isForbidden())
             .andExpect(content().string(not(containsString("publish-roster"))));
+    }
+
+    // --- Scheduling edge cases ---
+
+    @Test
+    @WithMockUser(roles = "GUARD")
+    void guardIsForbiddenFromEveryScheduleCreationEndpoint() throws Exception {
+        mvc.perform(get("/admin/staff")).andExpect(status().isForbidden());
+        mvc.perform(post("/admin/staff/add").with(csrf()).param("staffName", "Sgt. Reyes").param("role", "Gate Guard")
+                .param("startDate", MONDAY.toString()).param("endDate", MONDAY.toString()).param("shiftTime", AM))
+            .andExpect(status().isForbidden());
+        mvc.perform(post("/admin/staff/update").with(csrf()).param("id", "1").param("staffName", "Sgt. Reyes")
+                .param("role", "Gate Guard").param("dutyDate", MONDAY.toString()).param("shiftTime", AM))
+            .andExpect(status().isForbidden());
+        mvc.perform(post("/admin/staff/ai-preview").with(csrf())
+                .param("startDate", MONDAY.toString()).param("endDate", MONDAY.toString()))
+            .andExpect(status().isForbidden());
+        deploy(new Object[] {"Sgt. Reyes", "Gate Guard", MONDAY, AM}).andExpect(status().isForbidden());
+
+        verify(staffRepo, never()).save(any());
+        verify(aiService, never()).fetchTurnoutPrediction(anyInt(), anyString(), anyInt());
+    }
+
+    @Test
+    void aShiftCannotBeAssignedOnADateTheOfficerIsOnApprovedLeave() throws Exception {
+        LocalDate day = LocalDate.now().plusDays(3);
+        BookingSlot open = new BookingSlot();
+        open.setSlotDate(day);
+        when(bookingRepo.findAll()).thenReturn(List.of(open));
+
+        mvc.perform(post("/admin/staff/leave").with(csrf())
+                .param("staffName", "Sgt. Reyes").param("startDate", day.toString()).param("endDate", day.toString()))
+            .andExpect(redirectedUrl("/admin/staff"));
+        ArgumentCaptor<StaffLeave> saved = ArgumentCaptor.forClass(StaffLeave.class);
+        verify(leaveRepo).save(saved.capture());
+        assertThat(saved.getValue().getStaffName()).isEqualTo("Sgt. Reyes");
+        assertThat(saved.getValue().getStartDate()).isEqualTo(day);
+        assertThat(saved.getValue().getEndDate()).isEqualTo(day);
+
+        // The mocked repository now returns the recorded leave
+        when(leaveRepo.findByStartDateLessThanEqualAndEndDateGreaterThanEqual(any(), any())).thenReturn(List.of(saved.getValue()));
+        mvc.perform(post("/admin/staff/add").with(csrf()).param("staffName", "Sgt. Reyes").param("role", "Gate Guard")
+                .param("startDate", day.toString()).param("endDate", day.toString()).param("shiftTime", AM))
+            .andExpect(flash().attribute("error", "⛔ Sgt. Reyes is on approved leave from " + day + " to " + day
+                    + ", so they can't be scheduled on " + day + ". Nothing was saved."));
+        verify(staffRepo, never()).save(any());
+    }
+
+    // --- Vacation Rule: leave ---
+
+    @Test
+    void leaveRefusesUpdateAndTheWholeDeploy() throws Exception {
+        LocalDate day = LocalDate.now().plusDays(4);
+        when(leaveRepo.findByStartDateLessThanEqualAndEndDateGreaterThanEqual(any(), any()))
+            .thenReturn(List.of(new StaffLeave("Sgt. Reyes", day, day.plusDays(2))));
+        BookingSlot open = new BookingSlot();
+        open.setSlotDate(day);
+        when(bookingRepo.findAll()).thenReturn(List.of(open));
+
+        StaffSchedule dizons = shift("Sgt. Dizon", day, AM);
+        dizons.setId(1L);
+        when(staffRepo.findById(1L)).thenReturn(Optional.of(dizons));
+        mvc.perform(post("/admin/staff/update").with(csrf()).param("id", "1").param("staffName", "Sgt. Reyes").param("role", "Gate Guard")
+                .param("dutyDate", day.toString()).param("shiftTime", AM))
+            .andExpect(flash().attribute("error", "⛔ Sgt. Reyes is on approved leave from " + day + " to " + day.plusDays(2)
+                    + ", so they can't be scheduled on " + day + ". Nothing was saved."));
+        assertThat(dizons.getStaffName()).isEqualTo("Sgt. Dizon");
+
+        deploy(new Object[] {"Sgt. Dizon", "Gate Guard", day, AM}, new Object[] {"sgt. reyes", "Gate Guard", day.plusDays(1), PM})
+            .andExpect(flash().attribute("error", "Row 2: ⛔ sgt. reyes is on approved leave from " + day + " to " + day.plusDays(2)
+                    + ", so they can't be scheduled on " + day.plusDays(1) + ". Nothing was saved."));
+        verify(staffRepo, never()).save(any());
+    }
+
+    @Test
+    void previewDoesNotSuggestAnOfficerOnLeaveThatDay() throws Exception {
+        aiWants("1 Gate Guard");
+        when(employeeRepo.findAll()).thenReturn(List.of(employee("Sgt. Reyes", "Gate Guard", null, "MONDAY,TUESDAY", "Morning")));
+        when(leaveRepo.findByStartDateLessThanEqualAndEndDateGreaterThanEqual(any(), any()))
+            .thenReturn(List.of(new StaffLeave("SGT. REYES", MONDAY, MONDAY)));      // Monday only
+
+        Map<LocalDate, List<String>> plan = preview();
+
+        assertThat(plan.get(MONDAY)).containsExactly("Gate Guard: open @ " + AM);
+        assertThat(plan.get(MONDAY.plusDays(1))).containsExactly("Gate Guard: Sgt. Reyes @ " + AM);
+    }
+
+    @Test
+    void recordingLeaveOpensTheOfficersShiftsInThatPeriod() throws Exception {
+        LocalDate start = LocalDate.now().plusDays(2);
+        LocalDate end = start.plusDays(2);
+        StaffSchedule inside = shift("Sgt. Reyes", start.plusDays(1), AM);
+        inside.setRosterNotified(true);
+        StaffSchedule colleague = shift("Sgt. Dizon", start.plusDays(1), AM);
+        when(staffRepo.findByArchivedFalseAndDutyDateBetween(start, end)).thenReturn(List.of(inside, colleague));
+
+        mvc.perform(post("/admin/staff/leave").with(csrf())
+                .param("staffName", " Sgt. Reyes ").param("startDate", start.toString()).param("endDate", end.toString()))
+            .andExpect(flash().attribute("success", "🏖️ Leave recorded for Sgt. Reyes from " + start + " to " + end
+                    + ". 1 shift(s) in that period are now open shifts."));
+
+        assertThat(inside.getStaffName()).isEqualTo(OPEN);
+        assertThat(inside.isRosterNotified()).isFalse();
+        assertThat(colleague.getStaffName()).isEqualTo("Sgt. Dizon");
+    }
+
+    @Test
+    void invalidLeaveIsRefusedAndNothingIsSaved() throws Exception {
+        String day = LocalDate.now().plusDays(2).toString();
+        mvc.perform(post("/admin/staff/leave").with(csrf()).param("staffName", "  ").param("startDate", day).param("endDate", day))
+            .andExpect(flash().attribute("error", "Choose the officer going on leave."));
+        mvc.perform(post("/admin/staff/leave").with(csrf()).param("staffName", "Sgt. Reyes").param("startDate", "2026-13-40").param("endDate", day))
+            .andExpect(flash().attribute("error", "Please enter valid leave dates."));
+        mvc.perform(post("/admin/staff/leave").with(csrf()).param("staffName", "Sgt. Reyes")
+                .param("startDate", day).param("endDate", LocalDate.now().toString()))
+            .andExpect(flash().attribute("error", "Time Paradox: the leave cannot end before it starts."));
+        verify(leaveRepo, never()).save(any());
+        verify(staffRepo, never()).saveAll(anyList());
+    }
+
+    @Test
+    void staffPageListsUpcomingLeaveAndALeaveCanBeCancelled() throws Exception {
+        StaffLeave leave = new StaffLeave("Sgt. Reyes", LocalDate.now().plusDays(1), LocalDate.now().plusDays(3));
+        leave.setId(4L);
+        when(leaveRepo.findByEndDateGreaterThanEqualOrderByStartDateAsc(any())).thenReturn(List.of(leave));
+
+        String html = mvc.perform(get("/admin/staff")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        String panel = html.substring(html.indexOf("id=\"staffLeaveTable\""));
+        assertThat(panel).contains("Sgt. Reyes").contains(leave.getStartDate().toString())
+            .contains("action=\"/admin/staff/leave/delete/4\"").doesNotContain("No upcoming leave recorded.");
+
+        mvc.perform(post("/admin/staff/leave/delete/4").with(csrf()))
+            .andExpect(redirectedUrl("/admin/staff"))
+            .andExpect(flash().attribute("success", "Leave cancelled. Shifts opened for it stay open; assign them again if needed."));
+        verify(leaveRepo).deleteById(4L);
+    }
+
+    @Test
+    @WithMockUser(roles = "GUARD")
+    void guardCannotRecordOrCancelLeave() throws Exception {
+        String day = LocalDate.now().plusDays(2).toString();
+        mvc.perform(post("/admin/staff/leave").with(csrf()).param("staffName", "Sgt. Reyes").param("startDate", day).param("endDate", day))
+            .andExpect(status().isForbidden());
+        mvc.perform(post("/admin/staff/leave/delete/4").with(csrf())).andExpect(status().isForbidden());
+        verify(leaveRepo, never()).save(any());
+        verify(leaveRepo, never()).deleteById(any());
+    }
+
+    @Test
+    void aDeactivatedGuardIsNoLongerSuggestedForFutureShifts() throws Exception {
+        aiWants("2 Gate Guards");
+        MuseumEmployee reyes = employee("Sgt. Reyes", "Gate Guard", null, "MONDAY,TUESDAY", "Morning");
+        reyes.setId(7L);
+        MuseumEmployee ramos = employee("Sgt. Ramos", "Gate Guard", null, "MONDAY,TUESDAY", "Morning");
+        when(employeeRepo.findById(7L)).thenReturn(Optional.of(reyes));
+        when(employeeRepo.findAll()).thenReturn(List.of(reyes, ramos));
+
+        mvc.perform(post("/admin/employee/deactivate/7").with(csrf()))          // proposed endpoint
+            .andExpect(redirectedUrl("/admin/staff"));
+
+        Map<LocalDate, List<String>> plan = preview();
+        assertThat(plan.get(MONDAY)).containsExactly("Gate Guard: Sgt. Ramos @ " + AM, "Gate Guard: open @ " + AM);
+        assertThat(plan.values()).allSatisfy(day -> assertThat(day).noneMatch(s -> s.contains("Sgt. Reyes")));
+    }
+
+    // --- Ghost Rule: deactivation ---
+
+    @Test
+    @WithMockUser(roles = "GUARD")
+    void guardCannotDeactivateOrReactivateAnOfficer() throws Exception {
+        mvc.perform(post("/admin/employee/deactivate/7").with(csrf())).andExpect(status().isForbidden());
+        mvc.perform(post("/admin/employee/reactivate/7").with(csrf())).andExpect(status().isForbidden());
+        verify(employeeRepo, never()).save(any());
+        verify(staffRepo, never()).saveAll(anyList());
+    }
+
+    @Test
+    void deactivationOpensTheOfficersUpcomingShiftsOnly() throws Exception {
+        MuseumEmployee reyes = employee("Sgt. Reyes", "Gate Guard", null, "MONDAY", "Morning");
+        reyes.setId(7L);
+        when(employeeRepo.findById(7L)).thenReturn(Optional.of(reyes));
+        LocalDate today = LocalDate.now();
+        StaffSchedule todays = shift("Sgt. Reyes", today, AM);
+        todays.setRosterNotified(true);
+        StaffSchedule later = shift(" sgt. reyes ", today.plusDays(5), PM);
+        StaffSchedule yesterday = shift("Sgt. Reyes", today.minusDays(1), AM);   // past, not archived yet: history
+        StaffSchedule other = shift("Sgt. Dizon", today.plusDays(5), AM);
+        when(staffRepo.findByArchivedFalseOrderByDutyDateAscStaffNameAsc()).thenReturn(List.of(yesterday, todays, later, other));
+
+        mvc.perform(post("/admin/employee/deactivate/7").with(csrf()))
+            .andExpect(redirectedUrl("/admin/staff"))
+            .andExpect(flash().attribute("success",
+                "👻 Sgt. Reyes was deactivated and will not be scheduled again. 2 upcoming shift(s) are now open shifts."));
+
+        assertThat(reyes.isActive()).isFalse();
+        verify(employeeRepo).save(reyes);
+        assertThat(todays.getStaffName()).isEqualTo(OPEN);
+        assertThat(todays.isRosterNotified()).isFalse();
+        assertThat(later.getStaffName()).isEqualTo(OPEN);
+        assertThat(yesterday.getStaffName()).isEqualTo("Sgt. Reyes");
+        assertThat(other.getStaffName()).isEqualTo("Sgt. Dizon");
+    }
+
+    @Test
+    void aReactivatedOfficerIsSuggestedAgain() throws Exception {
+        aiWants("1 Gate Guard");
+        MuseumEmployee reyes = employee("Sgt. Reyes", "Gate Guard", null, "MONDAY,TUESDAY", "Morning");
+        reyes.setId(7L);
+        reyes.setActive(false);
+        when(employeeRepo.findById(7L)).thenReturn(Optional.of(reyes));
+        when(employeeRepo.findAll()).thenReturn(List.of(reyes));
+        assertThat(preview().get(MONDAY)).containsExactly("Gate Guard: open @ " + AM);
+
+        mvc.perform(post("/admin/employee/reactivate/7").with(csrf()))
+            .andExpect(flash().attribute("success",
+                "✅ Sgt. Reyes is active again. Shifts opened at deactivation stay open; assign them again if needed."));
+
+        assertThat(reyes.isActive()).isTrue();
+        assertThat(preview().get(MONDAY)).containsExactly("Gate Guard: Sgt. Reyes @ " + AM);
+    }
+
+    @Test
+    void aDeactivatedOfficerCannotBeScheduledByAddUpdateOrDeploy() throws Exception {
+        MuseumEmployee reyes = employee("Sgt. Reyes", "Gate Guard", null, null, null);
+        reyes.setActive(false);
+        when(employeeRepo.findAll()).thenReturn(List.of(reyes));
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        BookingSlot monday = new BookingSlot();
+        monday.setSlotDate(MONDAY);
+        BookingSlot next = new BookingSlot();
+        next.setSlotDate(tomorrow);
+        when(bookingRepo.findAll()).thenReturn(List.of(monday, next));
+        String refused = "⛔ Sgt. Reyes is deactivated and can't be scheduled. Reactivate them in the Staff Directory first. Nothing was saved.";
+
+        mvc.perform(post("/admin/staff/add").with(csrf()).param("staffName", "sgt. reyes").param("role", "Gate Guard")
+                .param("startDate", MONDAY.toString()).param("endDate", MONDAY.toString()).param("shiftTime", AM))
+            .andExpect(flash().attribute("error", refused));
+
+        StaffSchedule dizons = shift("Sgt. Dizon", tomorrow, AM);
+        dizons.setId(1L);
+        when(staffRepo.findById(1L)).thenReturn(Optional.of(dizons));
+        mvc.perform(post("/admin/staff/update").with(csrf()).param("id", "1").param("staffName", "Sgt. Reyes").param("role", "Gate Guard")
+                .param("dutyDate", tomorrow.toString()).param("shiftTime", AM))
+            .andExpect(flash().attribute("error", refused));
+        assertThat(dizons.getStaffName()).isEqualTo("Sgt. Dizon");
+
+        deploy(new Object[] {OPEN, "Gate Guard", MONDAY, AM}, new Object[] {"Sgt. Reyes", "Gate Guard", MONDAY, PM})
+            .andExpect(flash().attribute("error", refused));
+        verify(staffRepo, never()).save(any());
+    }
+
+    @Test
+    void staffPageMarksInactiveOfficersAndLeavesThemOutOfTheShiftDropdowns() throws Exception {
+        MuseumEmployee reyes = employee("Sgt. Reyes", "Gate Guard", null, null, null);
+        reyes.setId(7L);
+        reyes.setActive(false);
+        MuseumEmployee ramos = employee("Sgt. Ramos", "Gate Guard", null, null, null);
+        ramos.setId(8L);
+        when(employeeRepo.findAll()).thenReturn(List.of(reyes, ramos));
+
+        String html = mvc.perform(get("/admin/staff")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+
+        assertThat(html).contains(">Inactive</span>")
+            .contains("action=\"/admin/employee/reactivate/7\"").doesNotContain("action=\"/admin/employee/deactivate/7\"")
+            .contains("action=\"/admin/employee/deactivate/8\"");
+        assertThat(html).doesNotContain("<option value=\"Sgt. Reyes\">").contains("<option value=\"Sgt. Ramos\">");
+    }
+
+    @Test
+    void deactivatingAnUnknownOfficerChangesNothing() throws Exception {
+        mvc.perform(post("/admin/employee/deactivate/99").with(csrf()))
+            .andExpect(flash().attribute("error", "That officer is no longer on the roster."));
+        verify(employeeRepo, never()).save(any());
+        verify(staffRepo, never()).saveAll(anyList());
     }
 }

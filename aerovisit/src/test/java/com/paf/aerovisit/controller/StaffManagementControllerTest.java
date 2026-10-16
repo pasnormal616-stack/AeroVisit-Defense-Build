@@ -172,6 +172,28 @@ class StaffManagementControllerTest {
     // --- The Guard account ---
 
     @Test
+    void aWrongCodeNeverChangesTheGuardPasswordAndTheRightCodeThenDoes() throws Exception {
+        mvc.perform(request("target", "guard", "newPassword", "GuardNew#26", "confirmPassword", "GuardNew#26"))
+            .andExpect(status().isOk());
+        verify(otpService).sendStaffCode(eq(INBOX), anyString(), eq("change the Guard account's password"));
+
+        when(otpService.verifyStaff(INBOX, "000000")).thenReturn(VerifyOutcome.WRONG_CODE);
+        mvc.perform(confirm("000000"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.message").value("That code is not correct. Please check the email and try again."));
+        verify(staffRepo, never()).save(any());
+        verify(otpService, never()).consumeStaff(anyString());
+
+        // The change is still waiting: the right code then applies it, hashed
+        when(otpService.verifyStaff(INBOX, "730154")).thenReturn(VerifyOutcome.VERIFIED);
+        mvc.perform(confirm("730154")).andExpect(status().isOk());
+        StaffUser changed = saved();
+        assertThat(changed.getRole()).isEqualTo(StaffUser.GUARD);
+        assertThat(changed.getPassword()).startsWith("$2");
+        assertThat(encoder.matches("GuardNew#26", changed.getPassword())).isTrue();
+    }
+
+    @Test
     void guardUsernameAndPasswordChangeTogetherAfterTheCode() throws Exception {
         mvc.perform(request("target", "guard", "newUsername", "gate.guard", "newPassword", "GuardNew#26", "confirmPassword", "GuardNew#26"))
             .andExpect(status().isOk());
