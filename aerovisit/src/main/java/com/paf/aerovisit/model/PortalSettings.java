@@ -42,12 +42,19 @@ public class PortalSettings {
     @Column(length = 160)
     private String contactPhoneNote;
 
+    // 🤖 AI features switch (Settings page, Director + emailed code). Null on rows from before the switch = on.
+    @Column(columnDefinition = "boolean default true")
+    private Boolean aiEnabled;
+
     // One footer icon: platform name (for the screen-reader label), Bootstrap Icons class and the saved link
     public record SocialLink(String name, String icon, String url) {}
 
     public PortalSettings() {}
 
     public Long getId() { return id; }
+
+    public boolean isAiEnabled() { return aiEnabled == null || aiEnabled; }
+    public void setAiEnabled(boolean aiEnabled) { this.aiEnabled = aiEnabled; }
     public void setId(Long id) { this.id = id; }
 
     public String getPromoVideoUrl() { return promoVideoUrl; }

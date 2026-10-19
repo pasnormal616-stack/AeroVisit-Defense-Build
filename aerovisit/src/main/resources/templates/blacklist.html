@@ -25,6 +25,12 @@
         </div>
     </div>
 
+    <!-- 🤖 AI switched off in Settings: faces are not read, so bans rely on the guards -->
+    <div th:unless="${aiEnabled}" class="alert alert-warning" role="status">
+        <i class="bi bi-exclamation-triangle-fill me-1"></i> AI features are turned off in Settings, so new bookings are not checked against these faces.
+        Guards must recognise banned visitors at the gate until the AI is turned back on.
+    </div>
+
     <!-- Alerts -->
     <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
         <i class="bi bi-check-square-fill"></i> <span th:text="${success}"></span>

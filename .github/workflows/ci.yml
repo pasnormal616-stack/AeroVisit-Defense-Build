@@ -1,0 +1,72 @@
+# Continuous integration: runs the automated tests on every push and pull request.
+# It only CHECKS the code (a green tick or a red cross on GitHub). It never deploys and never touches the live
+# AWS website or the RDS database: the web-app tests use a throwaway MySQL database created for each run.
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch: # "Run workflow" button on the Actions tab
+
+jobs:
+  web-app:
+    name: Spring Boot tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: aerovisit_db_v2
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      # Throwaway test database (same names the app reads in application.properties)
+      DB_URL: jdbc:mysql://127.0.0.1:3306/aerovisit_db_v2?serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true
+      DB_USERNAME: root
+      DB_PASSWORD: root
+      TZ: Asia/Manila
+    defaults:
+      run:
+        working-directory: aerovisit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Run the test suite
+        run: bash ./mvnw -B test
+      - name: Keep the test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: aerovisit/target/surefire-reports/
+          retention-days: 14
+
+  ai-kyc:
+    name: AI service KYC tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: AeroVisit-AI
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Only what kyc.py and its tests import (same versions as requirements.txt). The endpoint tests
+      # (test_chat_sessions, test_persona_scope, test_rate_limits) load the full sentiment model and stay local.
+      - name: Install the KYC dependencies
+        run: pip install fastapi==0.140.0 pydantic==2.13.4 numpy==2.5.1 opencv-python-headless==4.14.0.94
+      - name: Run the KYC tests
+        run: python -m unittest test_kyc -v

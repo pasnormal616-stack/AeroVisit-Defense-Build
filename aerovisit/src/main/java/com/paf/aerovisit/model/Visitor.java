@@ -71,6 +71,11 @@ public class Visitor {
     @Column(nullable = false, columnDefinition = "boolean default false")
     private boolean ocrNameMatch = false;
 
+    // 🧬 Reference ID of another booking on the same date whose face is close to this one (a look-alike or the same
+    // person under another email): the Director compares the photos. Set by /save only, never bound from the form.
+    @Column(length = 30)
+    private String possibleDuplicateOf;
+
     // --- QR Code Storage ---
     private String qrCodeUrl;  
 
@@ -254,6 +259,9 @@ public class Visitor {
 
     public boolean isOcrNameMatch() { return ocrNameMatch; }
     public void setOcrNameMatch(boolean ocrNameMatch) { this.ocrNameMatch = ocrNameMatch; }
+
+    public String getPossibleDuplicateOf() { return possibleDuplicateOf; }
+    public void setPossibleDuplicateOf(String possibleDuplicateOf) { this.possibleDuplicateOf = possibleDuplicateOf; }
 
     public String getQrCodeUrl() { return qrCodeUrl; }
     public void setQrCodeUrl(String qrCodeUrl) { this.qrCodeUrl = qrCodeUrl; }

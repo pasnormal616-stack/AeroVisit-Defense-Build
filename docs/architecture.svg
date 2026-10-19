@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" width="1280" height="760" font-family="Segoe UI, Arial, Helvetica, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <style>
+      .box { fill:#ffffff; stroke:#94a3b8; stroke-width:1.5; rx:10; }
+      .aws { fill:#fff7ed; stroke:#f59e0b; }
+      .app { fill:#eff6ff; stroke:#2563eb; }
+      .ai  { fill:#f5f3ff; stroke:#7c3aed; }
+      .ext { fill:#f8fafc; stroke:#94a3b8; stroke-dasharray:5 4; }
+      .title { font-size:15px; font-weight:700; fill:#0f172a; }
+      .sub { font-size:12px; fill:#334155; }
+      .tiny { font-size:11px; fill:#64748b; }
+      .label { font-size:11.5px; fill:#334155; }
+      .line { stroke:#475569; stroke-width:1.6; fill:none; marker-end:url(#arrow); }
+      .group { fill:none; stroke:#f59e0b; stroke-width:1.2; stroke-dasharray:8 5; rx:16; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="760" fill="#ffffff"/>
+  <text x="40" y="44" font-size="22" font-weight="700" fill="#0f172a">AeroVisit – System Architecture</text>
+  <text x="40" y="68" class="sub">PAF Aerospace Museum visitor management · deployed on Amazon Web Services (ap-southeast-2, Sydney)</text>
+
+  <!-- AWS cloud boundary -->
+  <rect x="300" y="96" width="950" height="560" class="group"/>
+  <text x="318" y="118" class="tiny" font-weight="700" fill="#b45309">AWS CLOUD</text>
+
+  <!-- Users -->
+  <rect x="40" y="250" width="210" height="120" class="box"/>
+  <text x="58" y="280" class="title">Visitors &amp; Staff</text>
+  <text x="58" y="302" class="sub">Web browser (phone / PC)</text>
+  <text x="58" y="322" class="tiny">Booking portal, camera KYC,</text>
+  <text x="58" y="338" class="tiny">admin dashboard, guard scanner,</text>
+  <text x="58" y="354" class="tiny">chatbot</text>
+
+  <!-- CloudFront -->
+  <rect x="330" y="250" width="210" height="120" class="box aws"/>
+  <text x="348" y="280" class="title">Amazon CloudFront</text>
+  <text x="348" y="302" class="sub">HTTPS front door</text>
+  <text x="348" y="322" class="tiny">d…cloudfront.net</text>
+  <text x="348" y="338" class="tiny">No caching · passes the</text>
+  <text x="348" y="354" class="tiny">visitor's real IP to the app</text>
+
+  <!-- Spring Boot -->
+  <rect x="610" y="210" width="290" height="200" class="box app"/>
+  <text x="628" y="240" class="title">Spring Boot web app</text>
+  <text x="628" y="262" class="sub">Elastic Beanstalk · Docker (aerovisit-docker)</text>
+  <text x="628" y="286" class="tiny">Java 21 · Spring Boot 3.5 · Thymeleaf · Spring Security</text>
+  <text x="628" y="304" class="tiny">Booking, OTP email check, approvals, QR passes,</text>
+  <text x="628" y="320" class="tiny">gate check-in/out, roster, analytics, website CMS</text>
+  <text x="628" y="338" class="tiny">Tesseract OCR (ID name check) · rate limits</text>
+  <text x="628" y="356" class="tiny">Scheduled jobs: reminders, reports, no-show sweep,</text>
+  <text x="628" y="372" class="tiny">30-day data-retention purge</text>
+  <text x="628" y="394" class="tiny">nginx in front (50 MB upload limit)</text>
+
+  <!-- AI service -->
+  <rect x="980" y="150" width="250" height="200" class="box ai"/>
+  <text x="998" y="180" class="title">AI microservice</text>
+  <text x="998" y="202" class="sub">Elastic Beanstalk · Python 3.12</text>
+  <text x="998" y="226" class="tiny">FastAPI + uvicorn (Aerovisit-ai-prodv2-env)</text>
+  <text x="998" y="246" class="tiny">• KYC: ID portrait vs selfie (OpenCV SFace)</text>
+  <text x="998" y="264" class="tiny">• Feedback sentiment (XLM-R, Tagalog/English)</text>
+  <text x="998" y="282" class="tiny">• Chatbot "Sgt. Aero" (Google Gemini)</text>
+  <text x="998" y="300" class="tiny">• Visitor forecast (scikit-learn)</text>
+  <text x="998" y="326" class="tiny">Every call needs X-Internal-Key</text>
+
+  <!-- RDS -->
+  <rect x="610" y="480" width="220" height="110" class="box aws"/>
+  <text x="628" y="510" class="title">Amazon RDS</text>
+  <text x="628" y="532" class="sub">MySQL 8.4 · database "aerovisit"</text>
+  <text x="628" y="552" class="tiny">Bookings, staff, bans, feedback,</text>
+  <text x="628" y="568" class="tiny">chat logs (security-group locked)</text>
+
+  <!-- S3 -->
+  <rect x="860" y="480" width="200" height="110" class="box aws"/>
+  <text x="878" y="510" class="title">Amazon S3</text>
+  <text x="878" y="532" class="sub">Private uploads bucket</text>
+  <text x="878" y="552" class="tiny">Selfies, ID photos, QR codes,</text>
+  <text x="878" y="568" class="tiny">ban photos, exhibit photos</text>
+
+  <!-- CloudWatch -->
+  <rect x="1080" y="480" width="150" height="110" class="box aws"/>
+  <text x="1096" y="510" class="title">CloudWatch</text>
+  <text x="1096" y="532" class="sub">Logs</text>
+  <text x="1096" y="552" class="tiny">App + deploy logs</text>
+  <text x="1096" y="568" class="tiny">from both servers</text>
+
+  <!-- External services -->
+  <rect x="40" y="470" width="230" height="70" class="box ext"/>
+  <text x="58" y="498" class="title">Gmail SMTP</text>
+  <text x="58" y="520" class="tiny">OTP, approval (QR), reminder emails</text>
+
+  <rect x="40" y="560" width="230" height="70" class="box ext"/>
+  <text x="58" y="588" class="title">Open-Meteo / OpenWeather</text>
+  <text x="58" y="610" class="tiny">Weather for forecast &amp; chatbot</text>
+
+  <rect x="980" y="680" width="250" height="56" class="box ext"/>
+  <text x="998" y="704" class="title">Google Gemini · Hugging Face</text>
+  <text x="998" y="724" class="tiny">Chatbot replies · sentiment model download</text>
+
+  <!-- Arrows -->
+  <path class="line" d="M250,310 L330,310"/>
+  <text x="262" y="300" class="label">HTTPS</text>
+
+  <path class="line" d="M540,310 L610,310"/>
+  <text x="548" y="300" class="label">HTTP</text>
+  <text x="546" y="330" class="tiny">CloudFront</text>
+  <text x="546" y="344" class="tiny">only</text>
+
+  <path class="line" d="M900,270 L980,250"/>
+  <text x="904" y="246" class="label">REST + key</text>
+
+  <path class="line" d="M720,410 L720,480"/>
+  <text x="728" y="450" class="label">JDBC</text>
+
+  <path class="line" d="M840,410 L930,480"/>
+  <text x="888" y="440" class="label">S3 API</text>
+
+  <path class="line" d="M1000,350 L822,482"/>
+  <text x="996" y="376" class="label">chat logs</text>
+
+  <path class="line" d="M1180,350 L1180,480"/>
+  <path class="line" d="M900,400 L1092,480"/>
+  <text x="1010" y="452" class="label">logs</text>
+
+  <path class="line" d="M610,392 L272,500"/>
+  <text x="420" y="430" class="label">SMTP</text>
+
+  <path class="line" d="M610,402 L272,590"/>
+  <text x="420" y="520" class="label">weather</text>
+
+  <path class="line" d="M1230,300 L1264,300 L1264,708 L1232,708"/>
+</svg>

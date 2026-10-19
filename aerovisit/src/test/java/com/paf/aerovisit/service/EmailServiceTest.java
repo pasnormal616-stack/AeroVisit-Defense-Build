@@ -279,6 +279,10 @@ class EmailServiceTest {
     private static void assertQrAttached(SentEmail email) {
         assertThat(email.attachments()).as("attachments").hasSize(1).containsKey("Entry_QRCode.png");
         assertThat(email.attachments().get("Entry_QRCode.png")).isEqualTo(FAKE_QR);
+        // ...and shown inside the message: the <img> points at the embedded copy of the same QR
+        assertThat(email.inlineImages()).as("inline images").containsOnlyKeys("entryQr");
+        assertThat(email.inlineImages().get("entryQr")).isEqualTo(FAKE_QR);
+        assertThat(email.html()).contains("src=\"cid:entryQr\"");
     }
 
     private String sentApprovalHtml(String visitorName) throws Exception {
@@ -297,6 +301,28 @@ class EmailServiceTest {
             .contains("It must be presented for scanning upon both entry and exit to formally clear your name from the active visitor manifest.");
         assertThat(sent.get(0).subject()).isEqualTo("PAF Aerospace Museum - Visit Approved: Entry Pass Enclosed");
         assertThat(sent.get(0).fromAddress()).isEqualTo("PAFMuseumOfficial@gmail.com");
+    }
+
+    @Test
+    void approvalEmailShowsTheBookedTimeAndTheGateArrivalRule() throws Exception {
+        SentEmail email = sendWithQrFile(file -> emailService.sendApprovalEmailWithQR("v@example.com", "Juan", "2026-10-01",
+                file, "PAF-A7X92K", "Morning (08:00 AM - 12:00 PM)"));
+        assertQrAttached(email);
+        assertThat(email.html())
+            .contains("Scheduled time: ")
+            .contains(">Morning (08:00 AM - 12:00 PM)</strong>")
+            .contains("<strong>Please arrive on time.</strong>")
+            .contains("Check-in at the gate opens 15 minutes before your scheduled time and closes when your time slot ends.");
+    }
+
+    @Test
+    void approvalEmailWithoutATimeSlotOnlyAsksToArriveOnTime() throws Exception {
+        // Master Bookings take the whole day: no time line and no slot rule, just the reminder
+        String html = sentApprovalHtml("Juan");
+        assertThat(html)
+            .contains("<strong>Please arrive on time.</strong>")
+            .doesNotContain("Scheduled time:")
+            .doesNotContain("Check-in at the gate opens");
     }
 
     @Test

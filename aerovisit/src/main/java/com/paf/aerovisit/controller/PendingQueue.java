@@ -43,6 +43,7 @@ final class PendingQueue {
     static final List<String[]> CHIPS = List.of(
             new String[] {"manual", "Manual review"},
             new String[] {"unverified", "Name unverified"},
+            new String[] {"duplicate", "Possible duplicate"},
             new String[] {"conflict", "Seat conflict"},
             new String[] {"large", "Large group (" + (NotificationService.LARGE_GROUP_THRESHOLD + 1) + "+)"},
             new String[] {"master", "Master Booking"},
@@ -119,6 +120,7 @@ final class PendingQueue {
         List<String> tags = new ArrayList<>();
         if ("PENDING_MANUAL_REVIEW".equals(v.getStatus())) tags.add("manual");
         if (!v.isOcrNameMatch()) tags.add("unverified");
+        if (v.getPossibleDuplicateOf() != null) tags.add("duplicate");
         if (!v.isMasterBooking() && !OVERDUE.equals(tone) && !NO_DATE.equals(tone)) {
             SeatWindow w = windows.stream().filter(s -> s.window().equals(v.getTimeWindow())).findFirst().orElse(null);
             if (w == null || Math.max(1, v.getGroupSize()) > w.remaining()) tags.add("conflict");

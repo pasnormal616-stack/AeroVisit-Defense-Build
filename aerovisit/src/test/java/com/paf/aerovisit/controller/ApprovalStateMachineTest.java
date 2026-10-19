@@ -85,7 +85,7 @@ class ApprovalStateMachineTest {
             assertThat(v.getQrCodeUrl()).as(String.valueOf(status)).isEqualTo("QR_5.png");
         }
         verify(repo, never()).save(any());
-        verify(emailService, never()).sendApprovalEmailWithQR(anyString(), anyString(), anyString(), anyString(), any());
+        verify(emailService, never()).sendApprovalEmailWithQR(anyString(), anyString(), anyString(), anyString(), any(), any());
     }
 
     @Test

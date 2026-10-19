@@ -107,6 +107,47 @@
         </div>
     </div>
 
+    <!-- 📊 VISITOR TALLY (Entire Database tab): visitors per month and year like the museum's paper tally sheet.
+         Paper records before AeroVisit + AeroVisit check-ins (group size counted); "—" = no record (AdminDashboardController.buildVisitorTally) -->
+    <div class="av-panel overflow-hidden mb-4" th:if="${visitorTally != null}">
+        <div class="av-panel-head">
+            <span><i class="bi bi-table me-2"></i>Visitor Tally</span>
+            <span class="d-flex align-items-center gap-2">
+                <a href="/admin/visitor-tally.csv" class="btn btn-sm btn-light"><i class="bi bi-download"></i> Export CSV</a>
+                <button type="button" class="btn btn-sm btn-light" data-bs-toggle="collapse" data-bs-target="#visitorTallyBody"
+                        aria-expanded="true" aria-controls="visitorTallyBody">Show / hide</button>
+            </span>
+        </div>
+        <div class="collapse show" id="visitorTallyBody">
+            <div class="table-responsive">
+                <table class="table table-sm table-custom mb-0 av-mono" id="visitorTallyTable">
+                    <thead>
+                        <tr>
+                            <th class="ps-4">Month</th>
+                            <th class="text-end" th:each="y : ${visitorTally.years}" th:text="'Year ' + ${y}">Year 2026</th>
+                            <th class="text-end pe-4">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="row : ${visitorTally.rows}">
+                            <td class="ps-4" th:text="${row.month}">January</td>
+                            <td class="text-end" th:each="cell : ${row.cells}"
+                                th:text="${cell == null ? '—' : #numbers.formatInteger(cell, 1, 'COMMA')}">0</td>
+                            <td class="text-end pe-4 fw-bold" th:text="${row.total == null ? '—' : #numbers.formatInteger(row.total, 1, 'COMMA')}">0</td>
+                        </tr>
+                        <tr class="fw-bold">
+                            <td class="ps-4">TOTAL</td>
+                            <td class="text-end" th:each="t : ${visitorTally.yearTotals}"
+                                th:text="${t == null ? '—' : #numbers.formatInteger(t, 1, 'COMMA')}">0</td>
+                            <td class="text-end pe-4" th:text="${visitorTally.grandTotal == null ? '—' : #numbers.formatInteger(visitorTally.grandTotal, 1, 'COMMA')}">0</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p class="av-label px-4 py-2 mb-0">Before AeroVisit: the museum's paper records (closed months = 0). Since AeroVisit: visitors who checked in, group size counted. — = no record.</p>
+        </div>
+    </div>
+
     <!-- DATA TABLE SECTION -->
     <div class="av-panel overflow-hidden">
         <div class="av-panel-head av-panel-head--wrap">
@@ -199,12 +240,16 @@
                                         <span th:text="${visitor.name}"></span>
                                         <span class="av-badge av-badge--new ms-1" th:if="${visitor.status == 'PENDING' and visitor.createdAt != null and visitor.createdAt.isAfter(#temporals.createNow().minusHours(24))}">NEW</span>
                                         <span class="av-badge av-badge--tag ms-1" th:if="${visitor.visitorType != null}" th:text="${visitor.visitorType}"></span>
-                                        <!-- OCR name match: Tesseract read both names on the ID (green), or it didn't (yellow).
+                                        <!-- Identity: the KYC check only sets ocrNameMatch after BOTH the ID portrait matched the
+                                             live selfie (SFace) and Tesseract read both names on the ID (green), else yellow.
                                              Shown for every booking, Master Bookings included (zero-trust KYC). -->
-                                        <span th:if="${visitor.ocrNameMatch}" class="av-badge av-badge--ok ms-1" title="Tesseract read this visitor's first and last name on their ID">
-                                            <i class="bi bi-patch-check-fill me-1" aria-hidden="true"></i>ID Name Verified</span>
-                                        <span th:unless="${visitor.ocrNameMatch}" class="av-badge av-badge--warn ms-1" title="The name was not read automatically from the ID (unclear photo or older booking): check it by eye in View KYC">
-                                            <i class="bi bi-exclamation-triangle-fill me-1" aria-hidden="true"></i>Name Unverified</span>
+                                        <span th:if="${visitor.ocrNameMatch}" class="av-badge av-badge--ok ms-1" title="Both checks passed: the face on the ID matched the live selfie, and the name on the ID matched this booking">
+                                            <i class="bi bi-patch-check-fill me-1" aria-hidden="true"></i>Identity Verified (face + name)</span>
+                                        <span th:unless="${visitor.ocrNameMatch}" class="av-badge av-badge--warn ms-1" title="Not confirmed automatically (face didn't match, photo unclear, or name not read): compare the photos in View KYC before approving">
+                                            <i class="bi bi-exclamation-triangle-fill me-1" aria-hidden="true"></i>Identity Unverified</span>
+                                        <!-- 🧬 Same face as another booking on this date (VisitorPortalController.duplicateFace): compare both in View KYC -->
+                                        <span th:if="${visitor.possibleDuplicateOf != null}" class="av-badge av-badge--warn ms-1" title="This face is close to another booking on the same date. Compare both bookings' photos in View KYC: it may be the same person under another email, or only a look-alike">
+                                            <i class="bi bi-people-fill me-1" aria-hidden="true"></i><span th:text="'Possible duplicate of ' + ${visitor.possibleDuplicateOf}">Possible duplicate</span></span>
                                     </div>
                                     <div class="av-person-meta" th:if="${visitor.age != null and visitor.sex != null}" th:text="${visitor.sex} + ', ' + ${visitor.age} + ' yrs old'"></div>
                                     <div class="av-person-meta" th:text="${visitor.email} + ' • ' + ${visitor.contactNumber != null ? visitor.contactNumber : visitor.phone}"></div>

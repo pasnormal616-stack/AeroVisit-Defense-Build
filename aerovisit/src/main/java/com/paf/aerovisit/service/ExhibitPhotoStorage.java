@@ -46,6 +46,10 @@ public class ExhibitPhotoStorage {
     private final ExhibitPhotoRepository photoRepo;
     private final Path directory;
 
+    // ☁️ Copies each photo to S3 and removes it there on delete (off locally). Optional: tests build this class directly.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    UploadMirror uploadMirror;
+
     public ExhibitPhotoStorage(ExhibitPhotoRepository photoRepo,
                                @Value("${aerovisit.exhibits.dir:uploads/exhibits}") String directory) {
         this.photoRepo = photoRepo;
@@ -53,6 +57,12 @@ public class ExhibitPhotoStorage {
     }
 
     public ExhibitPhoto store(MultipartFile file) throws IOException {
+        return photoRepo.save(new ExhibitPhoto(storeFile(file), LocalDateTime.now()));
+    }
+
+    // Checks one photo and saves it (with its S3 copy) under a random server-generated name; returns that name.
+    // Shared by the Exhibits slideshow and the hero slideshow.
+    public String storeFile(MultipartFile file) throws IOException {
         if (file == null || file.isEmpty()) {
             throw new InvalidImageException("Please choose a photo to upload.");
         }
@@ -73,19 +83,26 @@ public class ExhibitPhotoStorage {
         Files.createDirectories(directory);
         String filename = UUID.randomUUID() + "." + FORMAT_TO_EXTENSION.get(format);
         Files.write(directory.resolve(filename), bytes, StandardOpenOption.CREATE_NEW);
-        return photoRepo.save(new ExhibitPhoto(filename, LocalDateTime.now()));
+        if (uploadMirror != null) uploadMirror.pushExhibit(directory.resolve(filename));
+        return filename;
     }
 
     // Removes the database record and its file; returns false if the photo no longer exists
     public boolean delete(Long id) throws IOException {
         ExhibitPhoto photo = photoRepo.findById(id).orElse(null);
         if (photo == null) return false;
-        Path file = directory.resolve(photo.getFilename()).normalize();
+        deleteFile(photo.getFilename());
+        photoRepo.delete(photo);
+        return true;
+    }
+
+    // Removes one stored photo file and its S3 copy; a name that points outside the photo folder is never touched
+    public void deleteFile(String filename) throws IOException {
+        Path file = directory.resolve(filename).normalize();
         if (file.startsWith(directory)) {
             Files.deleteIfExists(file);
         }
-        photoRepo.delete(photo);
-        return true;
+        if (uploadMirror != null) uploadMirror.deleteExhibit(filename);
     }
 
     public Path getDirectory() {

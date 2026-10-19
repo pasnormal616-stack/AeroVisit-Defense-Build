@@ -6,44 +6,61 @@
 </head>
 <body class="av-app">
 
-<main class="av-auth">
-    <div class="av-auth-top">
-        <span class="paf-logo-plate av-auth-logo"><img class="paf-logo" src="/images/paflogo.png" alt="Philippine Air Force Museum Logo" width="260" height="130"></span>
-    </div>
+<!-- Staff sign-in: the museum side (fragments/auth :: hero, Website Content hero photos) and the sign-in card -->
+<main class="av-auth av-auth--split">
+    <th:block th:replace="~{fragments/auth :: hero}"></th:block>
 
-    <section class="av-auth-panel">
-        <button type="button" class="av-iconbtn theme-toggle av-theme-corner" data-theme-toggle aria-label="Toggle dark mode">
-            <i class="bi bi-moon-stars theme-icon-light"></i>
-            <i class="bi bi-sun theme-icon-dark"></i>
-        </button>
-
-        <h2>Log in</h2>
-        <p class="av-auth-sub">Continue to the PAF Aerospace Museum admin.</p>
-
-        <div th:if="${param.error}" class="error-msg" role="alert">
-            <i class="bi bi-exclamation-triangle-fill"></i> Invalid credentials. Access denied.
+    <div class="av-auth-side">
+        <div class="av-auth-top">
+            <span class="paf-logo-plate av-auth-logo"><img class="paf-logo" src="/images/paflogo.png" alt="Philippine Air Force Museum Logo" width="260" height="130"></span>
         </div>
 
-        <form th:action="@{/login}" method="post">
-            <div class="av-field">
-                <!-- Staff accounts live in the database (staff_user): the Director signs in with the museum's email address,
-                     the Guard with the guard username; the role comes from the account itself -->
-                <label class="form-label-custom" for="username">Staff Username</label>
-                <input type="text" id="username" name="username" class="form-control-custom" placeholder="Director email or guard username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+        <section class="av-auth-panel">
+            <button type="button" class="av-iconbtn theme-toggle av-theme-corner" data-theme-toggle aria-label="Toggle dark mode">
+                <i class="bi bi-moon-stars theme-icon-light"></i>
+                <i class="bi bi-sun theme-icon-dark"></i>
+            </button>
+
+            <p class="av-auth-kicker">Staff Console</p>
+            <h2>Welcome back</h2>
+            <p class="av-auth-sub">Log in to continue to the PAF Aerospace Museum admin.</p>
+
+            <div th:if="${param.error}" class="error-msg" role="alert">
+                <i class="bi bi-exclamation-triangle-fill"></i> Invalid credentials. Access denied.
             </div>
 
-            <div class="av-field">
-                <label class="form-label-custom" for="password">Password</label>
-                <input type="password" id="password" name="password" class="form-control-custom" placeholder="Enter your password" autocomplete="current-password" required>
-                <div class="text-end mt-1"><a href="/forgot-password" class="small">Forgot Password?</a></div>
-            </div>
+            <form th:action="@{/login}" method="post">
+                <div class="av-field">
+                    <!-- Staff accounts live in the database (staff_user): the Director signs in with the museum's email address,
+                         the Guard with the guard username; the role comes from the account itself -->
+                    <label class="form-label-custom" for="username">Staff Username</label>
+                    <div class="av-input-icon">
+                        <i class="bi bi-person-badge" aria-hidden="true"></i>
+                        <input type="text" id="username" name="username" class="form-control-custom" placeholder="Director email or guard username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+                    </div>
+                </div>
 
-            <button type="submit" class="btn btn-primary w-100 mt-2">Log in</button>
-        </form>
-    </section>
+                <div class="av-field">
+                    <label class="form-label-custom" for="password">Password</label>
+                    <div class="av-input-icon av-input-icon--action">
+                        <i class="bi bi-lock" aria-hidden="true"></i>
+                        <input type="password" id="password" name="password" class="form-control-custom" placeholder="Enter your password" autocomplete="current-password" required>
+                        <button type="button" class="av-pw-toggle" data-pw-toggle="password" aria-label="Show password" aria-pressed="false"><i class="bi bi-eye"></i></button>
+                    </div>
+                    <div class="av-label-row mt-1">
+                        <p class="av-caps-warning" data-caps-warning hidden><i class="bi bi-capslock-fill" aria-hidden="true"></i> Caps Lock is on</p>
+                        <a href="/forgot-password" class="small">Forgot Password?</a>
+                    </div>
+                </div>
 
-    <p class="av-auth-foot">Authorised personnel only. All sessions are logged. &middot; <a href="/">Back to visitor portal</a></p>
+                <button type="submit" class="btn btn-primary w-100 mt-2 av-auth-submit">Log in <i class="bi bi-arrow-right" aria-hidden="true"></i></button>
+            </form>
+        </section>
+
+        <p class="av-auth-foot"><i class="bi bi-shield-lock" aria-hidden="true"></i> Authorised personnel only. All sessions are logged. &middot; <a href="/">Back to visitor portal</a></p>
+    </div>
 </main>
 
+<th:block th:replace="~{fragments/auth :: script}"></th:block>
 </body>
 </html>

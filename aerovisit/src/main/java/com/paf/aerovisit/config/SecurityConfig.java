@@ -67,7 +67,7 @@ public class SecurityConfig {
                 .requestMatchers("/uploads/**").hasAnyRole("GUARD", "DIRECTOR")
 
                 // 3. HIGH COMMAND (DIRECTOR ONLY): Restrict sensitive operations
-                .requestMatchers("/admin/staff/**", "/admin/slots/**", "/admin/report", "/admin/export-excel", "/admin/inject-mock-data",
+                .requestMatchers("/admin/staff/**", "/admin/slots/**", "/admin/report", "/admin/export-excel", "/admin/visitor-tally.csv", "/admin/inject-mock-data",
                                  "/admin/delete/**", "/admin/bans/**", "/admin/employee/add", "/admin/employee/edit/**", "/admin/employee/delete/**",
                                  "/admin/employee/deactivate/**", "/admin/employee/reactivate/**").hasRole("DIRECTOR")
 

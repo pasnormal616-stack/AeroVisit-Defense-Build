@@ -37,12 +37,18 @@ public class CmsWebConfig implements WebMvcConfigurer {
 
     // Views that include fragments/visitor :: footer
     static final Set<String> FOOTER_VIEWS = Set.of("register", "manage-booking", "success");
+    // Views that show the hero slideshow photos: the visitor backdrop pages and the staff sign-in pages
+    static final Set<String> HERO_VIEWS = Set.of("register", "manage-booking", "success", "login", "forgot-password");
 
     private final ObjectProvider<AnnouncementRepository> announcementRepo;
     private final ObjectProvider<GuidelineRepository> guidelineRepo;
     private final ObjectProvider<ExhibitPhotoRepository> photoRepo;
     private final ObjectProvider<PortalSettingsRepository> settingsRepo;
     private final String exhibitsDir;
+
+    // 🖼️ Hero slideshow photos (Website Content). A provider, so test slices and hand-built configs work without it.
+    @org.springframework.beans.factory.annotation.Autowired
+    ObjectProvider<com.paf.aerovisit.repository.HeroSlideRepository> heroRepo;
 
     public CmsWebConfig(ObjectProvider<AnnouncementRepository> announcementRepo,
                         ObjectProvider<GuidelineRepository> guidelineRepo,
@@ -72,6 +78,9 @@ public class CmsWebConfig implements WebMvcConfigurer {
                 }
                 if (FOOTER_VIEWS.contains(mav.getViewName())) {
                     addFooterContent(mav);
+                }
+                if (HERO_VIEWS.contains(mav.getViewName())) {
+                    addHeroSlides(mav);
                 }
             }
         });
@@ -114,6 +123,20 @@ public class CmsWebConfig implements WebMvcConfigurer {
         mav.addObject("guidelines", guidelines);
         mav.addObject("exhibitPhotos", photos);
         mav.addObject("promoVideoUrl", promoVideoUrl);
+    }
+
+    // 🖼️ The hero slideshow photos for the backdrop, in their Website Content order; none = the navy sky
+    void addHeroSlides(ModelAndView mav) {
+        List<?> slides = List.of();
+        try {
+            com.paf.aerovisit.repository.HeroSlideRepository repo = heroRepo == null ? null : heroRepo.getIfAvailable();
+            if (repo != null) {
+                slides = repo.findAllByOrderByDisplayOrderAscIdAsc();
+            }
+        } catch (RuntimeException e) {
+            System.err.println("⚠️ Hero slideshow could not be loaded; showing the navy sky. " + e.getMessage());
+        }
+        mav.addObject("heroSlides", slides);
     }
 
     // Only platforms with a saved link are passed on, so the footer never renders an empty icon;

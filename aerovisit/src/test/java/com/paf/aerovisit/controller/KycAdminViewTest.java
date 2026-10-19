@@ -100,8 +100,8 @@ class KycAdminViewTest {
     void theNameBadgeIsGreenOnlyWhenOcrReadTheName() throws Exception {
         String html = page(v(1, "Juan Dela Cruz", "s1.jpg", "c1.jpg", true), v(2, "Maria Santos", "s2.jpg", "c2.jpg", false));
 
-        assertThat(row(html, "Juan Dela Cruz")).contains("av-badge--ok", "ID Name Verified").doesNotContain("Name Unverified");
-        assertThat(row(html, "Maria Santos")).contains("av-badge--warn", "Name Unverified").doesNotContain("ID Name Verified");
+        assertThat(row(html, "Juan Dela Cruz")).contains("av-badge--ok", "Identity Verified (face + name)").doesNotContain("Identity Unverified");
+        assertThat(row(html, "Maria Santos")).contains("av-badge--warn", "Identity Unverified").doesNotContain("Identity Verified");
     }
 
     @Test
@@ -113,8 +113,8 @@ class KycAdminViewTest {
         unread.setPurpose(Visitor.MASTER_BOOKING_PURPOSE);
         String html = page(verified, unread);
 
-        assertThat(row(html, "Colegio de San Juan")).contains("av-badge--ok", "ID Name Verified");
-        assertThat(row(html, "Ateneo Field Trip")).contains("av-badge--warn", "Name Unverified");
+        assertThat(row(html, "Colegio de San Juan")).contains("av-badge--ok", "Identity Verified (face + name)");
+        assertThat(row(html, "Ateneo Field Trip")).contains("av-badge--warn", "Identity Unverified");
     }
 
     @Test

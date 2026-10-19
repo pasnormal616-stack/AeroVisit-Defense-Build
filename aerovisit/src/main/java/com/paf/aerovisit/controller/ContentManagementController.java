@@ -37,6 +37,10 @@ public class ContentManagementController {
     private final ExhibitPhotoStorage photoStorage;
     private final PortalSettingsRepository settingsRepo;
 
+    // 🖼️ Hero slideshow (the visitor portal's background photos). Optional, so test slices without it still start.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.paf.aerovisit.repository.HeroSlideRepository heroRepo;
+
     public ContentManagementController(AnnouncementRepository announcementRepo,
                                        GuidelineRepository guidelineRepo,
                                        ExhibitPhotoRepository photoRepo,
@@ -55,6 +59,8 @@ public class ContentManagementController {
         model.addAttribute("guidelines", guidelineRepo.findAllByOrderByDisplayOrderAscIdAsc());
         model.addAttribute("guidelineIcons", Guideline.ICONS);
         model.addAttribute("photos", photoRepo.findAllByOrderByUploadDateAscIdAsc());
+        model.addAttribute("heroSlides", heroRepo == null ? List.of() : heroRepo.findAllByOrderByDisplayOrderAscIdAsc());
+        model.addAttribute("heroMax", com.paf.aerovisit.model.HeroSlide.MAX_SLIDES);
         model.addAttribute("today", LocalDate.now());
         PortalSettings settings = settingsRepo.findById(PortalSettings.SINGLETON_ID).orElseGet(PortalSettings::new);
         model.addAttribute("promoVideoUrl", settings.getPromoVideoUrl());
@@ -423,5 +429,135 @@ public class ContentManagementController {
             redirectAttributes.addFlashAttribute("error", "The photo file could not be deleted. Please try again.");
         }
         return "redirect:/admin/content#photos";
+    }
+
+    // ---------- Hero slideshow (background photos behind the visitor portal's welcome banner) ----------
+
+    private static final String HERO = "redirect:/admin/content#hero";
+
+    @PostMapping("/admin/content/hero/upload")
+    public String uploadHeroSlides(@RequestParam(value = "photos", required = false) List<MultipartFile> photos,
+                                   RedirectAttributes redirectAttributes) {
+        if (heroRepo == null) {
+            redirectAttributes.addFlashAttribute("error", "The hero slideshow is not available.");
+            return HERO;
+        }
+        List<MultipartFile> chosen = photos == null ? List.of()
+                : photos.stream().filter(p -> p != null && !p.isEmpty()).toList();
+        if (chosen.isEmpty()) {
+            redirectAttributes.addFlashAttribute("error", "Please choose at least one photo to upload.");
+            return HERO;
+        }
+        List<com.paf.aerovisit.model.HeroSlide> slides = heroRepo.findAllByOrderByDisplayOrderAscIdAsc();
+        int room = com.paf.aerovisit.model.HeroSlide.MAX_SLIDES - slides.size();
+        if (room <= 0) {
+            redirectAttributes.addFlashAttribute("error", "The hero slideshow already has the maximum of "
+                    + com.paf.aerovisit.model.HeroSlide.MAX_SLIDES + " photos. Delete one first.");
+            return HERO;
+        }
+        int next = slides.stream().mapToInt(com.paf.aerovisit.model.HeroSlide::getDisplayOrder).max().orElse(0) + 1;
+        int saved = 0;
+        int overLimit = 0;
+        List<String> problems = new ArrayList<>();
+        for (MultipartFile photo : chosen) {
+            if (saved >= room) {
+                overLimit++;
+                continue;
+            }
+            try {
+                String filename = photoStorage.storeFile(photo);
+                heroRepo.save(new com.paf.aerovisit.model.HeroSlide(filename, next++, java.time.LocalDateTime.now()));
+                saved++;
+            } catch (ExhibitPhotoStorage.InvalidImageException e) {
+                problems.add(e.getMessage());
+            } catch (IOException e) {
+                problems.add("A photo could not be saved on the server. Please try again.");
+            }
+        }
+        if (overLimit > 0) {
+            problems.add(overLimit + (overLimit == 1 ? " photo was" : " photos were") + " not added: the slideshow holds at most "
+                    + com.paf.aerovisit.model.HeroSlide.MAX_SLIDES + ".");
+        }
+        if (saved > 0) {
+            redirectAttributes.addFlashAttribute("success", saved == 1
+                    ? "1 photo added to the hero slideshow."
+                    : saved + " photos added to the hero slideshow.");
+        }
+        if (!problems.isEmpty()) {
+            redirectAttributes.addFlashAttribute("error", "Not uploaded: " + String.join(" ", problems));
+        }
+        return HERO;
+    }
+
+    // The optional small label and caption shown over the photo
+    @PostMapping("/admin/content/hero/{id}/update")
+    public String updateHeroSlide(@PathVariable Long id,
+                                  @RequestParam(value = "kicker", required = false) String kicker,
+                                  @RequestParam(value = "caption", required = false) String caption,
+                                  RedirectAttributes redirectAttributes) {
+        com.paf.aerovisit.model.HeroSlide slide = heroRepo == null ? null : heroRepo.findById(id).orElse(null);
+        if (slide == null) {
+            redirectAttributes.addFlashAttribute("error", "That photo is no longer in the hero slideshow.");
+            return HERO;
+        }
+        String cleanKicker = blankToNull(kicker);
+        String cleanCaption = blankToNull(caption);
+        if (cleanKicker != null && cleanKicker.length() > com.paf.aerovisit.model.HeroSlide.MAX_KICKER) {
+            redirectAttributes.addFlashAttribute("error", "The small label can be at most "
+                    + com.paf.aerovisit.model.HeroSlide.MAX_KICKER + " characters.");
+            return HERO;
+        }
+        if (cleanCaption != null && cleanCaption.length() > com.paf.aerovisit.model.HeroSlide.MAX_CAPTION) {
+            redirectAttributes.addFlashAttribute("error", "The caption can be at most "
+                    + com.paf.aerovisit.model.HeroSlide.MAX_CAPTION + " characters.");
+            return HERO;
+        }
+        slide.setKicker(cleanKicker);
+        slide.setCaption(cleanCaption);
+        heroRepo.save(slide);
+        redirectAttributes.addFlashAttribute("success", "Hero photo text saved.");
+        return HERO;
+    }
+
+    // Moves a photo one place earlier or later, then renumbers all photos 1, 2, 3... (like the guideline cards)
+    @PostMapping("/admin/content/hero/{id}/move")
+    public String moveHeroSlide(@PathVariable Long id, @RequestParam("direction") String direction) {
+        if (heroRepo == null) return HERO;
+        List<com.paf.aerovisit.model.HeroSlide> ordered = new ArrayList<>(heroRepo.findAllByOrderByDisplayOrderAscIdAsc());
+        int index = -1;
+        for (int i = 0; i < ordered.size(); i++) {
+            if (ordered.get(i).getId().equals(id)) index = i;
+        }
+        int target = "up".equals(direction) ? index - 1 : index + 1;
+        if (index < 0 || target < 0 || target >= ordered.size()) {
+            return HERO;
+        }
+        ordered.add(target, ordered.remove(index));
+        for (int i = 0; i < ordered.size(); i++) {
+            ordered.get(i).setDisplayOrder(i + 1);
+        }
+        heroRepo.saveAll(ordered);
+        return HERO;
+    }
+
+    @PostMapping("/admin/content/hero/{id}/delete")
+    public String deleteHeroSlide(@PathVariable Long id, RedirectAttributes redirectAttributes) {
+        com.paf.aerovisit.model.HeroSlide slide = heroRepo == null ? null : heroRepo.findById(id).orElse(null);
+        if (slide != null) {
+            try {
+                photoStorage.deleteFile(slide.getFilename());
+                heroRepo.delete(slide);
+                redirectAttributes.addFlashAttribute("success", "Photo removed from the hero slideshow.");
+            } catch (IOException e) {
+                redirectAttributes.addFlashAttribute("error", "The photo file could not be deleted. Please try again.");
+            }
+        }
+        return HERO;
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null) return null;
+        String trimmed = value.strip();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

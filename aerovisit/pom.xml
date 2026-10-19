@@ -65,6 +65,19 @@
             <version>3.5.1</version>
         </dependency>
 
+        <!-- ☁️ Amazon S3: keeps a copy of uploads/ (Elastic Beanstalk wipes the app folder on every deploy). See UploadMirror. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <version>2.55.16</version>
+        </dependency>
+        <!-- ☁️ Starts/stops the AI server's Auto Scaling group from the Settings AI switch (AiServerControl) -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>autoscaling</artifactId>
+            <version>2.55.16</version>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-devtools</artifactId>

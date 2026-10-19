@@ -316,6 +316,16 @@ class TwoStepEndpointTest(unittest.TestCase):
         self.assertUnclear(result, kyc.BLURRY_ID_FACE)
         self.assertEqual(result["id_sharpness"], kyc.MIN_FACE_SHARPNESS - 1)
 
+    def test_the_id_portrait_has_its_own_softer_threshold(self):
+        # A printed ID portrait reads soft; its own threshold lets it through while the selfie rule stays strict
+        self.sharpness.side_effect = [500.0, 10.0]                        # live sharp, ID portrait soft
+        v = unit_vector(1)
+        with mock.patch.object(kyc, "FACE_READY", True), mock.patch.object(kyc, "MIN_ID_FACE_SHARPNESS", 8.0), \
+                self.faces(), self.features(v, v):
+            result = two_step(self.id_closeup, self.selfie)
+        self.assertEqual(result["status"], kyc.SUCCESS)
+        self.assertEqual(result["id_sharpness"], 10.0)
+
     def test_exactly_at_the_sharpness_threshold_counts_as_sharp(self):
         self.sharpness.side_effect = [kyc.MIN_FACE_SHARPNESS, kyc.MIN_FACE_SHARPNESS]
         v = unit_vector(1)

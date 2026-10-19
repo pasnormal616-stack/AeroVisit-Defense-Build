@@ -45,6 +45,15 @@ public class GuardOperationController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private SeatReservationService seatReservation;
 
+    // ☁️ Copies each new QR code to S3 (off locally). Optional, so test slices without it still start.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.paf.aerovisit.service.UploadMirror uploadMirror;
+
+    // ⏱️ The gate's clock: real Manila time in production (null = the system clock, read on every call);
+    // tests fix it so every time-window case runs the same at any hour
+    java.time.Clock clock;
+    private java.time.Clock clock() { return clock != null ? clock : java.time.Clock.systemDefaultZone(); }
+
     static final String BANNED_APPROVAL = "Approval refused: this visitor is banned. Lift the ban on the Banned Visitors page first if this is a mistake.";
     static final String BANNED_ENTRY = "ACCESS DENIED: This visitor is banned.";
     static final String INVALID_SLOT = "Invalid or unavailable time slot: no open booking slot exists for this date and time window.";
@@ -106,14 +115,14 @@ public class GuardOperationController {
                     response.put("status", "error");
                     response.put("message", "ACCESS DENIED: Entry was already denied at the gate (" + v.getEntryDenialReason() + ").");
                 } else if ("CHECKED-IN".equals(v.getStatus()) && v.getCheckInTime() != null
-                        && Duration.between(v.getCheckInTime(), LocalDateTime.now()).compareTo(CHECKOUT_COOLDOWN) < 0) {
+                        && Duration.between(v.getCheckInTime(), LocalDateTime.now(clock())).compareTo(CHECKOUT_COOLDOWN) < 0) {
                     // ⏳ DEBOUNCE: a re-scan within 2 minutes of check-in leaves the visitor CHECKED-IN
                     response.put("status", "error");
                     response.put("message", "⏳ Cooldown: Visitor checked in less than 2 minutes ago. Please wait before checking out.");
                 } else if ("CHECKED-IN".equals(v.getStatus())) {
                     // If scanning a second time, check them out.
                     v.setStatus("CHECKED-OUT");
-                    v.setCheckOutTime(LocalDateTime.now());
+                    v.setCheckOutTime(LocalDateTime.now(clock()));
                     repo.save(v);
                     sendInBackground(() -> emailService.sendCheckOutFeedback(v.getEmail(), v.getName(), v.getSecureToken()));
                     response.put("status", "success");
@@ -163,7 +172,7 @@ public class GuardOperationController {
                 redirectAttributes.addFlashAttribute("error", "ACCESS DENIED: This booking was marked as a no-show. The visitor must book a new visit.");
             } else if ("CHECKED-IN".equals(v.getStatus())) {
                 v.setStatus("CHECKED-OUT");
-                v.setCheckOutTime(LocalDateTime.now());
+                v.setCheckOutTime(LocalDateTime.now(clock()));
                 repo.save(v);
                 emailService.sendCheckOutFeedback(v.getEmail(), v.getName(), v.getSecureToken());
                 redirectAttributes.addFlashAttribute("success", "👋 CHECKED-OUT via Manual Override: " + v.getName());
@@ -178,8 +187,8 @@ public class GuardOperationController {
                     redirectAttributes.addFlashAttribute("error", BANNED_ENTRY);
                     return "redirect:/admin";
                 }
-                LocalDate today = LocalDate.now();
-                LocalTime now = LocalTime.now();
+                LocalDate today = LocalDate.now(clock());
+                LocalTime now = LocalTime.now(clock());
                 if (!today.equals(v.getVisitDate())) {
                     redirectAttributes.addFlashAttribute("error", "ACCESS DENIED: Scheduled for " + v.getVisitDate() + ".");
                     return "redirect:/admin";
@@ -203,7 +212,7 @@ public class GuardOperationController {
                 
                 v.setStatus("CHECKED-IN");
                 v.setCheckedInBy(getActiveGuardName() + " (Manual)");
-                v.setCheckInTime(LocalDateTime.now());
+                v.setCheckInTime(LocalDateTime.now(clock()));
                 repo.save(v);
                 emailService.sendCheckInGuidelines(v.getEmail(), v.getName(), getActiveTourGuideName());
                 String groupAddon = (v.getGroupSize() > 1) ? " (Group of " + v.getGroupSize() + ")" : "";
@@ -241,9 +250,9 @@ public class GuardOperationController {
         // 🚫 Backstop for a pass whose face was banned after approval (the ban also revokes open bookings)
         if (isFaceBanned(v)) return BANNED_ENTRY;
         // 🔒 The QR is only valid on the scheduled date
-        if (!LocalDate.now().equals(v.getVisitDate())) return "ACCESS DENIED: Scheduled for " + v.getVisitDate() + ".";
+        if (!LocalDate.now(clock()).equals(v.getVisitDate())) return "ACCESS DENIED: Scheduled for " + v.getVisitDate() + ".";
         // 🕒 ...and within the booked time window (opens 15 minutes early)
-        return timeWindowBlocker(v.getTimeWindow(), LocalTime.now());
+        return timeWindowBlocker(v.getTimeWindow(), LocalTime.now(clock()));
     }
 
     // Why check-in is closed at 'now' for this time window label, or null when it is open.
@@ -260,6 +269,12 @@ public class GuardOperationController {
             return "ACCESS DENIED: Time window ended at " + window[1].format(GATE_TIME) + ".";
         }
         return null;
+    }
+
+    // The time window for the approval email: only a real slot ("Morning (08:00 AM - 12:00 PM)"), never a label the
+    // gate can't read (a Master Booking's "Master Booking Bypass"), so the email states exactly what the gate enforces
+    static String bookedWindow(Visitor v) {
+        return parseTimeWindow(v.getTimeWindow()) == null ? null : v.getTimeWindow();
     }
 
     // {start, end} from a label like "Morning (08:00 AM - 12:00 PM)"; null if it can't be read or the end isn't after the start
@@ -303,7 +318,7 @@ public class GuardOperationController {
         // --- SUCCESSFUL CHECK-IN PROTOCOL ---
         v.setStatus("CHECKED-IN");
         v.setCheckedInBy(getActiveGuardName());
-        v.setCheckInTime(LocalDateTime.now());
+        v.setCheckInTime(LocalDateTime.now(clock()));
         if (v.isMasterBooking()) {
             // Record who actually arrived; every dashboard count already reads groupSize
             v.setBookedGroupSize(v.getGroupSize());
@@ -357,7 +372,7 @@ public class GuardOperationController {
         if (!"APPROVED".equals(v.getStatus()) && !"CHECKED-IN".equals(v.getStatus())) {
             return "Only an approved or checked-in visitor can be denied entry (status: " + v.getStatus() + ").";
         }
-        if (!LocalDate.now().equals(v.getVisitDate())) return "Entry can only be denied on the day of the visit.";
+        if (!LocalDate.now(clock()).equals(v.getVisitDate())) return "Entry can only be denied on the day of the visit.";
         if (reason == null || reason.isBlank()) return "Select a reason for denying entry.";
         String fullReason = reason.trim();
         if (notes != null && !notes.isBlank()) fullReason += " | Notes: " + notes.trim();
@@ -365,7 +380,7 @@ public class GuardOperationController {
 
         v.setStatus("DENIED_ENTRY");
         v.setEntryDeniedBy(getActiveGuardName());
-        v.setEntryDeniedAt(LocalDateTime.now());
+        v.setEntryDeniedAt(LocalDateTime.now(clock()));
         v.setEntryDenialReason(fullReason);
         v.setQrCodeUrl(null);
         repo.save(v);
@@ -421,18 +436,20 @@ public class GuardOperationController {
                 String qrPath = "uploads/" + qrFileName;
                 QRCodeGenerator.generateQRCode(qrContent, qrPath);
                 v.setQrCodeUrl(qrFileName);
+                if (uploadMirror != null) uploadMirror.pushUpload(qrFileName);
 
                 try {
                     saveWithinCapacity(v);
                 } catch (SeatReservationService.CapacityFullException | org.springframework.dao.PessimisticLockingFailureException full) {
                     // 🔒 Another approval took the last seats after the check above: nothing was saved, the request stays pending
                     Files.deleteIfExists(uploadPath.resolve(qrFileName));
+                    if (uploadMirror != null) uploadMirror.deleteUpload(qrFileName);
                     redirectAttributes.addFlashAttribute("error", full instanceof SeatReservationService.CapacityFullException
                             ? "Approval failed: Not enough seats remaining in this time slot."
                             : "Approval failed: this time slot is being updated by another approval right now. Please try again.");
                     return back;
                 }
-                emailService.sendApprovalEmailWithQR(v.getEmail(), v.getName(), v.getVisitDate().toString(), qrFileName, v.getReferenceId());
+                emailService.sendApprovalEmailWithQR(v.getEmail(), v.getName(), v.getVisitDate().toString(), qrFileName, v.getReferenceId(), bookedWindow(v));
                 redirectAttributes.addFlashAttribute("success", "Visitor approved and Email sent successfully!");
                 if (v.isMasterBooking()) {
                     // 🔒 VIP buyout override: cancel standard visitors already APPROVED for that date and notify each one
@@ -512,6 +529,7 @@ public class GuardOperationController {
 
             String qrContent = v.getSecureToken() != null ? v.getSecureToken() : java.util.UUID.randomUUID().toString();
             QRCodeGenerator.generateQRCode(qrContent, "uploads/" + qrFileName);
+            if (uploadMirror != null) uploadMirror.pushUpload(qrFileName);
 
             v.setSecureToken(qrContent);
             v.setQrCodeUrl(qrFileName);
@@ -525,7 +543,7 @@ public class GuardOperationController {
         System.out.println("⚠️ CAPACITY OVERRIDE: visitor #" + v.getId() + " force-approved by " + (principal != null ? principal.getName() : "unknown"));
 
         try {
-            emailService.sendApprovalEmailWithQR(v.getEmail(), v.getName(), String.valueOf(v.getVisitDate()), qrFileName, v.getReferenceId());
+            emailService.sendApprovalEmailWithQR(v.getEmail(), v.getName(), String.valueOf(v.getVisitDate()), qrFileName, v.getReferenceId(), bookedWindow(v));
             redirectAttributes.addFlashAttribute("success", "⚠️ Force-approved over capacity: " + v.getName() + ". Approval email sent.");
         } catch (Exception e) {
             System.err.println("❌ Force approval email failed for visitor #" + v.getId() + ": " + e);
@@ -595,8 +613,8 @@ public class GuardOperationController {
     }
 
     private String getActiveGuardName() {
-        LocalTime now = LocalTime.now();
-        LocalDate today = LocalDate.now();
+        LocalTime now = LocalTime.now(clock());
+        LocalDate today = LocalDate.now(clock());
         List<StaffSchedule> allSchedules = staffRepo.findByArchivedFalseOrderByDutyDateAscStaffNameAsc();
         List<String> activeGuards = new ArrayList<>();
         for (StaffSchedule sched : allSchedules) {
@@ -612,9 +630,9 @@ public class GuardOperationController {
 
     // Tour Guide(s) whose shift covers the current time, using the same shift windows as getActiveGuardName(); null if none
     private String getActiveTourGuideName() {
-        LocalTime now = LocalTime.now();
+        LocalTime now = LocalTime.now(clock());
         List<String> activeGuides = new ArrayList<>();
-        for (StaffSchedule sched : staffRepo.findTourGuidesOnDuty(LocalDate.now())) {
+        for (StaffSchedule sched : staffRepo.findTourGuidesOnDuty(LocalDate.now(clock()))) {
             if (shiftCoversNow(sched.getShiftTime(), now)
                     && sched.getStaffName() != null && !sched.getStaffName().isBlank()) {
                 activeGuides.add(sched.getStaffName());

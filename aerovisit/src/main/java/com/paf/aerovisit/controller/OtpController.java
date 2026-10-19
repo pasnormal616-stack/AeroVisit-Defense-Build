@@ -32,7 +32,7 @@ public class OtpController {
                                                     HttpServletRequest request) {
         OtpService.SendResult result = otpService.sendCode(email, clientKey(request));
         return switch (result.outcome()) {
-            case SENT -> reply(HttpStatus.OK, true, "We sent a 6-digit code to your email. It expires in 5 minutes.",
+            case SENT -> reply(HttpStatus.OK, true, "We sent a 6-digit code to your email. It expires in 5 minutes. Not in your inbox? Check your Spam or Junk folder.",
                     result.retryAfterSeconds());
             case INVALID_EMAIL -> reply(HttpStatus.BAD_REQUEST, false, "Please enter a valid email address first.", 0);
             case COOLDOWN -> reply(HttpStatus.TOO_MANY_REQUESTS, false,

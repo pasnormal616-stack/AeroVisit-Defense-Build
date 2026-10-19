@@ -7,6 +7,7 @@ import com.paf.aerovisit.repository.BookingSlotRepository;
 import com.paf.aerovisit.repository.MuseumZoneRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
+import com.paf.aerovisit.service.FaceEncodings;
 import com.paf.aerovisit.service.KycService;
 import com.paf.aerovisit.service.NotificationService;
 import com.paf.aerovisit.service.OtpService;
@@ -66,6 +67,10 @@ public class VisitorPortalController {
     // 🪪 Selfie-with-ID check (Python OpenCV + existing Tesseract OCR). Optional; when missing, bookings go to manual review.
     @Autowired(required = false)
     private KycService kycService;
+
+    // ☁️ Copies the ID photos to S3 (off locally). Optional, so test slices without it still start.
+    @Autowired(required = false)
+    private com.paf.aerovisit.service.UploadMirror uploadMirror;
 
     // Inbox for critical-feedback alerts (aerovisit.alerts.email: ALERT_EMAIL, else the system's sending address)
     @Value("${aerovisit.alerts.email:}")
@@ -463,11 +468,13 @@ public class VisitorPortalController {
                     String fileName = anonymousIdPhotoName(file.getOriginalFilename(), file.getContentType());
                     Files.copy(file.getInputStream(), uploadPath.resolve(fileName), StandardCopyOption.REPLACE_EXISTING);
                     visitor.setIdImageUrl(fileName);
+                    if (uploadMirror != null) uploadMirror.pushUpload(fileName);
                 }
                 if (!idCardFile.isEmpty()) {
                     String cardName = anonymousIdPhotoName(idCardFile.getOriginalFilename(), idCardFile.getContentType());
                     Files.copy(idCardFile.getInputStream(), uploadPath.resolve(cardName), StandardCopyOption.REPLACE_EXISTING);
                     visitor.setIdCardImageUrl(cardName);
+                    if (uploadMirror != null) uploadMirror.pushUpload(cardName);
                 }
 
                 // 🪪 TWO-STEP KYC (ZERO TRUST: Master Bookings included, their lead booker is screened like anyone else):
@@ -488,9 +495,23 @@ public class VisitorPortalController {
                 if (kyc.rejected()) {
                     return saveRejectedAttempt(visitor, kyc, redirectAttributes);
                 }
+                // 🧬 ONE PERSON, ONE BOOKING PER DATE: the same face under another email. A near-certain match is refused
+                // (nothing saved, the email code stays valid); a borderline one is saved for the Director, tagged with the
+                // other booking, so a look-alike (sibling, parent and child) is never turned away automatically.
+                DuplicateFace duplicate = duplicateFace(FaceEncodings.parse(kyc.faceEncoding()), repo.findByVisitDate(visitor.getVisitDate()));
+                if (duplicate != null && duplicate.refuse()) {
+                    discardIdPhoto(visitor.getIdImageUrl());
+                    discardIdPhoto(visitor.getIdCardImageUrl());
+                    redirectAttributes.addFlashAttribute("error", DUPLICATE_FACE_MESSAGE);
+                    return "redirect:/";
+                }
                 visitor.setStatus(kyc.status());
                 visitor.setFaceEncoding(kyc.faceEncoding());
                 visitor.setOcrNameMatch(kyc.ocrNameMatch());
+                if (duplicate != null) {
+                    visitor.setStatus(KycService.MANUAL_REVIEW);
+                    visitor.setPossibleDuplicateOf(duplicate.referenceId());
+                }
             } catch (Exception e) {
                 System.out.println("File or OCR Processing failed: " + e.getMessage());
                 visitor.setStatus("PENDING_MANUAL_REVIEW");
@@ -621,6 +642,38 @@ public class VisitorPortalController {
 
     // Re-applying for a date after a rejection: allowed once this many hours have passed since the newest REJECTED
     // application for that email + date (timed from its createdAt, i.e. when it was submitted)
+    // 🧬 Same-face duplicate check (one person, one booking per date, whatever the email). At or above REFUSE the two faces
+    // are near-certainly one person; from FaceEncodings.SAME_PERSON_COSINE (0.363, the 1:1 ID-vs-selfie line) up to it they
+    // may only look alike, and comparing against a whole day of bookings makes such look-alikes likelier, so the Director decides.
+    static final double DUPLICATE_FACE_REFUSE_COSINE = 0.55;
+    static final String DUPLICATE_FACE_MESSAGE = "You already have a booking for this date. Please manage it with your Booking Reference ID instead of booking again.";
+    // Bookings that don't hold the date for their face, the same ones the email duplicate rule lets a visitor re-book over
+    static final Set<String> FACE_FREE_STATUSES = Set.of("CANCELLED_OVERRIDE", "CANCELLED_BY_VISITOR", "CANCELLED", "REJECTED");
+
+    record DuplicateFace(String referenceId, double score, boolean refuse) {}
+
+    // The closest booking on the same date whose face is at least SAME_PERSON_COSINE alike, or null. No face for the new
+    // booking (AI service down, no face found) or none on file for the others = no match; those go to manual review anyway.
+    static DuplicateFace duplicateFace(double[] face, List<Visitor> sameDay) {
+        if (face == null || sameDay == null) return null;
+        Visitor closest = null;
+        double best = -1;
+        for (Visitor other : sameDay) {
+            if (other.getStatus() == null || FACE_FREE_STATUSES.contains(other.getStatus())) continue;
+            double[] otherFace = FaceEncodings.parse(other.getFaceEncoding());
+            if (otherFace == null) continue;
+            double score = FaceEncodings.cosine(face, otherFace);
+            if (score > best) {
+                best = score;
+                closest = other;
+            }
+        }
+        if (closest == null || best < FaceEncodings.SAME_PERSON_COSINE) return null;
+        System.out.println("🧬 Same-face booking on this date: similarity=" + String.format(java.util.Locale.ROOT, "%.3f", best)
+                + " with " + closest.getReferenceId() + (best >= DUPLICATE_FACE_REFUSE_COSINE ? " -> refused" : " -> manual review"));
+        return new DuplicateFace(closest.getReferenceId(), best, best >= DUPLICATE_FACE_REFUSE_COSINE);
+    }
+
     static final long REJECTED_COOLDOWN_HOURS = 4;
     static final String REJECTED_COOLDOWN_MESSAGE = "Please wait " + REJECTED_COOLDOWN_HOURS + " hours before reapplying for the same date.";
 
@@ -1033,13 +1086,14 @@ public class VisitorPortalController {
     }
 
     // Removes an ID photo saved for a booking that was then refused, so no orphaned photo stays on disk
-    private static void discardIdPhoto(String fileName) {
+    private void discardIdPhoto(String fileName) {
         if (fileName == null) return;
         try {
             Files.deleteIfExists(Paths.get("uploads").resolve(fileName));
         } catch (Exception e) {
             System.err.println("Could not remove refused booking's ID photo: " + e.getMessage());
         }
+        if (uploadMirror != null) uploadMirror.deleteUpload(fileName); // ☁️ and its S3 copy
     }
 
     // ID photo file name: a random UUID plus the uploaded file's own extension (.jpg, .jpeg or .png only, so nothing

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<!--
+    Staff sign-in pages (login.html, forgot-password.html): the museum side of the split layout and its small script.
+    Usage:  <main class="av-auth av-auth--split">
+                <th:block th:replace="~{fragments/auth :: hero}"></th:block>
+                <div class="av-auth-side"> …the page's own logo, card and footer… </div>
+            </main>
+            <th:block th:replace="~{fragments/auth :: script}"></th:block>
+    Photos: the Hero Slideshow photos from Website Content (CmsWebConfig passes heroSlides); none = the navy panel.
+-->
+<body>
+
+<aside th:fragment="hero" class="av-auth-hero">
+    <!-- 🖼️ The museum's hero photos (Website Content), one at a time; decorative, so no alt text -->
+    <img th:each="s, st : ${heroSlides}" class="av-auth-photo" th:classappend="${st.first} ? 'is-active'"
+         th:src="@{/exhibit-photos/{f}(f=${s.filename})}" alt="" th:attr="loading=${st.first ? 'eager' : 'lazy'}">
+    <div class="av-auth-hero-tint" aria-hidden="true"></div>
+    <div class="av-auth-rings" aria-hidden="true"><span></span><span></span><span></span><span class="av-auth-sweep"></span></div>
+
+    <div class="av-auth-hero-inner">
+        <div class="av-auth-hero-copy">
+            <p class="av-auth-eyebrow"><span class="av-auth-dot" aria-hidden="true"></span>PAF Aerospace Museum · Villamor Air Base</p>
+            <h1 class="av-auth-title">AeroVisit<br><span>Command</span></h1>
+            <p class="av-auth-lead">Bookings, gate operations and museum analytics in one secure console for authorised staff.</p>
+            <ul class="av-auth-points">
+                <li><i class="bi bi-calendar2-check" aria-hidden="true"></i>Approvals</li>
+                <li><i class="bi bi-qr-code-scan" aria-hidden="true"></i>Gate check-in</li>
+                <li><i class="bi bi-graph-up-arrow" aria-hidden="true"></i>Analytics</li>
+            </ul>
+        </div>
+        <p class="av-auth-clock"><i class="bi bi-broadcast" aria-hidden="true"></i><span data-auth-clock>Manila</span></p>
+    </div>
+</aside>
+
+<th:block th:fragment="script">
+<script>
+// 🗓️ Staff sign-in: Manila clock, a slow fade between the hero photos, show/hide password and a Caps Lock hint
+(function () {
+    var clock = document.querySelector('[data-auth-clock]');
+    if (clock && window.Intl) {
+        var fmt = new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        var tick = function () { clock.textContent = fmt.format(new Date()) + ' PHT'; };
+        tick();
+        setInterval(tick, 15000);
+    }
+
+    var photos = Array.prototype.slice.call(document.querySelectorAll('.av-auth-photo'));
+    var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (photos.length > 1 && !still) {
+        var index = 0;
+        setInterval(function () {
+            photos[index].classList.remove('is-active');
+            index = (index + 1) % photos.length;
+            photos[index].classList.add('is-active');
+        }, 7000);
+    }
+
+    document.querySelectorAll('[data-pw-toggle]').forEach(function (button) {
+        var input = document.getElementById(button.getAttribute('data-pw-toggle'));
+        if (!input) return;
+        button.addEventListener('click', function () {
+            var show = input.type === 'password';
+            input.type = show ? 'text' : 'password';
+            button.setAttribute('aria-pressed', show ? 'true' : 'false');
+            button.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+            button.querySelector('i').className = show ? 'bi bi-eye-slash' : 'bi bi-eye';
+            input.focus();
+        });
+    });
+
+    var caps = document.querySelector('[data-caps-warning]');
+    if (caps) {
+        document.querySelectorAll('input[type="password"]').forEach(function (input) {
+            ['keydown', 'keyup'].forEach(function (type) {
+                input.addEventListener(type, function (e) {
+                    if (e.getModifierState) caps.hidden = !e.getModifierState('CapsLock');
+                });
+            });
+            input.addEventListener('blur', function () { caps.hidden = true; });
+        });
+    }
+})();
+</script>
+</th:block>
+
+</body>
+</html>

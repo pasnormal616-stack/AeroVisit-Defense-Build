@@ -9,6 +9,8 @@ public class MuseumPrediction {
     private int minWalkIns;
     private int maxWalkIns;
     private int confidencePercentage;
+    // True while the AI uses its starter estimates (not enough visit history to learn from yet)
+    private boolean baselineEstimate;
 
     // Environmental Telemetry
     private String weather;
@@ -45,6 +47,7 @@ public class MuseumPrediction {
     public int getMinWalkIns() { return minWalkIns; }
     public int getMaxWalkIns() { return maxWalkIns; }
     public int getConfidencePercentage() { return confidencePercentage; }
+    public boolean isBaselineEstimate() { return baselineEstimate; }
     public String getWeather() { return weather; }
     public String getSecurityCondition() { return securityCondition; }
     public String getPersonnel() { return personnel; }
@@ -56,6 +59,7 @@ public class MuseumPrediction {
     public void setMinWalkIns(int minWalkIns) { this.minWalkIns = minWalkIns; }
     public void setMaxWalkIns(int maxWalkIns) { this.maxWalkIns = maxWalkIns; }
     public void setConfidencePercentage(int confidencePercentage) { this.confidencePercentage = confidencePercentage; }
+    public void setBaselineEstimate(boolean baselineEstimate) { this.baselineEstimate = baselineEstimate; }
     public void setWeather(String weather) { this.weather = weather; }
     public void setSecurityCondition(String securityCondition) { this.securityCondition = securityCondition; }
     public void setPersonnel(String personnel) { this.personnel = personnel; }

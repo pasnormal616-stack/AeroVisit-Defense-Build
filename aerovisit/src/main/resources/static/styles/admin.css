@@ -1114,6 +1114,116 @@ button.av-nav-link { width: 100%; background: none; border: 0; font: inherit; te
 .av-auth-foot a { color: var(--text-muted); }
 .av-auth .error-msg { display: flex; align-items: center; gap: 8px; padding: 10px 12px; margin-bottom: 16px; border-radius: var(--radius); background: var(--danger-tint); color: var(--danger-ink); font-size: 0.8125rem; font-weight: 550; }
 
+/* 11b. Staff sign-in, split layout (login.html, forgot-password.html, fragments/auth.html): the museum side on the
+   left (navy, the Website Content hero photos, slow radar rings) and the sign-in card on the right. Phones: the museum
+   side becomes a short banner above the card. The left side is always dark; the right side follows the theme. */
+.av-auth.av-auth--split {
+    display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(440px, 1fr);
+    align-items: stretch; justify-content: stretch; gap: 0; padding: 0;
+}
+.av-auth-hero {
+    position: relative; overflow: hidden; isolation: isolate;
+    display: flex; padding: 56px clamp(32px, 5vw, 72px);
+    color: #FFFFFF;
+    background:
+        radial-gradient(90% 60% at 20% 110%, rgba(210, 175, 57, 0.22) 0%, rgba(210, 175, 57, 0) 60%),
+        radial-gradient(70% 60% at 0% 0%, rgba(0, 43, 128, 0.85) 0%, rgba(0, 43, 128, 0) 70%),
+        linear-gradient(160deg, #001A4F 0%, #000B22 100%);
+}
+.av-auth-photo {
+    position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%; object-fit: cover;
+    opacity: 0; transform: scale(1.06); transition: opacity 1600ms ease-in-out, transform 9000ms linear;
+}
+.av-auth-photo.is-active { opacity: 1; transform: scale(1); }
+.av-auth-hero-tint {
+    position: absolute; inset: 0; z-index: -1;
+    background:
+        linear-gradient(120deg, rgba(0, 11, 34, 0.94) 0%, rgba(0, 26, 79, 0.80) 50%, rgba(0, 11, 34, 0.55) 100%),
+        linear-gradient(180deg, rgba(0, 11, 34, 0) 60%, rgba(0, 11, 34, 0.7) 100%);
+}
+.av-auth-rings { position: absolute; right: -180px; bottom: -180px; z-index: -1; width: 620px; aspect-ratio: 1; border-radius: 50%; overflow: hidden; pointer-events: none; }
+.av-auth-rings span { position: absolute; inset: 0; margin: auto; border-radius: 50%; border: 1px solid rgba(210, 175, 57, 0.16); }
+.av-auth-rings span:nth-child(1) { width: 34%; height: 34%; }
+.av-auth-rings span:nth-child(2) { width: 67%; height: 67%; }
+.av-auth-rings span:nth-child(3) { width: 100%; height: 100%; border-color: rgba(210, 175, 57, 0.24); }
+.av-auth-rings .av-auth-sweep {
+    width: 100%; height: 100%; border: 0;
+    background: conic-gradient(from 0deg, rgba(210, 175, 57, 0.22) 0deg, rgba(210, 175, 57, 0.04) 50deg, transparent 90deg, transparent 360deg);
+    animation: av-auth-sweep 9s linear infinite;
+}
+@keyframes av-auth-sweep { to { transform: rotate(360deg); } }
+.av-auth-hero-inner { display: flex; flex-direction: column; gap: 40px; width: 100%; max-width: 560px; }
+.av-auth-hero-copy { margin-block: auto; }
+.av-auth-eyebrow {
+    display: inline-flex; align-items: center; gap: 10px; margin: 0 0 18px;
+    font-family: 'JetBrains Mono', var(--font-mono); font-size: 0.6875rem; font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.72);
+}
+.av-auth-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--paf-gold); box-shadow: 0 0 0 4px rgba(210, 175, 57, 0.18); }
+.av-app .av-auth-hero .av-auth-title {
+    margin: 0 0 18px; font-family: 'Jost', var(--font-ops); font-weight: 800; letter-spacing: -0.02em;
+    font-size: clamp(2.75rem, 1.6rem + 3vw, 4.5rem); line-height: 0.98; color: #FFFFFF;
+}
+.av-app .av-auth-hero .av-auth-title span { color: var(--paf-gold); }
+.av-auth-lead { margin: 0 0 28px; max-width: 440px; font-size: 1rem; line-height: 1.6; color: rgba(255, 255, 255, 0.78); }
+.av-auth-points { display: flex; flex-wrap: wrap; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.av-auth-points li {
+    display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.06);
+    font-size: 0.8125rem; font-weight: 550; color: rgba(255, 255, 255, 0.9);
+}
+.av-auth-points i { color: var(--paf-gold); }
+.av-auth-clock { display: flex; align-items: center; gap: 8px; margin: 0; font-family: 'JetBrains Mono', var(--font-mono); font-size: 0.75rem; color: rgba(255, 255, 255, 0.6); }
+.av-auth-clock i { color: var(--paf-gold); }
+
+.av-auth-side { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 40px 24px; }
+.av-auth--split .av-auth-logo { height: 96px; }
+/* Forgot Password wraps its card in a Bootstrap column; inside the split layout it takes the card's own width */
+.av-auth--split .av-auth-side > .col-12 { width: 100%; max-width: 420px; padding: 0; }
+.av-auth--split .av-auth-panel { max-width: 420px; padding: 32px; overflow: hidden; }
+.av-auth--split .av-auth-panel::before {
+    content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+    background: linear-gradient(90deg, var(--paf-ultramarine) 0%, var(--paf-gold) 100%);
+}
+.av-auth-kicker { margin: 0 0 6px; font-family: 'JetBrains Mono', var(--font-mono); font-size: 0.6875rem; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-muted); }
+.av-auth--split .av-auth-panel h2 { font-family: 'Jost', var(--font-ops); font-size: 1.75rem; font-weight: 700; letter-spacing: -0.01em; }
+.av-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.av-label-row > a { margin-left: auto; }
+.av-input-icon { position: relative; }
+.av-input-icon > i { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none; }
+.av-input-icon > .form-control-custom { min-height: 46px; padding-left: 42px; }
+.av-input-icon--action > .form-control-custom { padding-right: 48px; }
+.av-pw-toggle {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: var(--radius);
+    background: transparent; color: var(--text-muted); cursor: pointer;
+}
+.av-pw-toggle:hover, .av-pw-toggle:focus-visible { background: var(--bg-surface); color: var(--text); }
+.av-caps-warning { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; font-size: 0.75rem; font-weight: 550; color: var(--gold-ink); }
+.av-auth-submit { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 46px; font-weight: 650; }
+/* PAF gold call to action with navy text, like the visitor portal's Book a Visit */
+.av-app .av-auth--split .av-auth-panel .btn-primary { background: var(--paf-gold); border-color: var(--paf-gold); color: #001A4F; }
+.av-app .av-auth--split .av-auth-panel .btn-primary:hover { background: #E3C24F; border-color: #E3C24F; color: #001A4F; }
+.av-app .av-auth--split .av-auth-panel .btn-primary:focus-visible { outline: 2px solid var(--paf-ultramarine); outline-offset: 2px; }
+.av-auth-submit i { transition: transform 200ms ease; }
+.av-auth-submit:hover i, .av-auth-submit:focus-visible i { transform: translateX(3px); }
+.av-auth--split .av-auth-foot { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 6px; }
+
+@media (max-width: 991.98px) {
+    .av-auth.av-auth--split { grid-template-columns: 1fr; }
+    .av-auth-hero { padding: 28px 20px 32px; }
+    .av-auth-hero-inner { gap: 16px; }
+    .av-app .av-auth-hero .av-auth-title { font-size: 2.25rem; margin-bottom: 10px; }
+    .av-auth-lead { margin-bottom: 16px; font-size: 0.9375rem; }
+    .av-auth-rings, .av-auth-clock { display: none; }
+    .av-auth-side { padding: 28px 16px 40px; }
+    .av-auth--split .av-auth-logo { height: 80px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .av-auth-rings .av-auth-sweep { animation: none; }
+    .av-auth-photo { transition: none; transform: none; }
+}
+
 .av-violation { max-width: 640px; }
 .av-target { display: grid; grid-template-columns: 90px 1fr; margin-bottom: 16px; border-radius: var(--radius); background: var(--bg-surface); overflow: hidden; }
 .av-target dt, .av-target dd { margin: 0; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }

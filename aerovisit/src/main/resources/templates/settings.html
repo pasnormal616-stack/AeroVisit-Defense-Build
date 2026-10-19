@@ -157,6 +157,32 @@
         </div>
     </div>
 
+    <!-- 5. AI FEATURES (DIRECTOR ONLY): on/off switch, confirmed with the same emailed code (StaffManagementController) -->
+    <div th:if="${isDirector}" class="row g-4 mt-4" id="aiFeatures">
+        <div class="col-12">
+            <div class="av-panel mb-0">
+                <div class="av-panel-head">
+                    <span><i class="bi bi-cpu me-2"></i>AI Features</span>
+                    <span class="badge-soft" id="aiStateBadge">loading...</span>
+                </div>
+                <div class="av-panel-body">
+                    <p class="mb-2">Face check at booking, face bans, duplicate-face check, Sgt. Aero chatbot, walk-in forecast, feedback analysis and the AI roster.</p>
+                    <p class="mb-3 text-muted">AI server in AWS: <strong id="aiServerState">loading...</strong></p>
+                    <div class="alert alert-warning small" role="note">
+                        <i class="bi bi-exclamation-triangle-fill me-1"></i> With the AI off, bookings still work but every one goes to manual photo review, and
+                        <strong>face bans and duplicate-face checks are not enforced</strong>: guards must recognise banned visitors at the gate.
+                        Turning it back on takes about 10 to 20 minutes while the AI server starts.
+                    </div>
+                    <form id="aiForm" class="js-staff-request" autocomplete="off">
+                        <input type="hidden" name="target" id="aiTarget" value="ai-off">
+                        <button type="submit" id="aiButton" class="btn-primary-custom" disabled><i class="bi bi-envelope-check"></i><span id="aiButtonLabel">Send Security Code</span></button>
+                        <small class="av-hint mt-2"><i class="bi bi-info-circle me-1"></i> Nothing changes until the emailed code is entered under Confirm With Security Code.</small>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
 </div>
 </main>
 
@@ -194,7 +220,38 @@
         });
     }
 
+    // 🤖 AI Features card: state badge, AI server state, and which way the button switches
+    var AI_STATES = {
+        ON: ['AI features: ON', 'badge-approved'],
+        STARTING: ['AI features: starting...', 'badge-pending'],
+        OFF: ['AI features: OFF', 'badge-rejected']
+    };
+    var SERVER_STATES = {
+        RUNNING: 'running (billed)', STARTING: 'starting (billed)', STOPPING: 'shutting down', STOPPED: 'stopped (not billed)',
+        NOT_LINKED: 'not linked to this website: start or stop it in AWS', UNKNOWN: 'status unavailable'
+    };
+    var aiTimer = null;
+    function loadAi() {
+        fetch('/admin/api/staff-accounts/ai', {headers: {'Accept': 'application/json'}})
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                var state = AI_STATES[data.state] || AI_STATES.ON;
+                var badge = document.getElementById('aiStateBadge');
+                badge.textContent = state[0];
+                badge.className = 'badge-soft ' + state[1];
+                document.getElementById('aiServerState').textContent = SERVER_STATES[data.server] || data.server;
+                var on = data.state !== 'OFF';
+                document.getElementById('aiTarget').value = on ? 'ai-off' : 'ai-on';
+                document.getElementById('aiButtonLabel').textContent = on ? 'Turn OFF AI features' : 'Turn ON AI features';
+                document.getElementById('aiButton').disabled = !data.available;
+                clearTimeout(aiTimer);
+                if (data.state === 'STARTING' || data.server === 'STARTING' || data.server === 'STOPPING') aiTimer = setTimeout(loadAi, 30000);
+            })
+            .catch(function () { document.getElementById('aiServerState').textContent = 'unavailable'; });
+    }
+
     function loadAccounts() {
+        loadAi();
         fetch('/admin/api/staff-accounts', {headers: {'Accept': 'application/json'}})
             .then(function (r) { return r.json(); })
             .then(function (data) {

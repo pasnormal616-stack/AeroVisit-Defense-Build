@@ -144,9 +144,9 @@ class PendingQueueTest {
         manual.setStatus("PENDING_MANUAL_REVIEW");
         PendingQueue.View view = build(List.of(manual, v(2, TODAY), v(3, TODAY.minusDays(4))));
         assertThat(view.chips()).extracting(PendingQueue.Chip::key)
-            .containsExactly("manual", "unverified", "conflict", "large", "master", "special", "soon", "overdue");
-        assertThat(view.chips()).extracting(PendingQueue.Chip::count).containsExactly(1, 0, 0, 0, 0, 0, 2, 1);
-        assertThat(view.chips().get(3).label()).isEqualTo("Large group (16+)");
+            .containsExactly("manual", "unverified", "duplicate", "conflict", "large", "master", "special", "soon", "overdue");
+        assertThat(view.chips()).extracting(PendingQueue.Chip::count).containsExactly(1, 0, 0, 0, 0, 0, 0, 2, 1);
+        assertThat(view.chips().get(4).label()).isEqualTo("Large group (16+)");
     }
 
     @Test

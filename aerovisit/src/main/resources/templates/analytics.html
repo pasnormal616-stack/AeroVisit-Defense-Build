@@ -58,6 +58,12 @@
         </div>
     </div>
 
+    <!-- 🤖 AI switched off in Settings: say so instead of showing an empty forecast -->
+    <div th:unless="${aiEnabled}" class="alert alert-secondary" role="status">
+        <i class="bi bi-cpu me-1"></i> AI features are turned off in Settings, so there is no walk-in forecast, staffing advice or feedback analysis.
+        Bookings, reports and the Visitor Tally work as usual.
+    </div>
+
     <!-- AI TURNOUT FORECAST -->
     <section class="av-metrics" aria-label="AI turnout forecast">
 
@@ -79,6 +85,7 @@
                             Range <strong class="text-dark" th:text="${minWalkIns} + '–' + ${maxWalkIns}"></strong>
                             &middot; <span class="text-success fw-bold" th:text="${confidencePercentage} + '%'">85%</span> conf.
                         </span>
+                        <span th:if="${forecastBaseline == true}" class="d-block text-warning fw-bold">Estimate: limited visit history</span>
                     </div>
                 </div>
                 <div class="av-stat av-stat--ok">
@@ -308,7 +315,7 @@
                     <i class="bi bi-info-square-fill"></i>
                     <div>
                         <strong class="av-label d-block mb-1">Executive Summary</strong>
-                        Based on historical traffic and the current <span class="fw-bold text-lowercase" th:text="${liveWeather != null ? liveWeather : 'nominal'}"></span> weather conditions, the AI's 100 decision trees predict <strong th:text="${walkIns}">0</strong> walk-ins. Combined with <strong th:text="${preBooked}">0</strong> scheduled online reservations, the system expects <strong th:text="${totalPrediction}">0</strong> total civilians today with a <strong class="text-success" th:text="${confidencePercentage} + '%'">0%</strong> statistical confidence level.
+                        <th:block th:text="${forecastBaseline == true} ? 'Using starter estimates (fewer than 14 days of visit history) and the current' : 'Based on historical traffic and the current'">Based on historical traffic and the current</th:block> <span class="fw-bold text-lowercase" th:text="${liveWeather != null ? liveWeather : 'nominal'}"></span> weather conditions, the AI's 100 decision trees predict <strong th:text="${walkIns}">0</strong> walk-ins. Combined with <strong th:text="${preBooked}">0</strong> scheduled online reservations, the system expects <strong th:text="${totalPrediction}">0</strong> total civilians today with a <strong class="text-success" th:text="${confidencePercentage} + '%'">0%</strong> statistical confidence level.
                     </div>
                 </div>
 

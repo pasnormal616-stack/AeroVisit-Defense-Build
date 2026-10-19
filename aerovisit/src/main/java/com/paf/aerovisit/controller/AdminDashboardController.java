@@ -58,6 +58,10 @@ public class AdminDashboardController {
     private final BookingSlotRepository bookingRepo;
     private final PredictiveAdvisorService aiService;
 
+    // Visitor Tally paper records (optional, so test slices without the repository still start; then no archive is shown)
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.paf.aerovisit.repository.VisitorTallyArchiveRepository tallyArchive;
+
     public AdminDashboardController(VisitorRepository repo, BookingSlotRepository bookingRepo, PredictiveAdvisorService aiService) {
         this.repo = repo;
         this.bookingRepo = bookingRepo;
@@ -174,6 +178,7 @@ public class AdminDashboardController {
             model.addAttribute("sort", sortOrder);
             model.addAttribute("dateFilter", dateFilter);
             model.addAttribute("range", manifestRange(range));
+            if ("all".equals(filter)) model.addAttribute("visitorTally", buildVisitorTally());
 
             // Daily Capacity Tracker: any date the staff pick, today by default
             LocalDate targetDate = (capacityDate != null) ? capacityDate : LocalDate.now();
@@ -289,6 +294,7 @@ public class AdminDashboardController {
                     model.addAttribute("maxWalkIns", prediction.getMaxWalkIns());
                     model.addAttribute("confidencePercentage", prediction.getConfidencePercentage());
                     model.addAttribute("liveWeather", prediction.getWeather());
+                    model.addAttribute("forecastBaseline", prediction.isBaselineEstimate());
 
                     model.addAttribute("preBooked", actualPreBookedCount); // Shows real DB count
                     model.addAttribute("securityCondition", prediction.getSecurityCondition());
@@ -825,6 +831,31 @@ public class AdminDashboardController {
         }
         matrix.addCell(new Phrase(String.valueOf(complaintCount), fontTotal));
         document.add(matrix);
+    }
+
+    // 📊 Visitor Tally (Entire Database tab): paper records (archive) + AeroVisit check-ins, visitors per month and year
+    com.paf.aerovisit.service.VisitorTally.View buildVisitorTally() {
+        Map<java.time.YearMonth, Integer> archive = new HashMap<>();
+        if (tallyArchive != null) {
+            for (com.paf.aerovisit.model.VisitorTallyArchive a : tallyArchive.findAll()) {
+                archive.put(java.time.YearMonth.of(a.getYear(), a.getMonth()), a.getVisitors());
+            }
+        }
+        Map<java.time.YearMonth, Integer> live = new HashMap<>();
+        for (Object[] row : repo.tallyVisitorsByMonth()) {
+            live.put(java.time.YearMonth.of(((Number) row[0]).intValue(), ((Number) row[1]).intValue()), ((Number) row[2]).intValue());
+        }
+        LocalDate first = repo.findFirstRealVisitDate();
+        return com.paf.aerovisit.service.VisitorTally.build(archive, live,
+                first == null ? null : java.time.YearMonth.from(first), java.time.YearMonth.now());
+    }
+
+    @GetMapping("/admin/visitor-tally.csv")
+    public ResponseEntity<String> exportVisitorTally() {
+        return ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=PAF_AeroVisit_Visitor_Tally_" + LocalDate.now() + ".csv")
+                .contentType(org.springframework.http.MediaType.parseMediaType("text/csv; charset=UTF-8"))
+                .body(com.paf.aerovisit.service.VisitorTally.toCsv(buildVisitorTally()));
     }
 
     // Days the Excel export covers, today included (the same 30 days the analytics trend chart shows)

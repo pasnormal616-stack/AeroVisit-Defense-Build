@@ -92,7 +92,7 @@ class ApprovalCapacityRaceTest {
         }
         verify(seatReservation).saveIfSeatsRemain(v);
         verify(repo, never()).save(any());
-        verify(emailService).sendApprovalEmailWithQR(anyString(), anyString(), anyString(), anyString(), any());
+        verify(emailService).sendApprovalEmailWithQR(anyString(), anyString(), anyString(), anyString(), any(), any());
     }
 
     @Test
@@ -111,7 +111,7 @@ class ApprovalCapacityRaceTest {
             Files.deleteIfExists(qr);
         }
         verify(repo, never()).save(any());
-        verify(emailService, never()).sendApprovalEmailWithQR(anyString(), anyString(), anyString(), anyString(), any());
+        verify(emailService, never()).sendApprovalEmailWithQR(anyString(), anyString(), anyString(), anyString(), any(), any());
     }
 
     @Test
@@ -125,7 +125,7 @@ class ApprovalCapacityRaceTest {
         } finally {
             Files.deleteIfExists(Paths.get("uploads", "QR_" + id + ".png"));
         }
-        verify(emailService, never()).sendApprovalEmailWithQR(anyString(), anyString(), anyString(), anyString(), any());
+        verify(emailService, never()).sendApprovalEmailWithQR(anyString(), anyString(), anyString(), anyString(), any(), any());
     }
 
     @Test

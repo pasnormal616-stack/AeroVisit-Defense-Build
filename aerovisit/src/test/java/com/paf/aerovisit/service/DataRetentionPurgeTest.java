@@ -57,11 +57,11 @@ class DataRetentionPurgeTest {
     }
 
     @Test
-    void asksOnlyForTheSixFinishedStatusesOlderThan30Days() {
+    void asksOnlyForTheSevenFinishedStatusesOlderThan30Days() {
         when(repo.findExpiredWithFiles(any(), any())).thenReturn(List.of());
         engine.purgeExpiredFiles(TODAY, uploads);
         verify(repo).findExpiredWithFiles(eq(Set.of("CHECKED-OUT", "NO_SHOW", "CANCELLED", "REJECTED",
-                "CANCELLED_BY_VISITOR", "CANCELLED_OVERRIDE")), eq(CUTOFF));
+                "CANCELLED_BY_VISITOR", "CANCELLED_OVERRIDE", "DENIED_ENTRY")), eq(CUTOFF));
     }
 
     @Test
@@ -85,17 +85,20 @@ class DataRetentionPurgeTest {
     }
 
     @Test
-    void aGateDenialIsKeptIndefinitelyAsASecurityRecord() throws IOException {
-        Visitor denied = visit(9, "DENIED_ENTRY", CUTOFF.minusDays(400));
+    void aGateDenialLosesItsPhotosAndFaceVectorAfter30DaysLikeAnyFinishedVisit() throws IOException {
+        // Decided 2026-10-18: no indefinite security record. Someone who must stay out is banned (own face copy).
+        Visitor denied = visit(9, "DENIED_ENTRY", CUTOFF.minusDays(1));
         denied.setFaceEncoding("[0.5,0.6]");
+        String photo = denied.getIdImageUrl();
         when(repo.findExpiredWithFiles(any(), any())).thenReturn(List.of(denied));
 
-        assertThat(engine.purgeExpiredFiles(TODAY, uploads)).isZero();
+        assertThat(engine.purgeExpiredFiles(TODAY, uploads)).isEqualTo(1);
 
-        assertThat(denied.getIdImageUrl()).isNotNull();
-        assertThat(denied.getFaceEncoding()).isEqualTo("[0.5,0.6]");
-        assertThat(uploads.resolve(denied.getIdImageUrl())).exists();
-        verify(repo, never()).save(any());
+        assertThat(denied.getIdImageUrl()).isNull();
+        assertThat(denied.getQrCodeUrl()).isNull();
+        assertThat(denied.getFaceEncoding()).isNull();
+        assertThat(uploads.resolve(photo)).doesNotExist();
+        verify(repo).save(denied);
     }
 
     @Test
@@ -157,7 +160,7 @@ class DataRetentionPurgeTest {
         Visitor exactly30Days = visit(1, "CHECKED-OUT", CUTOFF);               // not older than 30 days yet
         Visitor approvedOld = visit(2, "APPROVED", CUTOFF.minusDays(10));        // live pass
         Visitor pendingOld = visit(3, "PENDING", CUTOFF.minusDays(10));
-        Visitor deniedOld = visit(4, "DENIED_ENTRY", CUTOFF.minusDays(10));      // not in the requested list
+        Visitor deniedOld = visit(4, "CHECKED-IN", CUTOFF.minusDays(10));        // still inside: not finished
         Visitor noDate = visit(5, "REJECTED", null);
         when(repo.findExpiredWithFiles(any(), any())).thenReturn(List.of(exactly30Days, approvedOld, pendingOld, deniedOld, noDate));
 
@@ -276,14 +279,14 @@ class DataRetentionPurgeTest {
     }
 
     @Test
-    void aGateDenialKeepsItsPersonalDetailsToo() throws IOException {
+    void aGateDenialHasItsPersonalDetailsAnonymizedToo() throws IOException {
         Visitor denied = visit(14, "DENIED_ENTRY", CUTOFF.minusDays(400));
         denied.setFullName("Suspect, Juan");
         when(repo.findExpiredWithFiles(any(), any())).thenReturn(List.of(denied));
 
         engine.purgeExpiredFiles(TODAY, uploads);
-        assertThat(denied.getFullName()).isEqualTo("Suspect, Juan");
-        assertThat(denied.getName()).isEqualTo("Visitor 14");
+        assertThat(denied.getFullName()).isEqualTo("REDACTED");
+        assertThat(denied.getName()).isEqualTo("REDACTED");
     }
 
     // --- GAP 1: unreviewed requests past their visit date expire ---
@@ -417,5 +420,52 @@ class DataRetentionPurgeTest {
     void withoutTheBanRepositoryNothingIsLifted() {
         engine.faceBans = null;
         assertThat(engine.liftExpiredBans(TODAY, uploads)).isZero();
+    }
+
+    // --- Chatbot messages (chat_logs) follow the same 30 days ---
+
+    @Test
+    void chatMessagesOlderThanTheCutoffAreDeleted() {
+        var jdbc = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        engine.jdbc = jdbc;
+        java.time.LocalDateTime cutoff = java.time.LocalDateTime.of(2026, 9, 18, 2, 0);
+        when(jdbc.update(any(String.class), any(Object[].class))).thenReturn(7);
+
+        assertThat(engine.purgeOldChatLogs(cutoff)).isEqualTo(7);
+
+        verify(jdbc).update("DELETE FROM chat_logs WHERE `timestamp` < ?", java.sql.Timestamp.valueOf(cutoff));
+    }
+
+    @Test
+    void aMissingChatTableNeverBreaksTheNightlyPurge() {
+        var jdbc = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        engine.jdbc = jdbc;
+        when(jdbc.update(any(String.class), any(Object[].class)))
+                .thenThrow(new org.springframework.jdbc.BadSqlGrammarException("purge", "DELETE FROM chat_logs",
+                        new java.sql.SQLSyntaxErrorException("Table 'aerovisit.chat_logs' doesn't exist")));
+
+        assertThat(engine.purgeOldChatLogs(java.time.LocalDateTime.of(2026, 9, 18, 2, 0))).isZero();
+    }
+
+    @Test
+    void withoutADatabaseConnectionNoChatIsTouched() {
+        engine.jdbc = null;
+        assertThat(engine.purgeOldChatLogs(java.time.LocalDateTime.of(2026, 9, 18, 2, 0))).isZero();
+    }
+
+    @Test
+    void theNightlyJobAlsoPurgesChatsWithA30DayCutoff() {
+        var jdbc = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        engine.jdbc = jdbc;
+        when(repo.findByStatusInAndVisitDateBefore(any(), any())).thenReturn(List.of());
+        when(repo.findExpiredWithFiles(any(), any())).thenReturn(List.of());
+        java.time.LocalDateTime before = java.time.LocalDateTime.now().minusDays(30);
+
+        engine.executeDataRetentionPurge();
+
+        var captured = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(jdbc).update(eq("DELETE FROM chat_logs WHERE `timestamp` < ?"), captured.capture());
+        java.time.LocalDateTime cutoff = ((java.sql.Timestamp) captured.getValue()).toLocalDateTime();
+        assertThat(cutoff).isBetween(before.minusSeconds(5), java.time.LocalDateTime.now().minusDays(30));
     }
 }

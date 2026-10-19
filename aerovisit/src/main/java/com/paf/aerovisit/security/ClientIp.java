@@ -12,7 +12,15 @@ public final class ClientIp {
 
     private ClientIp() {}
 
+    // 🌐 Behind Amazon CloudFront every request reaches the app from a CloudFront edge server, so getRemoteAddr() is
+    // the same for all visitors in one region and they would share every limit. CloudFront adds the visitor's own
+    // address, overwriting anything a browser sent: "CloudFront-Viewer-Address: 198.51.100.7:46532" (IPv6:
+    // "2001:db8::7:46532"). Trusted because the Elastic Beanstalk security group only accepts traffic from CloudFront.
+    static final String CLOUDFRONT_VIEWER = "CloudFront-Viewer-Address";
+
     public static String of(HttpServletRequest request) {
+        String viewer = viewerAddress(request.getHeader(CLOUDFRONT_VIEWER));
+        if (viewer != null) return viewer;
         String remote = request.getRemoteAddr();
         if (remote == null || remote.isBlank()) return "unknown";
         if (!isPrivate(remote)) return remote;
@@ -23,6 +31,15 @@ public final class ClientIp {
             if (!proxyAdded.isEmpty()) return proxyAdded;
         }
         return remote;
+    }
+
+    // The IP part of "ip:port" (brackets around IPv6 allowed), or null when the value isn't an address
+    static String viewerAddress(String header) {
+        if (header == null) return null;
+        int colon = header.lastIndexOf(':');
+        if (colon <= 0 || !header.substring(colon + 1).trim().matches("\\d{1,5}")) return null;
+        String ip = header.substring(0, colon).trim().replaceAll("^\\[|\\]$", "");
+        return ip.matches("[0-9A-Fa-f:.]{2,45}") && (ip.contains(".") || ip.contains(":")) ? ip : null;
     }
 
     // Loopback, 10/8, 172.16/12, 192.168/16, link-local, carrier-grade NAT 100.64/10 and IPv6 unique-local fc00::/7.

@@ -19,7 +19,14 @@ public class AiAdvisorService {
     // The old shared ID every visitor used to get; its chat_logs history mixes many visitors, so it is never reused
     private static final String LEGACY_SHARED_SESSION = "civilian_terminal_1";
 
+    // 🤖 AI features switch (Settings): off = no call to the AI service (the chat button is hidden too)
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.paf.aerovisit.service.AiSwitch aiSwitch;
+
+    static final String OFF_DUTY_REPLY = "Sgt. Aero is off duty right now. For bookings and museum rules, please use the booking form and the Visitor Guidelines tab.";
+
     public String getAiResponse(String userMessage, String requestedSessionId) {
+        if (aiSwitch != null && !aiSwitch.enabled()) return OFF_DUTY_REPLY;
         // Each visitor's browser keeps its own Gemini conversation (and chat_logs history) on the Python side
         String sessionId = resolveSessionId(requestedSessionId);
 

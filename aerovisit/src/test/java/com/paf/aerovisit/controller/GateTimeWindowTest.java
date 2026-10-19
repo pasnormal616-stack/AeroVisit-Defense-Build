@@ -2,7 +2,6 @@ package com.paf.aerovisit.controller;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -12,13 +11,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.Optional;
 
 import org.hamcrest.Matchers;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -106,7 +110,25 @@ class GateTimeWindowTest {
         }
     }
 
-    // --- Through the gate endpoints (windows built around the real clock) ---
+    // --- Through the gate endpoints (windows built around a fixed gate clock) ---
+
+    // A fixed gate clock (10:00 AM on 20 Oct 2026): these tests no longer depend on when the suite runs, so none of
+    // them has to skip itself near midnight
+    private static final LocalDate TODAY = LocalDate.of(2026, 10, 20);
+    private static final LocalTime NOW = LocalTime.of(10, 0);
+
+    @Autowired private GuardOperationController controller;
+
+    @BeforeEach
+    void fixTheGateClock() {
+        ZoneId zone = ZoneId.systemDefault();
+        controller.clock = Clock.fixed(LocalDateTime.of(TODAY, NOW).atZone(zone).toInstant(), zone);
+    }
+
+    @AfterEach
+    void realClockAgain() {
+        controller.clock = null;
+    }
 
     private Visitor approvedToday(String window) {
         Visitor v = new Visitor();
@@ -114,7 +136,7 @@ class GateTimeWindowTest {
         v.setName("Juan Dela Cruz");
         v.setEmail("juan@example.com");
         v.setStatus("APPROVED");
-        v.setVisitDate(LocalDate.now());
+        v.setVisitDate(TODAY);
         v.setTimeWindow(window);
         v.setSecureToken(TOKEN);
         when(repo.findBySecureToken(TOKEN)).thenReturn(Optional.of(v));
@@ -129,8 +151,7 @@ class GateTimeWindowTest {
 
     @Test
     void scanConfirmAndManualCheckInAllRefuseAnEarlyArrival() throws Exception {
-        LocalTime now = LocalTime.now();
-        assumeTrue(now.isBefore(LocalTime.of(20, 0)), "needs room before midnight");
+        LocalTime now = NOW;
         Visitor v = approvedToday(window(now.plusHours(2), now.plusHours(3)));
 
         mvc.perform(post("/admin/api/scan").with(csrf()).param("qrData", TOKEN))
@@ -149,8 +170,7 @@ class GateTimeWindowTest {
 
     @Test
     void scanConfirmAndManualCheckInAllRefuseAMissedWindow() throws Exception {
-        LocalTime now = LocalTime.now();
-        assumeTrue(now.isAfter(LocalTime.of(3, 0)), "needs room after midnight");
+        LocalTime now = NOW;
         Visitor v = approvedToday(window(now.minusHours(3), now.minusHours(1)));
         String ended = "ACCESS DENIED: Time window ended at " + now.minusHours(1).format(LABEL) + ".";
 
@@ -168,8 +188,7 @@ class GateTimeWindowTest {
 
     @Test
     void anArrivalWithinTheEarlyGraceIsVerifiedAndCheckedIn() throws Exception {
-        LocalTime now = LocalTime.now();
-        assumeTrue(now.isBefore(LocalTime.of(22, 0)), "needs room before midnight");
+        LocalTime now = NOW;
         Visitor v = approvedToday(window(now.plusMinutes(10), now.plusHours(1)));
 
         mvc.perform(post("/admin/api/scan").with(csrf()).param("qrData", TOKEN))
@@ -181,8 +200,7 @@ class GateTimeWindowTest {
 
     @Test
     void aLateArrivalInsideTheWindowIsCheckedInManually() throws Exception {
-        LocalTime now = LocalTime.now();
-        assumeTrue(now.isAfter(LocalTime.of(2, 0)) && now.isBefore(LocalTime.of(22, 0)), "needs room on both sides");
+        LocalTime now = NOW;
         Visitor v = approvedToday(window(now.minusHours(1), now.plusHours(1)));
 
         mvc.perform(post("/admin/manual-checkin").with(csrf()).param("referenceId", "PAF-A7X92K"))
@@ -192,11 +210,10 @@ class GateTimeWindowTest {
 
     @Test
     void checkOutIsNeverBlockedByTheWindow() throws Exception {
-        LocalTime now = LocalTime.now();
-        assumeTrue(now.isAfter(LocalTime.of(3, 0)), "needs room after midnight");
+        LocalTime now = NOW;
         Visitor v = approvedToday(window(now.minusHours(3), now.minusHours(1)));
         v.setStatus("CHECKED-IN");
-        v.setCheckInTime(java.time.LocalDateTime.now().minusHours(2));
+        v.setCheckInTime(LocalDateTime.of(TODAY, NOW).minusHours(2));
 
         mvc.perform(post("/admin/api/scan").with(csrf()).param("qrData", TOKEN))
             .andExpect(jsonPath("$.status").value("success"));

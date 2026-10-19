@@ -97,6 +97,22 @@ public interface VisitorRepository extends JpaRepository<Visitor, Long> {
     List<Visitor> findRealVisitorsForExport(@org.springframework.data.repository.query.Param("from") LocalDate from,
                                             @org.springframework.data.repository.query.Param("to") LocalDate to);
 
+    // Same "real visitor" rule as the export above (no mock, no Historical Baseline row)
+    String REAL_VISITOR = "(v.purpose IS NULL OR v.purpose <> '" + com.paf.aerovisit.service.MockVisitorGenerator.HIDDEN_PURPOSE + "')"
+         + " AND (v.email IS NULL OR (v.email NOT LIKE '%" + com.paf.aerovisit.service.MockVisitorGenerator.MOCK_EMAIL_DOMAIN + "'"
+         + " AND (v.name IS NULL OR v.name NOT LIKE 'Civilian Trainee - %' OR v.email NOT LIKE 'civ_%@mail.com')))";
+
+    // 10c. Visitor Tally: people who actually came (checked in or out, a group counts its size) per year and month,
+    // as [year, month, visitors] rows. Kept after the 30-day purge, which only anonymizes the row.
+    @Query("SELECT YEAR(v.visitDate), MONTH(v.visitDate), SUM(CASE WHEN v.groupSize < 1 THEN 1 ELSE v.groupSize END)"
+         + " FROM Visitor v WHERE v.status IN ('CHECKED-IN', 'CHECKED-OUT') AND v.visitDate IS NOT NULL AND " + REAL_VISITOR
+         + " GROUP BY YEAR(v.visitDate), MONTH(v.visitDate)")
+    List<Object[]> tallyVisitorsByMonth();
+
+    // 10d. Visitor Tally: date of the first real booking (any status), the month AeroVisit's own counts start
+    @Query("SELECT MIN(v.visitDate) FROM Visitor v WHERE " + REAL_VISITOR)
+    LocalDate findFirstRealVisitDate();
+
     // ==========================================================
     // 🔥 AI DASHBOARD DIAGNOSTIC QUERIES 🔥
     // ==========================================================

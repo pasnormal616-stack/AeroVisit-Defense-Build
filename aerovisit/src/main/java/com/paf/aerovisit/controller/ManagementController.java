@@ -53,6 +53,10 @@ public class ManagementController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.paf.aerovisit.repository.BlacklistedFaceRepository faceBanRepo;
 
+    // ☁️ Keeps the S3 copies of photos in step with uploads/ (off locally). Optional, so test slices without it still start.
+    @Autowired(required = false)
+    private com.paf.aerovisit.service.UploadMirror uploadMirror;
+
     public ManagementController(VisitorRepository repo, StaffScheduleRepository staffRepo, BookingSlotRepository bookingRepo, MuseumEmployeeRepository employeeRepo, EmailService emailService, PredictiveAdvisorService aiService, TimeWindowConfigRepository timeWindowRepo, MuseumClosureRepository closureRepo) {
         this.repo = repo;
         this.staffRepo = staffRepo;
@@ -74,6 +78,11 @@ public class ManagementController {
                 if (v.getIdImageUrl() != null) { Files.deleteIfExists(uploadDir.resolve(v.getIdImageUrl())); }
                 if (v.getIdCardImageUrl() != null) { Files.deleteIfExists(uploadDir.resolve(v.getIdCardImageUrl())); }
                 if (v.getQrCodeUrl() != null) { Files.deleteIfExists(uploadDir.resolve(v.getQrCodeUrl())); }
+                if (uploadMirror != null) {
+                    uploadMirror.deleteUpload(v.getIdImageUrl());
+                    uploadMirror.deleteUpload(v.getIdCardImageUrl());
+                    uploadMirror.deleteUpload(v.getQrCodeUrl());
+                }
                 repo.delete(v);
                 redirectAttributes.addFlashAttribute("success", "Visitor deleted and storage space freed up!");
             } catch (IOException e) {
@@ -227,7 +236,11 @@ public class ManagementController {
             String name = v.getName().trim();
             ban.setName(name.length() > MAX_BAN_REASON ? name.substring(0, MAX_BAN_REASON) : name);
         }
-        if (ban.getImageUrl() == null) ban.setImageUrl(copyMugshot(mugshotDir, v.getIdImageUrl()));
+        if (ban.getImageUrl() == null) {
+            if (uploadMirror != null) uploadMirror.restoreUpload(v.getIdImageUrl()); // ☁️ after a redeploy the selfie may only be in S3
+            ban.setImageUrl(copyMugshot(mugshotDir, v.getIdImageUrl()));
+            if (uploadMirror != null && ban.getImageUrl() != null) uploadMirror.pushUpload(ban.getImageUrl());
+        }
         faceBanRepo.save(ban);
         // Revoked either way: a booking made before the face was banned must not keep a live pass
         int revoked = revokeOpenBookings(face, why);
@@ -281,6 +294,7 @@ public class ManagementController {
                 } catch (IOException e) {
                     System.err.println("Could not remove the lifted ban's mugshot: " + e.getMessage());
                 }
+                if (uploadMirror != null) uploadMirror.deleteUpload(String.valueOf(mugshot.getFileName()));
             }
             redirectAttributes.addFlashAttribute("success", "Ban #" + id + " lifted. This person can book visits again; revoked bookings stay rejected.");
         }
@@ -949,6 +963,127 @@ public class ManagementController {
         return "redirect:/admin/staff";
     }
 
+    // 🗓️ FILL FROM STAFF TEMPLATES (no AI): every active officer gets a shift on each open date that is one of their
+    // Working Days, at their Default Shift, in their own role. An officer on leave or already on an overlapping shift that
+    // date is skipped and listed, never refused as a whole. Shown in the same preview as the AI plan, then deployed with it.
+    static final int TEMPLATE_MAX_DAYS = 92;
+    static final int TEMPLATE_SKIPPED_SHOWN = 25;
+
+    record TemplatePlan(Map<LocalDate, List<StaffSchedule>> shifts, List<String> skipped) {}
+
+    static TemplatePlan planFromTemplates(LocalDate start, LocalDate end, Set<LocalDate> openDates, Set<LocalDate> skipDates,
+                                          List<MuseumEmployee> employees, Map<String, String> dutyShifts, List<String> allowedShifts,
+                                          List<StaffLeave> leaves, List<StaffSchedule> existing) {
+        Map<LocalDate, List<StaffSchedule>> plan = new TreeMap<>();
+        List<String> skipped = new ArrayList<>();
+        List<MuseumEmployee> withTemplate = new ArrayList<>();
+        List<String> noTemplate = new ArrayList<>();
+        for (MuseumEmployee emp : employees) {
+            if (!emp.isActive() || emp.getName() == null || emp.getName().isBlank()) continue; // 👻 GHOST RULE
+            String shift = emp.getDefaultShift() == null ? null : dutyShifts.get(emp.getDefaultShift());
+            if (shift == null || emp.getWorkingDaysLabel().isEmpty()) {
+                noTemplate.add(emp.getName().trim());
+            } else if (!allowedShifts.contains(shift)) {
+                skipped.add(emp.getName().trim() + ": default shift " + shift + " is not one of the configured time windows");
+            } else {
+                withTemplate.add(emp);
+            }
+        }
+        if (!noTemplate.isEmpty()) {
+            skipped.add("No shift template (Working Days + Default Shift) for: " + String.join(", ", noTemplate));
+        }
+        Map<LocalDate, List<StaffSchedule>> rosterByDate = new HashMap<>();
+        for (StaffSchedule s : existing) {
+            if (s.getDutyDate() != null) rosterByDate.computeIfAbsent(s.getDutyDate(), d -> new ArrayList<>()).add(s);
+        }
+        for (LocalDate date = start; !date.isAfter(end); date = date.plusDays(1)) {
+            if (!openDates.contains(date) || skipDates.contains(date)) continue; // closed or a skipped holiday
+            for (MuseumEmployee emp : withTemplate) {
+                if (!emp.worksOn(date.getDayOfWeek())) continue;
+                String name = emp.getName().trim();
+                String shift = dutyShifts.get(emp.getDefaultShift());
+                StaffLeave leave = leaveOn(name, date, leaves); // 🏖️ VACATION RULE: skipped, not refused
+                if (leave != null) {
+                    skipped.add(name + " on " + date + ": on leave");
+                    continue;
+                }
+                StaffSchedule clash = overlappingShift(name, date, shift, null, rosterByDate.getOrDefault(date, List.of()));
+                if (clash != null) { // ⛔ CLONING RULE: skipped, not refused
+                    skipped.add(name + " on " + date + ": already on duty " + clash.getShiftTime());
+                    continue;
+                }
+                StaffSchedule s = new StaffSchedule();
+                s.setStaffName(name);
+                s.setRole(emp.getRole() == null || emp.getRole().isBlank() ? "Admin" : emp.getRole().trim());
+                s.setDutyDate(date);
+                s.setShiftTime(shift);
+                plan.computeIfAbsent(date, d -> new ArrayList<>()).add(s);
+            }
+        }
+        return new TemplatePlan(plan, skipped);
+    }
+
+    @PostMapping("/admin/staff/template-preview")
+    public String previewTemplateStaff(
+            @RequestParam("startDate") String startDateStr,
+            @RequestParam("endDate") String endDateStr,
+            @RequestParam(value = "excludeDates", required = false) String excludeDatesStr,
+            RedirectAttributes redirectAttributes) {
+        LocalDate startDate;
+        LocalDate endDate;
+        Set<LocalDate> skipDates = new HashSet<>();
+        try {
+            startDate = LocalDate.parse(startDateStr);
+            endDate = LocalDate.parse(endDateStr);
+            if (excludeDatesStr != null) {
+                for (String d : excludeDatesStr.split(",")) {
+                    if (!d.trim().isEmpty()) skipDates.add(LocalDate.parse(d.trim()));
+                }
+            }
+        } catch (java.time.format.DateTimeParseException e) {
+            redirectAttributes.addFlashAttribute("error", "Please pick a valid start and end date.");
+            return "redirect:/admin/staff";
+        }
+        if (startDate.isAfter(endDate)) {
+            redirectAttributes.addFlashAttribute("error", "Time Paradox: End Date cannot be before Start Date.");
+            return "redirect:/admin/staff";
+        }
+        if (java.time.temporal.ChronoUnit.DAYS.between(startDate, endDate) + 1 > TEMPLATE_MAX_DAYS) {
+            redirectAttributes.addFlashAttribute("error", "Please fill at most " + TEMPLATE_MAX_DAYS + " days at a time.");
+            return "redirect:/admin/staff";
+        }
+
+        Set<LocalDate> openMuseumDates = bookingRepo.findAll().stream()
+                .map(BookingSlot::getSlotDate)
+                .filter(d -> d != null)
+                .collect(Collectors.toCollection(HashSet::new));
+        openMuseumDates.addAll(repo.findBuyoutDates()); // VIP buyouts can fall on days with no public slots
+
+        List<MuseumEmployee> employees = employeeRepo.findAll();
+        TemplatePlan plan = planFromTemplates(startDate, endDate, openMuseumDates, skipDates, employees, dutyShifts(),
+                windowShiftOptions(), leavesBetween(startDate, endDate), staffRepo.findByArchivedFalseAndDutyDateBetween(startDate, endDate));
+
+        if (plan.shifts().isEmpty()) {
+            redirectAttributes.addFlashAttribute("error", "🗓️ No shifts to add from staff templates between " + startDate + " and " + endDate
+                    + ". Check that those dates have open booking slots, and that officers have Working Days and a Default Shift in the Staff Directory."
+                    + (plan.skipped().isEmpty() ? "" : " Skipped: " + String.join("; ", plan.skipped().subList(0, Math.min(5, plan.skipped().size()))) + "."));
+            return "redirect:/admin/staff";
+        }
+        List<String> skippedShown = new ArrayList<>(plan.skipped().subList(0, Math.min(TEMPLATE_SKIPPED_SHOWN, plan.skipped().size())));
+        if (plan.skipped().size() > TEMPLATE_SKIPPED_SHOWN) skippedShown.add("... and " + (plan.skipped().size() - TEMPLATE_SKIPPED_SHOWN) + " more");
+
+        redirectAttributes.addFlashAttribute("groupedShifts", plan.shifts());
+        redirectAttributes.addFlashAttribute("activeStaff", employees.stream().filter(MuseumEmployee::isActive).collect(Collectors.toList()));
+        redirectAttributes.addFlashAttribute("previewMode", true);
+        redirectAttributes.addFlashAttribute("previewSource", "templates");
+        redirectAttributes.addFlashAttribute("templateSkipped", skippedShown);
+        return "redirect:/admin/staff";
+    }
+
+    // 🤖 AI features switch (Settings): the AI roster needs the AI service; Fill from Staff Templates does not
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.paf.aerovisit.service.AiSwitch aiSwitch;
+
     @PostMapping("/admin/staff/ai-preview")
     public String previewAiStaff(
             @RequestParam("startDate") String startDateStr,
@@ -956,6 +1091,10 @@ public class ManagementController {
             @RequestParam(value = "excludeWeekends", required = false) boolean excludeWeekends,
             @RequestParam(value = "excludeDates", required = false) String excludeDatesStr,
             RedirectAttributes redirectAttributes) {
+        if (aiSwitch != null && !aiSwitch.enabled()) {
+            redirectAttributes.addFlashAttribute("error", "AI features are turned off in Settings. Use Fill from Staff Templates instead.");
+            return "redirect:/admin/staff";
+        }
         
         try {
             LocalDate startDate = LocalDate.parse(startDateStr);
@@ -1068,6 +1207,7 @@ public class ManagementController {
             @RequestParam(value="roles", required=false) List<String> roles,
             @RequestParam(value="dutyDates", required=false) List<String> dutyDates,
             @RequestParam(value="shiftTimes", required=false) List<String> shiftTimes,
+            @RequestParam(value="source", required=false) String source,
             RedirectAttributes redirectAttributes) {
         
         if(staffNames == null || staffNames.isEmpty()) {
@@ -1136,7 +1276,9 @@ public class ManagementController {
             count++;
         }
         
-        redirectAttributes.addFlashAttribute("success", "🤖 Successfully deployed " + count + " AI-planned shifts to the Master Duty Roster.");
+        redirectAttributes.addFlashAttribute("success", "templates".equals(source)
+                ? "🗓️ Deployed " + count + " shifts from staff templates to the Master Duty Roster."
+                : "🤖 Successfully deployed " + count + " AI-planned shifts to the Master Duty Roster.");
         return "redirect:/admin/staff";
     }
 

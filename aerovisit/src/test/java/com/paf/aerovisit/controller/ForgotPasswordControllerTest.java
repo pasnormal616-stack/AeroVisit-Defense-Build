@@ -95,6 +95,7 @@ class ForgotPasswordControllerTest {
             .andReturn().getResponse().getContentAsString();
         assertThat(html)
             .contains("<title>AeroVisit - Forgot Password</title>")
+            .contains("class=\"av-auth av-auth--split\"", "<aside class=\"av-auth-hero\">") // same museum side as the login
             .contains("<meta name=\"_csrf\"", "<meta name=\"_csrf_header\"", "/js/csrf.js")
             .containsSubsequence("<div class=\"col-12 col-md-8 col-lg-6 col-xl-5 mx-auto p-3\">",
                 "<section class=\"av-auth-panel mx-auto\">", "<h2>Forgot Password</h2>",

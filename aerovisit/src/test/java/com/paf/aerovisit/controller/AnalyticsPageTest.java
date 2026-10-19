@@ -90,6 +90,31 @@ class AnalyticsPageTest {
     }
 
     @Test
+    void aStarterEstimateForecastIsLabelledAsLimitedHistory() throws Exception {
+        MuseumPrediction starter = new MuseumPrediction(50, 40, 30, 50, 55, "Clear", "CONDITION GREEN", "2 Guards", "Standard");
+        starter.setBaselineEstimate(true);
+        when(aiService.fetchTurnoutPrediction(anyInt(), anyString(), anyInt())).thenReturn(starter);
+
+        mvc.perform(get("/admin/analytics"))
+            .andExpect(status().isOk())
+            .andExpect(model().attribute("forecastBaseline", true))
+            .andExpect(content().string(containsString("Estimate: limited visit history")))
+            .andExpect(content().string(containsString("Using starter estimates (fewer than 14 days of visit history)")));
+    }
+
+    @Test
+    void aLearnedForecastHasNoLimitedHistoryLabel() throws Exception {
+        when(aiService.fetchTurnoutPrediction(anyInt(), anyString(), anyInt()))
+            .thenReturn(new MuseumPrediction(57, 34, 20, 48, 87, "Clear", "CONDITION GREEN", "2 Guards", "Standard"));
+
+        mvc.perform(get("/admin/analytics"))
+            .andExpect(status().isOk())
+            .andExpect(model().attribute("forecastBaseline", false))
+            .andExpect(content().string(org.hamcrest.Matchers.not(containsString("Estimate: limited visit history"))))
+            .andExpect(content().string(containsString("Based on historical traffic and the current")));
+    }
+
+    @Test
     void attritionFunnelShowsNoShowsAsAFourthStage() throws Exception {
         when(repo.countTotalApproved()).thenReturn(10L);
         when(repo.countTotalCheckedIn()).thenReturn(6L);

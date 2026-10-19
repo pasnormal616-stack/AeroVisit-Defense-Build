@@ -37,11 +37,15 @@
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="photos-tab" data-bs-toggle="tab" data-bs-target="#photos" type="button" role="tab" aria-controls="photos" aria-selected="false"><i class="bi bi-images"></i>Exhibit Photos</button>
             </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="hero-tab" data-bs-toggle="tab" data-bs-target="#hero" type="button" role="tab" aria-controls="hero" aria-selected="false"><i class="bi bi-film"></i>Hero Slideshow</button>
+            </li>
         </ul>
         <div class="av-toolbar-meta av-mono">
             <span th:text="|${#lists.size(announcements)} announcements|">0 announcements</span>
             <span th:text="|${#lists.size(guidelines)} guidelines|">0 guidelines</span>
             <span th:text="|${#lists.size(photos)} photos|">0 photos</span>
+            <span th:text="|${#lists.size(heroSlides)} hero photos|">0 hero photos</span>
         </div>
     </div>
 
@@ -340,6 +344,72 @@
                                     <form th:action="@{/admin/content/photos/{id}/delete(id=${p.id})}" method="post" onsubmit="return confirm('Remove this photo from the slideshow? The file is deleted.');">
                                         <button type="submit" class="btn btn-sm btn-light text-danger p-1" title="Delete photo" aria-label="Delete photo"><i class="bi bi-trash"></i></button>
                                     </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- HERO SLIDESHOW TAB: background photos behind the visitor portal's welcome banner (fragments/visitor :: backdrop) -->
+        <div class="tab-pane fade" id="hero" role="tabpanel" aria-labelledby="hero-tab">
+            <div class="av-panel">
+                <div class="av-panel-head">
+                    <span><i class="bi bi-cloud-arrow-up me-2"></i>Add Hero Photos</span>
+                    <span class="av-label" th:text="|JPG, PNG or WebP · 5 MB max each · up to ${heroMax} photos|">JPG, PNG or WebP</span>
+                </div>
+                <div class="av-panel-body">
+                    <form th:action="@{/admin/content/hero/upload}" method="post" enctype="multipart/form-data" class="row g-3 align-items-end" id="heroUploadForm">
+                        <div class="col-md-9">
+                            <label class="form-label-custom" for="heroInput">Background photos</label>
+                            <input type="file" id="heroInput" name="photos" class="form-control-custom" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple required
+                                   th:disabled="${#lists.size(heroSlides) >= heroMax}">
+                        </div>
+                        <div class="col-md-3">
+                            <button type="submit" class="btn-primary-custom w-100" th:disabled="${#lists.size(heroSlides) >= heroMax}"><i class="bi bi-upload"></i>Upload</button>
+                        </div>
+                    </form>
+                    <small class="av-hint mt-2"><i class="bi bi-info-circle me-1"></i>These photos play one after another behind "Discover Aviation History" on the visitor portal, under a dark tint so the words stay readable. Wide landscape photos (at least 1600 px across) of aircraft, hangars or the museum grounds look best. With no photos, the portal shows its navy sky.</small>
+                </div>
+            </div>
+
+            <div class="av-panel mb-0">
+                <div class="av-panel-head"><span><i class="bi bi-film me-2"></i>Hero Photos</span><span class="av-label">Shown in this order</span></div>
+                <div th:if="${#lists.isEmpty(heroSlides)}" class="av-empty">
+                    <i class="bi bi-film"></i>No hero photos yet. The visitor portal shows its navy sky until you add some.
+                </div>
+                <div class="av-panel-body" th:unless="${#lists.isEmpty(heroSlides)}">
+                    <div class="row g-3">
+                        <div class="col-sm-6 col-xl-4" th:each="s, stat : ${heroSlides}">
+                            <div class="card h-100">
+                                <div class="ratio ratio-16x9">
+                                    <img th:src="@{/exhibit-photos/{f}(f=${s.filename})}" class="object-fit-cover rounded-top" loading="lazy" th:alt="|Hero photo ${stat.count}|">
+                                </div>
+                                <div class="card-body p-2 d-grid gap-2">
+                                    <form th:action="@{/admin/content/hero/{id}/update(id=${s.id})}" method="post" class="d-grid gap-2">
+                                        <input type="text" name="kicker" class="form-control-custom" maxlength="40" th:value="${s.kicker}"
+                                               placeholder="Small label (optional), e.g. Aircraft Park" aria-label="Small label">
+                                        <input type="text" name="caption" class="form-control-custom" maxlength="90" th:value="${s.caption}"
+                                               placeholder="Caption (optional), e.g. F-5A Freedom Fighter" aria-label="Caption">
+                                        <button type="submit" class="btn btn-sm btn-light"><i class="bi bi-check2"></i> Save text</button>
+                                    </form>
+                                    <div class="d-flex justify-content-between align-items-center gap-2">
+                                        <span class="av-mono av-muted small" th:text="|#${stat.count}|">#1</span>
+                                        <div class="d-flex gap-1">
+                                            <form th:action="@{/admin/content/hero/{id}/move(id=${s.id})}" method="post">
+                                                <input type="hidden" name="direction" value="up">
+                                                <button type="submit" class="btn btn-sm btn-light p-1" title="Move earlier" aria-label="Move earlier" th:disabled="${stat.first}"><i class="bi bi-arrow-left"></i></button>
+                                            </form>
+                                            <form th:action="@{/admin/content/hero/{id}/move(id=${s.id})}" method="post">
+                                                <input type="hidden" name="direction" value="down">
+                                                <button type="submit" class="btn btn-sm btn-light p-1" title="Move later" aria-label="Move later" th:disabled="${stat.last}"><i class="bi bi-arrow-right"></i></button>
+                                            </form>
+                                            <form th:action="@{/admin/content/hero/{id}/delete(id=${s.id})}" method="post" onsubmit="return confirm('Remove this photo from the hero slideshow? The file is deleted.');">
+                                                <button type="submit" class="btn btn-sm btn-light text-danger p-1" title="Delete photo" aria-label="Delete photo"><i class="bi bi-trash"></i></button>
+                                            </form>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>

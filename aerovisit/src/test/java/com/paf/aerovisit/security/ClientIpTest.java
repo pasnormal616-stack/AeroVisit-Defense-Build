@@ -45,6 +45,38 @@ class ClientIpTest {
         assertThat(ClientIp.isPrivate("not-an-ip.example")).isFalse(); // never resolved through DNS
     }
 
+    // --- Behind CloudFront: the viewer's own address, from the header CloudFront sets ---
+
+    private static MockHttpServletRequest viaCloudFront(String remoteAddr, String viewerAddress) {
+        MockHttpServletRequest request = from(remoteAddr, "130.176.1.10");
+        request.addHeader(ClientIp.CLOUDFRONT_VIEWER, viewerAddress);
+        return request;
+    }
+
+    @Test
+    void behindCloudFrontEachVisitorIsTheirOwnClient() {
+        // Same edge server for both visitors, different people: each keeps their own limit
+        assertThat(ClientIp.of(viaCloudFront("130.176.1.10", "198.51.100.7:46532"))).isEqualTo("198.51.100.7");
+        assertThat(ClientIp.of(viaCloudFront("130.176.1.10", "203.0.113.20:51000"))).isEqualTo("203.0.113.20");
+        // Also when the request reached the app through the private proxy chain (nginx, Docker)
+        assertThat(ClientIp.of(viaCloudFront("172.17.0.1", "198.51.100.7:46532"))).isEqualTo("198.51.100.7");
+    }
+
+    @Test
+    void theViewerPortIsDroppedForIpv4AndIpv6() {
+        assertThat(ClientIp.viewerAddress("198.51.100.7:46532")).isEqualTo("198.51.100.7");
+        assertThat(ClientIp.viewerAddress("2001:db8::7:46532")).isEqualTo("2001:db8::7");
+        assertThat(ClientIp.viewerAddress("[2001:db8::7]:46532")).isEqualTo("2001:db8::7");
+    }
+
+    @Test
+    void aMalformedViewerHeaderFallsBackToTheUsualRules() {
+        for (String bad : new String[] {"", "abc", "1.2.3.4", ":443", "1.2.3.4:port", "evil host:80", "<script>:1"}) {
+            assertThat(ClientIp.viewerAddress(bad)).as(bad).isNull();
+            assertThat(ClientIp.of(viaCloudFront("10.4.0.2", bad))).as(bad).isEqualTo("130.176.1.10");
+        }
+    }
+
     @Test
     void noUsableHeaderFallsBackToThePeer() {
         assertThat(ClientIp.of(from("127.0.0.1", null))).isEqualTo("127.0.0.1");

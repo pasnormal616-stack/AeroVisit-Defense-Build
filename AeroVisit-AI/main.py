@@ -138,9 +138,21 @@ except Exception as e:
     except Exception as e2:
         print(f"🔴 [NLP] Download failed too ({type(e2).__name__}: {e2}). /analyze will return errors.", flush=True)
 
-# --- FALLBACK BASELINE DATA & ML ENGINE ---
-X_train = [[1,1],[2,1],[3,2],[4,1],[5,3],[6,1],[7,1],[1,3],[3,4],[6,3],[7,4],[6,1],[7,2],[5,1]]
-y_train = [120,135,110,180,250,480,420,60,15,180,45,510,390,290]
+# --- STARTER ESTIMATES & ML ENGINE ---
+# Conservative starter estimates used until the museum has MIN_HISTORY_DAYS days of real check-ins: most visitors
+# pre-book (gate ID + KYC), school field trips arrive as pre-booked Master Bookings, weekends bring families.
+BASELINE_WALK_INS = {1: 10, 2: 15, 3: 15, 4: 15, 5: 20, 6: 45, 7: 40}   # walk-ins per day in clear weather, Mon..Sun
+RAIN_FACTOR = {1: 1.0, 2: 0.7, 3: 0.4, 4: 0.0}   # clear, light rain, heavy rain, typhoon (base effectively closed)
+MIN_HISTORY_DAYS = 14
+BASELINE_MAX_CONFIDENCE = 55   # a starter estimate never claims high confidence
+
+def baseline_training_data():
+    X = [[day, weather] for day in BASELINE_WALK_INS for weather in RAIN_FACTOR]
+    y = [round(BASELINE_WALK_INS[day] * RAIN_FACTOR[weather]) for day, weather in X]
+    return X, y
+
+X_train, y_train = baseline_training_data()
+using_baseline = True
 ai_model = RandomForestRegressor(n_estimators=100, random_state=42)
 
 def connect_db():
@@ -179,7 +191,9 @@ def ensure_chat_logs_table():
             db.close()
 
 def train_ai_engine():
-    global X_train, y_train, ai_model
+    global X_train, y_train, ai_model, using_baseline
+    X_train, y_train = baseline_training_data()
+    using_baseline = True
     db = connect_db()
     if db:
         cursor = db.cursor()
@@ -191,12 +205,13 @@ def train_ai_engine():
                 GROUP BY visit_date
             """)
             records = cursor.fetchall()
-            if len(records) >= 5: 
+            if len(records) >= MIN_HISTORY_DAYS:
                 X_train = [[row[0], random.choices([1, 2, 3], weights=[0.7, 0.2, 0.1])[0]] for row in records]
                 y_train = [row[1] for row in records]
+                using_baseline = False
                 print("🟢 SUCCESS: Corporate Random Forest retrained on LIVE data.")
             else:
-                print("🟡 NOTICE: Not enough live data yet. Using baseline training data.")
+                print(f"🟡 NOTICE: {len(records)} of {MIN_HISTORY_DAYS} days of visit history. Using starter estimates.")
         except Exception as e:
             print(f"🔴 Training Query Error: {e}")
         finally:
@@ -242,6 +257,8 @@ def get_prediction(day_of_week: int = None, weather: str = None, pre_booked: int
         confidence_percentage = int(max(55, min(98, 100 - (variance_ratio * 100))))
     else:
         confidence_percentage = 95
+    if using_baseline:
+        confidence_percentage = min(confidence_percentage, BASELINE_MAX_CONFIDENCE)
 
     total_turnout = predicted_walk_ins + pre_booked
     
@@ -268,6 +285,7 @@ def get_prediction(day_of_week: int = None, weather: str = None, pre_booked: int
         "min_walk_ins": min_walk_ins,
         "max_walk_ins": max_walk_ins,
         "confidence_percentage": confidence_percentage,
+        "data_source": "baseline" if using_baseline else "live",
         "pre_booked": pre_booked,
         "weather": weather_desc,
         "briefing": {

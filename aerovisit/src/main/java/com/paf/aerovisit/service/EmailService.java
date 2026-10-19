@@ -54,6 +54,10 @@ public class EmailService {
     // Renders the HTML email templates (templates/email/*.html); Spring Boot's Thymeleaf engine in production
     private final ITemplateEngine templates;
 
+    // ☁️ Brings a QR code back from S3 when a redeploy wiped it from uploads/ (off locally). Optional: tests build this class directly.
+    @Autowired(required = false)
+    UploadMirror uploadMirror;
+
     @Autowired
     EmailService(JavaMailSender mailSender,
                  @Value("${aerovisit.public-base-url:http://localhost:8081}") String publicBaseUrl, ITemplateEngine templates) {
@@ -86,7 +90,8 @@ public class EmailService {
     }
 
     // One QR code file from uploads/, attached to the email as Entry_QRCode.png
-    private static Path qrFile(String qrCodeFileName) {
+    private Path qrFile(String qrCodeFileName) {
+        if (uploadMirror != null) uploadMirror.restoreUpload(qrCodeFileName);
         Path qrPath = Paths.get(System.getProperty("user.dir"), "uploads", qrCodeFileName);
         if (!Files.isReadable(qrPath)) {
             throw new MailDeliveryException("QR code attachment unreadable: " + qrPath);
@@ -106,7 +111,11 @@ public class EmailService {
             helper.setTo(toEmail);
             helper.setSubject(subject);
             helper.setText(html, true);
-            if (qrPath != null) helper.addAttachment("Entry_QRCode.png", new FileSystemResource(qrPath));
+            if (qrPath != null) {
+                // Shown in the message itself (approved.html / reminder.html: <img src="cid:entryQr">) and still attached
+                helper.addInline("entryQr", new FileSystemResource(qrPath), "image/png");
+                helper.addAttachment("Entry_QRCode.png", new FileSystemResource(qrPath));
+            }
             mailSender.send(message);
         } catch (MailException | MessagingException | UnsupportedEncodingException e) { // login refused, SMTP error, timeout
             throw new MailDeliveryException("SMTP send failed: " + e.getMessage(), e);
@@ -215,9 +224,17 @@ public class EmailService {
 
     // Same approval email, but also shows the visitor's Booking Reference ID when one is provided
     public void sendApprovalEmailWithQR(String toEmail, String visitorName, String date, String qrCodeFileName, String referenceId) {
+        sendApprovalEmailWithQR(toEmail, visitorName, date, qrCodeFileName, referenceId, null);
+    }
+
+    // ...plus the booked time window (e.g. "Morning (08:00 AM - 12:00 PM)"), shown with the gate's arrive-on-time rule;
+    // null hides it (Master Bookings take the whole day)
+    public void sendApprovalEmailWithQR(String toEmail, String visitorName, String date, String qrCodeFileName,
+                                        String referenceId, String timeWindow) {
         try {
             String subject = "PAF Aerospace Museum - Visit Approved: Entry Pass Enclosed";
-            String emailContent = render("approved", vars("name", visitorName, "date", date, "referenceId", referenceId));
+            String emailContent = render("approved", vars("name", visitorName, "date", date, "referenceId", referenceId,
+                    "timeWindow", timeWindow));
             send(toEmail, subject, emailContent, qrFile(qrCodeFileName));
             System.out.println("✅ Approval email successfully sent to " + toEmail);
 

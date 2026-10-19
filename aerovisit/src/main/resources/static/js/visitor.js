@@ -54,6 +54,7 @@
             if (!slides.length) return;
             index = (i + slides.length) % slides.length;
             if (fallback) fallback.classList.remove('is-active');
+            root.classList.add('has-photos'); // lighter, directional tint (visitor.css 14b)
             slides.forEach(function (s, k) { s.classList.toggle('is-active', k === index); });
             if (caption) renderCaption();
         }

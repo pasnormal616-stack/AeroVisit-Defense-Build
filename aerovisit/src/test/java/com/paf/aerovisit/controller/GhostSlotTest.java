@@ -94,7 +94,7 @@ class GhostSlotTest {
 
         assertThat(v.getStatus()).isEqualTo("PENDING");
         verify(repo, never()).save(any());
-        verify(emailService, never()).sendApprovalEmailWithQR(anyString(), anyString(), anyString(), anyString(), any());
+        verify(emailService, never()).sendApprovalEmailWithQR(anyString(), anyString(), anyString(), anyString(), any(), any());
     }
 
     @Test

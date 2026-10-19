@@ -269,7 +269,9 @@ class PortalContentTest {
         // Two-step KYC: the policy must disclose the face matching and the 30-day deletion, and no longer deny it
         assertThat(html).contains("<b>Biometric data:</b> a face template", "one-to-one verification",
             "<b>ID photos and face templates</b> are processed temporarily and deleted automatically 30 days after the visit date",
-            "once the visit is completed, missed, rejected or cancelled", "entry was denied at the gate");
+            "once the visit is completed, missed, rejected, cancelled or denied entry at the gate",
+            "when the face is barred from the base for a security violation");
+        assertThat(html).doesNotContain("entry was denied at the gate");
         assertThat(html).doesNotContain("No face recognition or face matching is performed");
         // Human-in-the-loop: no booking is confirmed automatically, and the visitor pages must not say otherwise
         assertThat(html).contains("every booking is reviewed and approved by authorized museum personnel before an entry pass is issued",
@@ -363,6 +365,10 @@ class PortalContentTest {
         // loading screen keeps its radar and progress bar; the one transparent logo file on its white badge (no JPEG)
         assertThat(html).containsSubsequence("id=\"vpPreloader\"", "vp-radar-sweep",
             "<span class=\"paf-logo-plate vp-pl-logo\"><img class=\"paf-logo\" src=\"/images/paflogo.png\" alt=\"Philippine Air Force Museum Logo\"", "vp-pl-bar");
+        // the museum's name under the logo, the jet riding the tip of the progress line, a visitor-friendly status
+        assertThat(html).containsSubsequence("id=\"vpPreloader\"", "PAF Aerospace Museum", "Visitor Portal &middot; Villamor Air Base",
+            "<div class=\"vp-pl-bar\"><span>", "class=\"vp-pl-jet\"", "</span></div>", "Preparing your visit");
+        assertThat(html).doesNotContain("Establishing secure channel");
         assertThat(html).doesNotContain("paflogowhite.jpg");
         // footer: logo above the designation and address
         assertThat(html).containsSubsequence("<div class=\"vp-footer-id\">", "vp-footer-logo", "src=\"/images/paflogo.png\"",

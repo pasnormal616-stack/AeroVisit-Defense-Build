@@ -81,3 +81,9 @@ backup-*/
 Thumbs.db
 ehthumbs.db
 desktop.ini
+
+# Elastic Beanstalk deploy bundles (100+ MB; older AI bundles also contained a .env with secrets): build them, never commit them
+aerovisit-docker-*.zip
+aerovisit-s3-*.zip
+AeroVisit-AI/aerovisit-ai-*.zip
+AeroVisit-AI/aerovisit-ai-*.zip.zip

@@ -140,17 +140,19 @@ class KycServiceTest {
     }
 
     @Test
-    void aLiveFaceThatDoesNotMatchTheIdIsRejectedWithoutOcrAndKeepsTheVector() throws Exception {
+    void aLiveFaceThatDoesNotMatchTheIdGoesToStaffNotRejectedAndKeepsTheVector() throws Exception {
         pythonMatches(false, axis(3)); // an older AI service: no "status" field, same routing
 
         KycService.KycResult result = screen();
 
-        assertThat(result.rejected()).isTrue();
+        // Never an automatic rejection: a soft ID portrait can make a genuine visitor score low
+        assertThat(result.rejected()).isFalse();
         assertThat(result.refused()).isFalse();
-        assertThat(result.status()).isEqualTo(KycService.REJECTED);
+        assertThat(result.status()).isEqualTo(KycService.MANUAL_REVIEW);
         assertThat(result.reason()).isEqualTo("FACE_MISMATCH");
-        assertThat(result.message()).isEqualTo("Booking failed: your selfie did not match the photo on your ID. If this is a mistake, please contact the reception desk.");
-        assertThat(result.faceEncoding()).isEqualTo(FaceEncodings.format(axis(3))); // kept so the Director can ban the face
+        assertThat(result.message()).isNull(); // the visitor sees the normal pending page
+        assertThat(result.ocrNameMatch()).isFalse(); // "Identity Unverified" for staff
+        assertThat(result.faceEncoding()).isEqualTo(FaceEncodings.format(axis(3))); // kept so the Director can still ban the face
         verify(ocr, never()).extractText(any(BufferedImage.class));
     }
 
@@ -185,10 +187,12 @@ class KycServiceTest {
     }
 
     @Test
-    void aMismatchStatusIsRejectedEvenIfTheOldFieldsLookFine() throws Exception {
+    void aMismatchStatusGoesToStaffEvenIfTheOldFieldsLookFine() throws Exception {
         pythonSays("MISMATCH", "OK", true, axis(5)); // the status wins
         KycService.KycResult result = screen();
-        assertThat(result.rejected()).isTrue();
+        assertThat(result.rejected()).isFalse();
+        assertThat(result.status()).isEqualTo(KycService.MANUAL_REVIEW);
+        assertThat(result.reason()).isEqualTo("FACE_MISMATCH");
         assertThat(result.faceEncoding()).isEqualTo(FaceEncodings.format(axis(5)));
         verify(ocr, never()).extractText(any(BufferedImage.class));
     }

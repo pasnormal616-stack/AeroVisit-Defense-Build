@@ -868,11 +868,13 @@ body.modal-open #chat-toggle-btn, body.modal-open .aero-greet, body.modal-open #
 .no-js .vp-preloader { display: none; }
 @keyframes vp-pl-failsafe { to { opacity: 0; visibility: hidden; pointer-events: none; } }
 
-.vp-pl-inner { display: flex; flex-direction: column; align-items: center; gap: 22px; transition: transform 700ms var(--ease-premium), opacity 500ms ease; }
+.vp-pl-inner { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 22px; transition: transform 700ms var(--ease-premium), opacity 500ms ease; }
 .vp-preloader.is-done .vp-pl-inner { transform: translateY(-24px) scale(0.96); opacity: 0; }
 
+/* The radar is a large, quiet background behind the logo (it fills the screen instead of a small centre dial) */
 .vp-radar {
-    position: relative; width: 148px; height: 148px; border-radius: 50%;
+    position: absolute; left: 50%; top: 50%; translate: -50% -50%;
+    width: min(86vmin, 680px); height: min(86vmin, 680px); border-radius: 50%; opacity: 0.55;
     background: radial-gradient(circle, rgba(210,175,57,0.08) 0%, rgba(0,26,79,0.2) 70%);
     box-shadow: 0 0 0 1px rgba(210,175,57,0.35), 0 0 48px -8px rgba(210,175,57,0.35), inset 0 0 24px rgba(0,0,0,0.5);
     overflow: hidden;
@@ -886,8 +888,8 @@ body.modal-open #chat-toggle-btn, body.modal-open .aero-greet, body.modal-open #
 .vp-radar-cross::after { top: 50%; left: 0; right: 0; height: 1px; }
 .vp-radar-sweep {
     position: absolute; inset: 0; border-radius: 50%;
-    background: conic-gradient(from 0deg, rgba(210,175,57,0.55) 0deg, rgba(210,175,57,0.12) 40deg, transparent 90deg, transparent 360deg);
-    animation: vp-sweep 1.6s linear infinite;
+    background: conic-gradient(from 0deg, rgba(210,175,57,0.26) 0deg, rgba(210,175,57,0.05) 40deg, transparent 90deg, transparent 360deg);
+    animation: vp-sweep 3.2s linear infinite;
 }
 @keyframes vp-sweep { to { transform: rotate(360deg); } }
 .vp-radar-blip { position: absolute; width: 5px; height: 5px; border-radius: 50%; background: #F3D675; box-shadow: 0 0 8px #F3D675; opacity: 0; animation: vp-blip 1.6s ease-out infinite; }
@@ -909,11 +911,19 @@ body.modal-open #chat-toggle-btn, body.modal-open .aero-greet, body.modal-open #
               animation: vp-pl-logo-in 600ms var(--ease-premium) both, vp-pl-logo-pulse 2.4s ease-in-out 600ms infinite; }
 @keyframes vp-pl-logo-in { from { opacity: 0; transform: translateY(6px) scale(0.97); } to { opacity: 1; transform: none; } }
 @keyframes vp-pl-logo-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.03); } }
-.vp-pl-logo + .vp-pl-sub { margin-top: -4px; }
-.vp-pl-sub { margin-top: -12px; font-family: var(--font-public); font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.26em; text-transform: uppercase; color: rgba(255,255,255,0.55); }
-.vp-pl-bar { width: 180px; height: 2px; border-radius: 2px; background: rgba(255,255,255,0.12); overflow: hidden; }
-.vp-pl-bar span { display: block; height: 100%; width: 100%; transform-origin: left; transform: scaleX(0); background: linear-gradient(90deg, #A8891F, #F3D675, #D2AF39); animation: vp-pl-fill 1.4s var(--ease-premium) forwards; }
-@keyframes vp-pl-fill { to { transform: scaleX(1); } }
+.vp-preloader .vp-pl-logo { height: 120px; padding: 8px 14px; border-radius: 18px;
+              box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(210, 175, 57, 0.45), 0 0 0 8px rgba(210, 175, 57, 0.08); }
+.vp-pl-name { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
+              animation: vp-pl-logo-in 600ms var(--ease-premium) 120ms both; }
+.vp-pl-title { font-family: var(--font-display); font-weight: 800; font-size: clamp(1.5rem, 1.2rem + 1.2vw, 2rem); letter-spacing: -0.01em; color: #FFFFFF; }
+.vp-pl-kicker { font-family: var(--font-public); font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.24em; text-transform: uppercase; color: rgba(255,255,255,0.6); }
+.vp-pl-sub { font-family: var(--font-public); font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: rgba(255,255,255,0.7); }
+/* Flight path: the line grows and the jet (pointing right) sits on its tip, so they always move together */
+.vp-pl-bar { position: relative; width: 240px; height: 2px; margin: 10px 0 2px; border-radius: 2px; background: rgba(255,255,255,0.14); }
+.vp-pl-bar span { position: relative; display: block; height: 100%; width: 0; border-radius: 2px; background: linear-gradient(90deg, rgba(168,137,31,0.2), #F3D675 70%, #D2AF39); animation: vp-pl-grow 1.4s var(--ease-premium) forwards; }
+.vp-pl-jet { position: absolute; right: 0; top: 50%; width: 22px; height: 22px; translate: 50% -50%; rotate: 90deg; fill: #FFFFFF;
+             filter: drop-shadow(0 0 6px rgba(243, 214, 117, 0.7)); }
+@keyframes vp-pl-grow { to { width: 100%; } }
 
 html.vp-is-loading { overflow: hidden; }
 
@@ -950,6 +960,20 @@ html.vp-is-loading { overflow: hidden; }
     background:
         linear-gradient(180deg, rgba(3, 8, 22, 0.74) 0%, rgba(3, 8, 22, 0.84) 45%, rgba(3, 8, 22, 0.95) 100%),
         radial-gradient(ellipse at 50% 30%, transparent 30%, rgba(0, 0, 0, 0.6) 100%);
+}
+/* 🖼️ Hero photos (Website Content > Hero Slideshow): dark behind the headline on the left, clear on the right so the
+   photo shows, and the bottom still fades to dark for the booking console. Phones (text full width): an even, darker wash. */
+.vp-backdrop.has-photos .vp-backdrop-tint,
+:root[data-theme="dark"] .vp-backdrop.has-photos .vp-backdrop-tint {
+    background:
+        linear-gradient(90deg, rgba(3, 8, 22, 0.86) 0%, rgba(3, 8, 22, 0.66) 38%, rgba(3, 8, 22, 0.30) 72%, rgba(3, 8, 22, 0.22) 100%),
+        linear-gradient(180deg, rgba(3, 8, 22, 0) 55%, rgba(3, 8, 22, 0.92) 100%);
+}
+@media (max-width: 767.98px) {
+    .vp-backdrop.has-photos .vp-backdrop-tint,
+    :root[data-theme="dark"] .vp-backdrop.has-photos .vp-backdrop-tint {
+        background: linear-gradient(180deg, rgba(3, 8, 22, 0.60) 0%, rgba(3, 8, 22, 0.72) 50%, rgba(3, 8, 22, 0.94) 100%);
+    }
 }
 /* Fine scan-line texture — a quiet technical/military finish */
 .vp-backdrop-grain { position: absolute; inset: 0; opacity: 0.35; background-image: repeating-linear-gradient(0deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 3px); }
@@ -1043,10 +1067,13 @@ html.vp-is-loading { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
     .vp-slide { transform: none !important; }
     .vp-radar-sweep, .vp-radar-blip, .vp-radar-jet { animation: none; }
+    .vp-pl-bar span { animation: none; width: 100%; }
 }
 @media (max-width: 767.98px) {
     .vp-hero-caption { margin-top: 28px; }
-    .vp-radar { width: 120px; height: 120px; }
+    .vp-radar { width: 120vmin; height: 120vmin; opacity: 0.45; }
+    .vp-preloader .vp-pl-logo { height: 96px; }
+    .vp-pl-bar { width: 200px; }
     .vp--immersive .vp-bezel { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(255,255,255,0.1); }
 }
 

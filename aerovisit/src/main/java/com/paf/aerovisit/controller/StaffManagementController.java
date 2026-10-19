@@ -22,6 +22,8 @@ import com.paf.aerovisit.config.SecurityConfig;
 import com.paf.aerovisit.model.StaffUser;
 import com.paf.aerovisit.repository.StaffUserRepository;
 import com.paf.aerovisit.security.ClientIp;
+import com.paf.aerovisit.service.AiServerControl;
+import com.paf.aerovisit.service.AiSwitch;
 import com.paf.aerovisit.service.OtpService;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -48,8 +50,15 @@ public class StaffManagementController {
     private final String securityInbox;
     private final AtomicReference<PendingChange> pending = new AtomicReference<>();
 
+    // 🤖 AI features switch: a third kind of change in the same two-step flow (target ai-off / ai-on), so it shares the
+    // one waiting change, the code limits and the Director-only rule. Optional, so test slices without them still start.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    AiSwitch aiSwitch;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    AiServerControl aiServer;
+
     public StaffManagementController(StaffUserRepository staffRepo, PasswordEncoder passwordEncoder, OtpService otpService,
-                                     @Value("${aerovisit.mail.from:PAFMuseumOfficial@gmail.com}") String securityInbox) {
+                                     @Value("${aerovisit.security.inbox:PAFMuseumOfficial@gmail.com}") String securityInbox) {
         this.staffRepo = staffRepo;
         this.passwordEncoder = passwordEncoder;
         this.otpService = otpService;
@@ -64,6 +73,18 @@ public class StaffManagementController {
         body.put("ok", true);
         body.put("guardUsername", staffRepo.findFirstByRoleOrderByIdAsc(StaffUser.GUARD).map(StaffUser::getUsername).orElse(null));
         body.put("securityInbox", securityInbox);
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(body);
+    }
+
+    // AI Features card: the switch's state and, when linked, the AI server's state in AWS
+    @GetMapping("/admin/api/staff-accounts/ai")
+    public ResponseEntity<Map<String, Object>> aiStatus() {
+        if (!SecurityConfig.isDirector()) return reply(HttpStatus.FORBIDDEN, false, "Only the Director can change the AI features.");
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("available", aiSwitch != null);
+        body.put("state", aiSwitch == null ? AiSwitch.State.ON.name() : aiSwitch.state().name());
+        body.put("server", aiServer == null ? AiServerControl.ServerState.NOT_LINKED.name() : aiServer.state().name());
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(body);
     }
 
@@ -112,6 +133,12 @@ public class StaffManagementController {
                            : username != null ? "change the Guard account's username to \"" + username + "\""
                            : "change the Guard account's password";
             change = new PendingChange("guard", auth.getName(), username, hash, summary);
+        } else if ("ai-off".equals(target) || "ai-on".equals(target)) {
+            if (aiSwitch == null) return reply(HttpStatus.CONFLICT, false, "The AI switch is not available.");
+            boolean on = "ai-on".equals(target);
+            if (aiSwitch.wanted() == on) return reply(HttpStatus.BAD_REQUEST, false, "The AI features are already " + (on ? "on." : "off."));
+            change = new PendingChange(target, auth.getName(), null, null,
+                    on ? "turn ON the AI features and start the AI server" : "turn OFF the AI features and stop the AI server");
         } else {
             return reply(HttpStatus.BAD_REQUEST, false, "Choose which account to change.");
         }
@@ -161,6 +188,8 @@ public class StaffManagementController {
         }
         otpService.consumeStaff(securityInbox);
 
+        if (change.target().startsWith("ai-")) return applyAiSwitch("ai-on".equals(change.target()));
+
         if ("self".equals(change.target())) {
             Optional<StaffUser> director = staffRepo.findByUsernameIgnoreCase(change.requestedBy());
             if (director.isEmpty()) return reply(HttpStatus.CONFLICT, false, "Your staff account was not found. Nothing was changed.");
@@ -182,6 +211,41 @@ public class StaffManagementController {
         System.out.println("🔐 Guard account updated (security code confirmed)");
         Map<String, Object> body = body(true, "The Guard account has been updated.");
         body.put("guardUsername", guard.get().getUsername());
+        return ResponseEntity.ok(body);
+    }
+
+    // 🤖 Confirmed AI switch. OFF: the website stops using the AI first, then its server is stopped (its billing ends).
+    // ON: the server is started first; the features come back by themselves once the AI service answers (AiSwitch).
+    private ResponseEntity<Map<String, Object>> applyAiSwitch(boolean on) {
+        if (aiSwitch == null) return reply(HttpStatus.CONFLICT, false, "The AI switch is not available. Nothing was changed.");
+        boolean linked = aiServer != null && aiServer.linked();
+        String serverProblem;
+        if (on) {
+            serverProblem = linked ? aiServer.start() : null;
+            aiSwitch.set(true);
+        } else {
+            aiSwitch.set(false);
+            serverProblem = linked ? aiServer.stop() : null;
+        }
+        String message;
+        if (on) {
+            message = !linked ? "AI features are turning ON. This website is not linked to the AI server in AWS, so wake the AI server in AWS "
+                              + "if it is asleep; the features come back by themselves once it answers."
+                    : serverProblem != null ? "AI features are turning ON, but the AI server could not be started: " + serverProblem
+                              + ". Wake it in AWS (EC2 > Auto Scaling Groups, set it to 1)."
+                    : "AI features are turning ON. The AI server is starting, which takes about 10 to 20 minutes; the features come back by themselves once it answers.";
+        } else {
+            message = !linked ? "AI features are now OFF. This website is not linked to the AI server in AWS, so put the AI server to sleep "
+                              + "in AWS to stop its billing."
+                    : serverProblem != null ? "AI features are now OFF, but the AI server could not be stopped: " + serverProblem
+                              + ". Put it to sleep in AWS (EC2 > Auto Scaling Groups, set it to 0) to stop its billing."
+                    : "AI features are now OFF and the AI server is shutting down, so its billing stops within a few minutes. "
+                              + "Face bans and duplicate-face checks are not enforced until the AI is turned back on.";
+        }
+        System.out.println("🤖 AI switch confirmed: " + (on ? "ON" : "OFF") + (linked ? "" : " (AI server not linked)")
+                + (serverProblem == null ? "" : " - server: " + serverProblem));
+        Map<String, Object> body = body(serverProblem == null, message);
+        body.put("aiState", aiSwitch.state().name());
         return ResponseEntity.ok(body);
     }
 

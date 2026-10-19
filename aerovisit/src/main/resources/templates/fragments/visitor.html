@@ -8,9 +8,8 @@
     nav(onHome): true on the booking page (links drive the in-page tabs), false elsewhere.
     Immersive pages (body class "vp vp--immersive") also include, right after the nav:
       preloader (booking page only) and backdrop — see the fragments below.
-    Slideshow photos: none are bundled, so the backdrop shows its photo-free PAF navy sky (visitor.css,
-    .vp-slide--fallback). To add photos, put JPGs in static/images/ and add one
-    <div class="vp-slide" data-src="/images/x.jpg" data-caption="…" data-kicker="…"></div> per photo below.
+    Slideshow photos: managed on Website Content > Hero Slideshow (HeroSlide, passed in by CmsWebConfig as
+    heroSlides). With none, the backdrop shows its photo-free PAF navy sky (visitor.css, .vp-slide--fallback).
 -->
 <head>
     <th:block th:fragment="head">
@@ -46,29 +45,39 @@
 <!-- Pre-loader: radar sweep + jet silhouette. Pure markup/CSS; visitor.js dismisses it
      after ~1.5s (CSS failsafe hides it after 4s even if scripts never run). -->
 <div th:fragment="preloader" class="vp-preloader" id="vpPreloader" role="status" aria-live="polite" aria-label="Loading AeroVisit">
+    <!-- Large, slow radar behind everything (decoration) -->
+    <div class="vp-radar" aria-hidden="true">
+        <span class="vp-radar-ring r1"></span>
+        <span class="vp-radar-ring r2"></span>
+        <span class="vp-radar-ring r3"></span>
+        <span class="vp-radar-cross"></span>
+        <span class="vp-radar-sweep"></span>
+        <span class="vp-radar-blip b1"></span>
+        <span class="vp-radar-blip b2"></span>
+        <span class="vp-radar-blip b3"></span>
+    </div>
     <div class="vp-pl-inner">
-        <div class="vp-radar" aria-hidden="true">
-            <span class="vp-radar-ring r1"></span>
-            <span class="vp-radar-ring r2"></span>
-            <span class="vp-radar-ring r3"></span>
-            <span class="vp-radar-cross"></span>
-            <span class="vp-radar-sweep"></span>
-            <span class="vp-radar-blip b1"></span>
-            <span class="vp-radar-blip b2"></span>
-            <span class="vp-radar-blip b3"></span>
-            <svg class="vp-radar-jet" viewBox="0 0 64 64" focusable="false">
+        <span class="paf-logo-plate vp-pl-logo"><img class="paf-logo" src="/images/paflogo.png" alt="Philippine Air Force Museum Logo" width="220" height="110"></span>
+        <div class="vp-pl-name">
+            <span class="vp-pl-title">PAF Aerospace Museum</span>
+            <span class="vp-pl-kicker">Visitor Portal &middot; Villamor Air Base</span>
+        </div>
+        <!-- Flight path: the gold line fills while the jet flies along its front -->
+        <div class="vp-pl-bar"><span>
+            <svg class="vp-pl-jet" viewBox="0 0 64 64" focusable="false" aria-hidden="true">
                 <path d="M32 3c2 0 3.2 2.6 3.2 6.4v14.2l22.3 13.1v5.4L35.2 35v11.6l6.7 5.1v4.4L32 53.3l-9.9 2.8v-4.4l6.7-5.1V35L6.5 42.1v-5.4l22.3-13.1V9.4C28.8 5.6 30 3 32 3z"/>
             </svg>
-        </div>
-        <span class="paf-logo-plate vp-pl-logo"><img class="paf-logo" src="/images/paflogo.png" alt="Philippine Air Force Museum Logo" width="220" height="110"></span>
-        <div class="vp-pl-sub">Establishing secure channel</div>
-        <div class="vp-pl-bar"><span></span></div>
+        </span></div>
+        <div class="vp-pl-sub">Preparing your visit</div>
     </div>
 </div>
 
 <!-- Immersive background slideshow with a fixed dark overlay (readability first). -->
 <div th:fragment="backdrop" class="vp-backdrop" id="vpBackdrop" aria-hidden="true">
     <div class="vp-slide vp-slide--fallback"></div>
+    <!-- 🖼️ Hero slideshow (Website Content); visitor.js fades between the photos that load, under the tint below -->
+    <div th:each="s : ${heroSlides}" class="vp-slide"
+         th:attr="data-src=@{/exhibit-photos/{f}(f=${s.filename})},data-kicker=${s.kicker},data-caption=${s.caption}"></div>
     <div class="vp-backdrop-tint"></div>
     <div class="vp-backdrop-grain"></div>
 </div>
@@ -212,7 +221,8 @@
                 </ul>
                 <p>Your photos are checked by software on museum servers: text recognition reads your name from your ID, and face
                    matching compares the photo on your ID with your selfie to confirm that you are the ID holder (one-to-one verification).
-                   Your face template is also compared with faces barred from the base for security violations. This biometric processing
+                   Your face template is also compared with faces barred from the base for security violations, and with other bookings
+                   for the same date so that one person holds only one booking per day. This biometric processing
                    takes place only on museum servers; your photos and face template are never sent to any outside service. These checks
                    only assist our staff: every booking is reviewed and approved by authorized museum personnel before an entry pass is issued.</p>
 
@@ -230,8 +240,8 @@
                 <ul>
                     <li><b>CCTV footage</b> is kept for up to 60 days, unless it is needed for an ongoing security investigation.</li>
                     <li><b>ID photos and face templates</b> are processed temporarily and deleted automatically 30 days after the visit date,
-                        once the visit is completed, missed, rejected or cancelled. They are kept longer only as a security record: when
-                        entry was denied at the gate, or when the face is barred from the base for a security violation.</li>
+                        once the visit is completed, missed, rejected, cancelled or denied entry at the gate. They are kept longer only
+                        when the face is barred from the base for a security violation.</li>
                     <li><b>Booking, entry and feedback records</b> are kept only as long as necessary for base security and visitor statistics,
                         and are then securely disposed of in line with National Privacy Commission rules and government records-retention policies.</li>
                 </ul>

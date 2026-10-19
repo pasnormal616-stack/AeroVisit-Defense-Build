@@ -194,10 +194,11 @@ public class AeroVisitAutomationEngine {
     // =========================================================================
     // Finished visits keep their database row (analytics, reports, audit) but lose their ID photos, QR code and face
     // vector, and have their personal details anonymized, once the visit date is more than RETENTION_DAYS days old.
-    // DENIED_ENTRY is left out on purpose: a gate denial is kept indefinitely as a security record.
+    // DENIED_ENTRY is purged too (decided 2026-10-18): a gate denial follows the same 30 days. A person who must be kept
+    // out for longer is banned (biometric ban), and the ban keeps its own copy of the face and photo.
     static final int RETENTION_DAYS = 30;
     static final Set<String> PURGEABLE_STATUSES = Set.of("CHECKED-OUT", "NO_SHOW", "CANCELLED", "REJECTED",
-            "CANCELLED_BY_VISITOR", "CANCELLED_OVERRIDE");
+            "CANCELLED_BY_VISITOR", "CANCELLED_OVERRIDE", "DENIED_ENTRY");
 
     // What the purge writes over a visitor's personal details (kept in sync with VisitorRepository.findExpiredWithFiles)
     static final String REDACTED = "REDACTED";
@@ -206,6 +207,15 @@ public class AeroVisitAutomationEngine {
     // Face bans (optional, so test slices without the repository still start; without it no ban is auto-lifted)
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     com.paf.aerovisit.repository.BlacklistedFaceRepository faceBans;
+
+    // ☁️ S3 copies of uploads/ (off locally): the purge deletes them with the local files
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    UploadMirror uploadMirror;
+
+    // 💬 Plain SQL for chat_logs (written by the AI service, so there is no JPA entity for it). Optional: test slices
+    // without a database still start, and then no chat message is purged
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     @Scheduled(cron = "0 0 2 * * ?")
     public void executeDataRetentionPurge() {
@@ -218,6 +228,21 @@ public class AeroVisitAutomationEngine {
         System.out.println("✅ [PURGE COMPLETE] " + purged + " finished visit(s) anonymized and cleared of ID photo / QR files.");
         int lifted = liftExpiredBans(today, uploads);
         System.out.println("🧬 [RETENTION] " + lifted + " expired temporary ban(s) lifted, mugshot and face vector deleted.");
+        int chats = purgeOldChatLogs(LocalDateTime.now().minusDays(RETENTION_DAYS));
+        System.out.println("💬 [RETENTION] " + chats + " chatbot message(s) older than " + RETENTION_DAYS + " days deleted.");
+    }
+
+    // 💬 Chatbot messages (table chat_logs, written by the AI service) older than the retention period are deleted:
+    // visitors sometimes type personal details into the chat. A missing table (the AI service never ran) is skipped,
+    // so the rest of the nightly purge is never blocked. Returns the messages deleted.
+    int purgeOldChatLogs(LocalDateTime cutoff) {
+        if (jdbc == null) return 0;
+        try {
+            return jdbc.update("DELETE FROM chat_logs WHERE `timestamp` < ?", java.sql.Timestamp.valueOf(cutoff));
+        } catch (org.springframework.dao.DataAccessException e) {
+            System.err.println("⚠️ [RETENTION] chat_logs not purged: " + e.getMostSpecificCause().getMessage());
+            return 0;
+        }
     }
 
     // ⌛ GAP 1: a request still waiting for review (PENDING, PENDING_MANUAL_REVIEW, VERIFIED) whose visit date has passed
@@ -246,7 +271,7 @@ public class AeroVisitAutomationEngine {
         int lifted = 0;
         for (com.paf.aerovisit.model.BlacklistedFace ban : faceBans.findAll()) {
             if (ban.getExpiresAt() == null || ban.activeOn(today)) continue;
-            if (ban.getImageUrl() != null && !deleteUpload(uploadDir, ban.getImageUrl())) continue;
+            if (ban.getImageUrl() != null && !removeFile(uploadDir, ban.getImageUrl())) continue;
             faceBans.delete(ban);
             lifted++;
         }
@@ -262,15 +287,15 @@ public class AeroVisitAutomationEngine {
         for (Visitor v : repo.findExpiredWithFiles(PURGEABLE_STATUSES, cutoff)) {
             if (!PURGEABLE_STATUSES.contains(v.getStatus()) || v.getVisitDate() == null || !v.getVisitDate().isBefore(cutoff)) continue;
             boolean changed = anonymize(v);
-            if (v.getIdImageUrl() != null && deleteUpload(uploadDir, v.getIdImageUrl())) {
+            if (v.getIdImageUrl() != null && removeFile(uploadDir, v.getIdImageUrl())) {
                 v.setIdImageUrl(null);
                 changed = true;
             }
-            if (v.getQrCodeUrl() != null && deleteUpload(uploadDir, v.getQrCodeUrl())) {
+            if (v.getQrCodeUrl() != null && removeFile(uploadDir, v.getQrCodeUrl())) {
                 v.setQrCodeUrl(null);
                 changed = true;
             }
-            if (v.getIdCardImageUrl() != null && deleteUpload(uploadDir, v.getIdCardImageUrl())) {
+            if (v.getIdCardImageUrl() != null && removeFile(uploadDir, v.getIdCardImageUrl())) {
                 v.setIdCardImageUrl(null);
                 changed = true;
             }
@@ -308,6 +333,12 @@ public class AeroVisitAutomationEngine {
 
     private static String redacted(String value) {
         return value == null || value.isBlank() ? value : REDACTED;
+    }
+
+    // ☁️ The local file and, when S3 is on, its S3 copy. True only when both are gone, so a failed S3 delete keeps the
+    // field (and the ban) for a retry next night, exactly like a locked local file.
+    private boolean removeFile(Path uploadDir, String fileName) {
+        return deleteUpload(uploadDir, fileName) && (uploadMirror == null || uploadMirror.deleteUpload(fileName));
     }
 
     // True when the file is gone afterwards. Only a plain file name directly inside uploadDir is touched, so a bad

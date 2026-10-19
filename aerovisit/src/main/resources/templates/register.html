@@ -280,7 +280,7 @@
                                                        maxlength="6" pattern="[0-9]{6}" placeholder="6-digit code" aria-describedby="otpStatus" required>
                                                 <button type="button" class="vp-btn vp-btn--primary" id="otpVerifyBtn" disabled>Verify</button>
                                             </div>
-                                            <div class="form-text" id="otpStatus" aria-live="polite">We will email a 6-digit code to confirm this address. It expires in 5 minutes.</div>
+                                            <div class="form-text" id="otpStatus" aria-live="polite">We will email a 6-digit code to confirm this address. It expires in 5 minutes. If you don't see it, check your Spam or Junk folder.</div>
                                         </div>
                                     </div>
                                     <div class="vp-step-actions">
@@ -990,7 +990,8 @@
 </script>
 
 <!-- CHATBOT FRAGMENT -->
-<div th:replace="~{chatbot-ui :: chatbotFragment}"></div>
+<!-- 🤖 Sgt. Aero only while the AI features are on (Settings) -->
+<th:block th:if="${aiEnabled}"><div th:replace="~{chatbot-ui :: chatbotFragment}"></div></th:block>
 
 <!-- WELCOME ENTRY MODAL (first visit per session) -->
 <th:block th:replace="~{fragments/visitor :: welcome}"></th:block>

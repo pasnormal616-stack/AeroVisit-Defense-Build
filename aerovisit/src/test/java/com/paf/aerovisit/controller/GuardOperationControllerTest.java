@@ -450,7 +450,7 @@ class GuardOperationControllerTest {
 
         assertThat(pending.getStatus()).isEqualTo("PENDING");
         verify(repo, never()).save(any());
-        verify(emailService, never()).sendApprovalEmailWithQR(anyString(), anyString(), anyString(), anyString(), any());
+        verify(emailService, never()).sendApprovalEmailWithQR(anyString(), anyString(), anyString(), anyString(), any(), any());
     }
 
     @Test
@@ -502,7 +502,7 @@ class GuardOperationControllerTest {
         assertThat(pending.getSecureToken()).isNotBlank();
         assertThat(pending.getQrCodeUrl()).isEqualTo("QR_" + testId + ".png");
         verify(repo).save(pending);
-        verify(emailService).sendApprovalEmailWithQR("v" + testId + "@example.com", "Visitor " + testId, date.toString(), "QR_" + testId + ".png", null);
+        verify(emailService).sendApprovalEmailWithQR("v" + testId + "@example.com", "Visitor " + testId, date.toString(), "QR_" + testId + ".png", null, WINDOW);
     }
 
     @Test
@@ -525,7 +525,7 @@ class GuardOperationControllerTest {
             assertThat(v.getStatus()).isEqualTo(status);
         }
         verify(repo, never()).save(any());
-        verify(emailService, never()).sendApprovalEmailWithQR(anyString(), anyString(), anyString(), anyString(), any());
+        verify(emailService, never()).sendApprovalEmailWithQR(anyString(), anyString(), anyString(), anyString(), any(), any());
     }
 
     @Test

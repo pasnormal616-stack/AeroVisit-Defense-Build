@@ -33,7 +33,7 @@ class RetentionQueriesTest {
     private static final LocalDate TODAY = LocalDate.of(2026, 10, 10);
     private static final LocalDate CUTOFF = TODAY.minusDays(30);
     private static final Set<String> FINISHED = Set.of("CHECKED-OUT", "NO_SHOW", "CANCELLED", "REJECTED",
-            "CANCELLED_BY_VISITOR", "CANCELLED_OVERRIDE");
+            "CANCELLED_BY_VISITOR", "CANCELLED_OVERRIDE", "DENIED_ENTRY");
 
     @Autowired private VisitorRepository repo;
 
@@ -59,12 +59,13 @@ class RetentionQueriesTest {
         Visitor noName = save(null, "REJECTED", CUTOFF.minusDays(5), null);
         save("REDACTED", "CHECKED-OUT", CUTOFF.minusDays(90), null);       // fully done: never again
         save("Santos, Maria", "CHECKED-OUT", CUTOFF, "b.jpg");              // exactly 30 days: not yet
-        save("Garcia, Leo", "DENIED_ENTRY", CUTOFF.minusDays(90), "c.jpg"); // security record
+        Visitor denied = save("Garcia, Leo", "DENIED_ENTRY", CUTOFF.minusDays(90), "c.jpg"); // purged like the rest
+        save("Lim, Ben", "CHECKED-IN", CUTOFF.minusDays(90), "d.jpg");      // never finished: not a finished status
 
         List<Visitor> found = repo.findExpiredWithFiles(FINISHED, CUTOFF);
 
         assertThat(found).extracting(Visitor::getId)
-                .containsExactlyInAnyOrder(withFiles.getId(), filesGoneDetailsLeft.getId(), noName.getId());
+                .containsExactlyInAnyOrder(withFiles.getId(), filesGoneDetailsLeft.getId(), noName.getId(), denied.getId());
     }
 
     @Test

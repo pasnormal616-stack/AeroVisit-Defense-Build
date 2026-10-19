@@ -270,6 +270,10 @@ ERROR = "ERROR"                # system problem (no OpenCV/models, unreadable up
 # to SFace's own 112 x 112 input, as the variance of the Laplacian. STARTING value, not yet calibrated on real phone
 # photos: the readings come back as live_sharpness / id_sharpness, tune with KYC_MIN_FACE_SHARPNESS.
 MIN_FACE_SHARPNESS = float(os.getenv("KYC_MIN_FACE_SHARPNESS", "40"))
+# The ID portrait is a small PRINTED photo, enlarged to 112 x 112: it always reads far softer than a live face
+# (real phone bookings: selfie 264-346, ID portrait 10-24). Its own threshold, so the selfie keeps the strict one.
+# Defaults to the selfie value (unchanged behaviour); set KYC_MIN_ID_FACE_SHARPNESS to calibrate.
+MIN_ID_FACE_SHARPNESS = float(os.getenv("KYC_MIN_ID_FACE_SHARPNESS", str(MIN_FACE_SHARPNESS)))
 SHARPNESS_SIDE = 112
 BLURRY_LIVE_FACE = "BLURRY_LIVE_FACE"
 BLURRY_ID_FACE = "BLURRY_ID_FACE"
@@ -401,7 +405,7 @@ def verify_two_step(id_image, live_image):
     result["id_sharpness"] = round(id_sharp, 1)
     if live_sharp < MIN_FACE_SHARPNESS:
         return _unclear(result, BLURRY_LIVE_FACE)
-    if id_sharp < MIN_FACE_SHARPNESS:
+    if id_sharp < MIN_ID_FACE_SHARPNESS:
         return _unclear(result, BLURRY_ID_FACE)
 
     similarity = float(np.dot(_feature(card_face_image, id_row), live_vector))

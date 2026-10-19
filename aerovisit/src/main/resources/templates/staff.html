@@ -297,9 +297,16 @@
 
                                 <small class="av-hint mb-3"><i class="bi bi-info-circle me-1"></i> AI will automatically skip dates with no public booking slots.</small>
 
-                                <button type="submit" class="btn-primary-custom w-100">
+                                <!-- 🤖 The AI roster needs the AI features (Settings); Fill from Staff Templates below does not -->
+                                <p th:unless="${aiEnabled}" class="av-small av-muted mb-2"><i class="bi bi-cpu me-1"></i> AI features are turned off in Settings: use Fill from Staff Templates.</p>
+                                <button th:if="${aiEnabled}" type="submit" class="btn-primary-custom w-100">
                                     <i class="bi bi-magic"></i> Ask AI &amp; Preview Roster
                                 </button>
+                                <!-- 🗓️ No AI: every active officer on their Working Days at their Default Shift (ManagementController.planFromTemplates) -->
+                                <button type="submit" formaction="/admin/staff/template-preview" class="btn btn-outline-secondary w-100 mt-2">
+                                    <i class="bi bi-people"></i> Fill from Staff Templates
+                                </button>
+                                <small class="av-hint mt-2"><i class="bi bi-info-circle me-1"></i> Fill from Staff Templates needs no AI: each active officer gets their Default Shift on their Working Days (set in the Staff Directory). Exclude Weekends does not apply; officers on leave or already on duty are skipped and listed.</small>
                             </form>
                         </div>
                     </div>
@@ -629,13 +636,22 @@
     <div class="modal-dialog modal-xl modal-dialog-centered">
         <form action="/admin/staff/ai-deploy" method="post" class="modal-content av-modal-tall">
             <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+            <input type="hidden" name="source" th:if="${previewSource != null}" th:value="${previewSource}">
 
             <div class="modal-header">
-                <h5 class="modal-title mb-0"><i class="bi bi-robot me-2"></i>AI Roster Preview &amp; Edit</h5>
+                <h5 class="modal-title mb-0" th:if="${previewSource == 'templates'}"><i class="bi bi-people me-2"></i>Template Roster Preview &amp; Edit</h5>
+                <h5 class="modal-title mb-0" th:unless="${previewSource == 'templates'}"><i class="bi bi-robot me-2"></i>AI Roster Preview &amp; Edit</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
 
             <div class="modal-body av-modal-well p-4">
+                <!-- 🗓️ Template fill: who was left out and why (on leave, already on duty, no template) -->
+                <div th:if="${templateSkipped != null and !#lists.isEmpty(templateSkipped)}" class="alert alert-warning small mb-3" role="status">
+                    <strong>Not added:</strong>
+                    <ul class="mb-0 mt-1">
+                        <li th:each="note : ${templateSkipped}" th:text="${note}">Sgt. Reyes on 2026-10-22: on leave</li>
+                    </ul>
+                </div>
                 <th:block th:each="entry : ${groupedShifts}">
                     <div class="av-panel av-day-group mb-0">
                         <div class="av-panel-head">
@@ -693,7 +709,8 @@
             </div>
 
             <div class="modal-footer d-flex justify-content-between">
-                <span class="av-label"><i class="bi bi-info-circle me-1"></i> Review the AI's plan. Names are suggested from staff shift templates; change them or delete rows you don't need before deploying.</span>
+                <span class="av-label" th:if="${previewSource == 'templates'}"><i class="bi bi-info-circle me-1"></i> Review the plan from staff templates; change names or delete rows you don't need before deploying.</span>
+                <span class="av-label" th:unless="${previewSource == 'templates'}"><i class="bi bi-info-circle me-1"></i> Review the AI's plan. Names are suggested from staff shift templates; change them or delete rows you don't need before deploying.</span>
                 <div class="d-flex gap-2">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Discard Plan</button>
                     <button type="submit" class="btn btn-primary"><i class="bi bi-calendar-check"></i>Deploy Roster to Calendar</button>

@@ -141,7 +141,7 @@ class EmailOtpSelfieBookingTest {
         assertThat(saved.getStatus()).isEqualTo("PENDING");
         assertThat(saved.getQrCodeUrl()).isNull();
         verify(emailService).sendPendingNotification(eq(EMAIL), any(), any(), anyBoolean(), any());
-        verify(emailService, never()).sendApprovalEmailWithQR(any(), any(), any(), any(), any());
+        verify(emailService, never()).sendApprovalEmailWithQR(any(), any(), any(), any(), any(), any());
         assertThat(saved.getFaceEncoding()).isEqualTo(FACE);
         assertThat(saved.isOcrNameMatch()).isTrue(); // admin badge: "ID Name Verified"
         // Selfie in idImageUrl (admin "View Document", gate scanner), ID close-up in its own field

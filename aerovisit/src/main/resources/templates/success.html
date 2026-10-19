@@ -40,7 +40,7 @@
 
                         <div class="vp-note" th:if="${statusLabel == null or statusLabel == 'Pending Review'}">
                             <i class="bi bi-envelope-paper"></i>
-                            <div><strong>Next Steps:</strong> Your application is currently <span class="vp-status-tag">PENDING</span>. Please monitor your email inbox (<strong><span th:text="${visitor.email}"></span></strong>). Once the Museum Director approves your visit, you will receive an official Entry QR Code.</div>
+                            <div><strong>Next Steps:</strong> Your application is currently <span class="vp-status-tag">PENDING</span>. Please monitor your email inbox (<strong><span th:text="${visitor.email}"></span></strong>). Once the Museum Director approves your visit, you will receive an official Entry QR Code. Our emails sometimes land in the Spam or Junk folder, so please check there too and mark them as "Not spam".</div>
                         </div>
 
                         <a href="/" class="vp-btn vp-btn--primary vp-btn--block">Return to Home Calendar <span class="vp-btn-icon"><i class="bi bi-arrow-right"></i></span></a>
