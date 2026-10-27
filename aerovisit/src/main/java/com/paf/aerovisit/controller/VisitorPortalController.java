@@ -52,7 +52,7 @@ public class VisitorPortalController {
     @Autowired(required = false)
     private MuseumZoneRepository zoneRepo;
 
-    // Header bell notifications (large groups, negative feedback). Optional, like zoneRepo, so web-layer test slices still start.
+    // Header bell notifications (requests, changes, cancellations, banned faces, negative feedback). Optional, like zoneRepo, so web-layer test slices still start.
     @Autowired(required = false)
     private NotificationService notificationService;
 
@@ -67,6 +67,11 @@ public class VisitorPortalController {
     // 🪪 Selfie-with-ID check (Python OpenCV + existing Tesseract OCR). Optional; when missing, bookings go to manual review.
     @Autowired(required = false)
     private KycService kycService;
+
+    // 🪪 Ban list for the identity checks that work without the AI service (IdentityBans). Optional, so web-layer test
+    // slices without it still start; the face check itself runs in KycService.
+    @Autowired(required = false)
+    private com.paf.aerovisit.repository.BlacklistedFaceRepository faceBanRepo;
 
     // ☁️ Copies the ID photos to S3 (off locally). Optional, so test slices without it still start.
     @Autowired(required = false)
@@ -365,8 +370,15 @@ public class VisitorPortalController {
             return "redirect:/";
         }
 
-        // (Banned visitors are stopped by their face in the two-step KYC below, not by their email: a new email beats an
-        // email block, a face can't be changed.)
+        // 🪪 IDENTITY BAN (works with AI features off): the same email or phone number as an active ban is refused with
+        // the same neutral message as a banned face. A new email beats this check, so banned visitors are also stopped by
+        // their face in the two-step KYC below (AI on) and flagged by name (after the KYC).
+        List<com.paf.aerovisit.model.BlacklistedFace> bans = faceBanRepo == null ? List.of() : faceBanRepo.findAll();
+        if (com.paf.aerovisit.service.IdentityBans.contactBan(visitor, bans, LocalDate.now()) != null) {
+            if (notificationService != null) notificationService.bannedContactAttempt(visitor);
+            redirectAttributes.addFlashAttribute("error", KycService.FACE_BANNED);
+            return "redirect:/";
+        }
 
         List<Visitor> existingBookings = repo.findByEmailAndVisitDate(visitor.getEmail(), visitor.getVisitDate());
         // Visitors displaced by a VIP buyout or an emergency closure (once reopened), or who cancelled themselves, may re-book the same date
@@ -487,6 +499,7 @@ public class VisitorPortalController {
                         : kycService.screen(idCardFile.getBytes(), file.getBytes(), visitor.getFirstName(), visitor.getLastName());
                 if (kyc.refused()) {
                     // Nothing is saved and the email code stays valid, so the visitor can retake the photos and resubmit
+                    if (notificationService != null && "FACE_BANNED".equals(kyc.reason())) notificationService.bannedFaceAttempt(visitor);
                     discardIdPhoto(visitor.getIdImageUrl());
                     discardIdPhoto(visitor.getIdCardImageUrl());
                     redirectAttributes.addFlashAttribute("error", kyc.message());
@@ -521,6 +534,16 @@ public class VisitorPortalController {
             visitor.setStatus(KycService.MANUAL_REVIEW);
         }
 
+        // 🪪 NAME FLAG (works with AI features off): the lead booker's or a companion's name resembles a banned name.
+        // Never refused (people share names): the booking waits for staff, tagged with the ban to compare photos against.
+        com.paf.aerovisit.model.BlacklistedFace nameBan = com.paf.aerovisit.service.IdentityBans.nameBan(
+                com.paf.aerovisit.service.IdentityBans.namesOf(visitor), bans, LocalDate.now());
+        if (nameBan != null) {
+            visitor.setStatus(KycService.MANUAL_REVIEW);
+            String match = "Ban #" + nameBan.getId() + ": " + nameBan.getName();
+            visitor.setPossibleBanMatch(match.length() > 300 ? match.substring(0, 300) : match);
+        }
+
         // Generate a unique Booking Reference ID (always server-side, never trusted from the form)
         String referenceId;
         do {
@@ -546,7 +569,7 @@ public class VisitorPortalController {
         otpService.consume(visitor.getEmail()); // one verified code = one booking
         redirectAttributes.addFlashAttribute("visitor", savedVisitor);
         if (notificationService != null) {
-            notificationService.largeGroupBooking(savedVisitor); // only groups above 15; never throws
+            notificationService.bookingRequest(savedVisitor); // only bookings waiting for approval; never throws
         }
 
         // HUMAN-IN-THE-LOOP: every booking waits for the Director (KycService never approves), so the visitor is told
@@ -861,6 +884,9 @@ public class VisitorPortalController {
             v.setReminderSent(false);
         }
         repo.save(v);
+        if (notificationService != null && (scheduleChanged || manifestChanged) && v.awaitsApproval()) {
+            notificationService.bookingRescheduled(v); // never throws
+        }
 
         String successMessage = "Booking updated.";
         if (scheduleChanged && wasApproved) {
@@ -887,6 +913,7 @@ public class VisitorPortalController {
         v.setStatus("CANCELLED_BY_VISITOR");
         v.setQrCodeUrl(null);
         repo.save(v);
+        if (notificationService != null) notificationService.bookingCancelled(v); // never throws
         redirectAttributes.addFlashAttribute("success", "Your visit has been cancelled and your seats have been released. You are welcome to book again anytime.");
         return "redirect:/manage-booking";
     }

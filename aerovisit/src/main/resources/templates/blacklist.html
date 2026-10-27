@@ -18,17 +18,18 @@
         <div>
             <span class="av-mono av-code">SEC-06</span>
             <h1 class="av-pagehead-title">Banned Visitors</h1>
-            <p class="av-pagehead-desc">Faces barred from booking. A ban follows the person's face, not their email, so a new name or email can't get around it. Ban a visitor from the dashboard's action menu.</p>
+            <p class="av-pagehead-desc">Visitors barred from booking. A ban follows the person's face when their booking had face data, so a new name or email can't get around it, and always their email and phone number. Bookings under a similar name are flagged for review. Ban a visitor from the dashboard's action menu.</p>
         </div>
         <div class="av-pagehead-actions">
             <a href="/admin" class="btn btn-light d-lg-none"><i class="bi bi-arrow-left"></i> Back to Dashboard</a>
         </div>
     </div>
 
-    <!-- 🤖 AI switched off in Settings: faces are not read, so bans rely on the guards -->
+    <!-- 🤖 AI switched off in Settings: faces are not read, but the email / phone / name checks still run (IdentityBans) -->
     <div th:unless="${aiEnabled}" class="alert alert-warning" role="status">
         <i class="bi bi-exclamation-triangle-fill me-1"></i> AI features are turned off in Settings, so new bookings are not checked against these faces.
-        Guards must recognise banned visitors at the gate until the AI is turned back on.
+        Bans still refuse the same email or phone number and flag bookings under a similar name, but someone using new contact
+        details gets through: guards must still check IDs against this gallery at the gate.
     </div>
 
     <!-- Alerts -->
@@ -39,7 +40,7 @@
 
     <div class="av-toolbar">
         <div class="av-tabs"><span class="av-tab is-active"><i class="bi bi-person-x"></i> Banned <span class="count" th:text="'(' + ${activeBanIds.size()} + ' active)'">(0)</span></span></div>
-        <div class="av-toolbar-meta av-mono">Biometric (face) bans</div>
+        <div class="av-toolbar-meta av-mono">Face, email and phone bans</div>
     </div>
 
     <!-- SECURITY GALLERY: one card per ban, mugshot first, so a guard can match a walk-in at a glance.
@@ -80,9 +81,14 @@
                         <h2 th:if="${ban.name != null}" class="av-ban-name" th:text="${ban.name}"></h2>
                         <h2 th:unless="${ban.name != null}" class="av-ban-name av-muted">Name not recorded</h2>
                         <div class="av-ban-meta av-mono" th:text="'Ban #' + ${ban.id} + (${ban.bannedAt != null} ? ' · ' + ${#temporals.format(ban.bannedAt, 'MMM d, yyyy')} : '')"></div>
+                        <!-- 🪪 Made while AI features were off: enforced by email / phone only, plus the name flag -->
+                        <div th:if="${ban.faceEncoding == null}" class="av-ban-meta" title="No face data on file: this ban refuses the same email or phone number and flags similar names, but can't recognise the face">
+                            <i class="bi bi-person-vcard me-1" aria-hidden="true"></i>Email &amp; phone ban (no face data)</div>
                         <dl class="av-ban-facts">
                             <dt>Reason</dt>
                             <dd th:text="${ban.reason}"></dd>
+                            <th:block th:if="${ban.maskedEmail() != null}"><dt>Email</dt><dd class="av-mono" th:text="${ban.maskedEmail()}"></dd></th:block>
+                            <th:block th:if="${ban.maskedPhone() != null}"><dt>Phone</dt><dd class="av-mono" th:text="${ban.maskedPhone()}"></dd></th:block>
                             <dt>Expires</dt>
                             <dd th:if="${ban.expiresAt == null}">Never</dd>
                             <dd th:if="${ban.expiresAt != null}" class="av-mono" th:text="${(activeBanIds.contains(ban.id) ? 'Until ' : 'Ended ') + #temporals.format(ban.expiresAt, 'MMM d, yyyy')}"></dd>

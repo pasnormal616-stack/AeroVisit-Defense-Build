@@ -94,15 +94,21 @@ class SettingsAndNotificationsTest {
         for (String url : new String[] {"/admin", "/admin/settings"}) {
             mvc.perform(get(url))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("<button type=\"button\" class=\"av-iconbtn av-bell\" id=\"avBell\" data-bs-toggle=\"dropdown\"")))
+                // clicks inside the feed (tabs, "..." menus) keep it open
+                .andExpect(content().string(containsString("<button type=\"button\" class=\"av-iconbtn av-bell\" id=\"avBell\" data-bs-toggle=\"dropdown\" data-bs-auto-close=\"outside\"")))
                 .andExpect(content().string(containsString("<span class=\"av-bell-badge\" id=\"avBellBadge\" hidden></span>")))
-                // the pending queue link the bell used to be is now the first row of the dropdown
+                // the pending queue is a link at the bottom of the feed, with its own count (not part of the red badge)
                 .andExpect(content().string(containsString("<a class=\"av-notif-pending\" href=\"/admin?filter=pending&amp;sort=desc\">")))
+                .andExpect(content().string(containsString("id=\"avNotifPendingCount\"")))
                 .andExpect(content().string(containsString("id=\"avNotifList\"")))
+                .andExpect(content().string(containsString("data-notif-tab=\"unread\"")))
+                .andExpect(content().string(containsString("id=\"avNotifMarkAll\" hidden>Mark all as read</button>")))
                 .andExpect(content().string(containsString("id=\"avBellToast\"")))
-                .andExpect(content().string(containsString("New booking request received!")))
+                .andExpect(content().string(containsString("id=\"avBellToastText\"")))
                 .andExpect(content().string(containsString("fetch('/api/notifications'")))
                 .andExpect(content().string(containsString("fetch('/api/notifications/mark-read', { method: 'POST'")))
+                .andExpect(content().string(containsString("post('/api/notifications/mark-seen')")))
+                .andExpect(content().string(containsString("'/dismiss'")))
                 .andExpect(content().string(containsString("setInterval(poll, 30000);")));
         }
     }

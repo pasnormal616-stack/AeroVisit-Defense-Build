@@ -36,6 +36,12 @@ public class AeroVisitAutomationEngine {
     @org.springframework.beans.factory.annotation.Value("${aerovisit.alerts.email:}")
     String alertEmail;
 
+    // 🔔 Header bell: arrivals this morning, and the 30-day clean-up. Optional, so tests building the engine by hand still work.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    NotificationService notificationService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.paf.aerovisit.repository.AdminNotificationRepository notificationRepo;
+
     // A single, clean constructor that perfectly links both the database and the email sender
     public AeroVisitAutomationEngine(VisitorRepository repo, EmailService emailService) {
         this.repo = repo;
@@ -65,6 +71,15 @@ public class AeroVisitAutomationEngine {
             }
         }
         System.out.println("✅ Automated Reminder Cycle Complete.");
+    }
+
+    // 🔔 6:30 AM: large groups and Master Bookings arriving today go to the Guard's and Director's bell
+    @Scheduled(cron = "0 30 6 * * ?")
+    public void executeArrivalAlerts() {
+        if (notificationService == null) return;
+        for (Visitor v : repo.findByVisitDate(LocalDate.now())) {
+            if ("APPROVED".equals(v.getStatus())) notificationService.arrivingToday(v); // only big groups; never throws
+        }
     }
 
     // =========================================================================
@@ -230,6 +245,14 @@ public class AeroVisitAutomationEngine {
         System.out.println("🧬 [RETENTION] " + lifted + " expired temporary ban(s) lifted, mugshot and face vector deleted.");
         int chats = purgeOldChatLogs(LocalDateTime.now().minusDays(RETENTION_DAYS));
         System.out.println("💬 [RETENTION] " + chats + " chatbot message(s) older than " + RETENTION_DAYS + " days deleted.");
+        if (notificationRepo != null) {
+            try {
+                int bell = notificationRepo.deleteOlderThan(LocalDateTime.now().minusDays(RETENTION_DAYS));
+                System.out.println("🔔 [RETENTION] " + bell + " bell notification(s) older than " + RETENTION_DAYS + " days deleted.");
+            } catch (RuntimeException e) {
+                System.err.println("⚠️ [RETENTION] bell notifications not purged: " + e.getMessage());
+            }
+        }
     }
 
     // 💬 Chatbot messages (table chat_logs, written by the AI service) older than the retention period are deleted:
@@ -328,6 +351,7 @@ public class AeroVisitAutomationEngine {
         v.setSpecialConsideration(redacted(v.getSpecialConsideration()));
         v.setEventJustification(redacted(v.getEventJustification()));
         v.setCompanionNames(null); // the head count stays in groupSize
+        v.setPossibleBanMatch(null); // names a banned person
         return true;
     }
 

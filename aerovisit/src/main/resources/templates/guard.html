@@ -123,13 +123,11 @@
                                         <i class="bi bi-box-arrow-right"></i> Check Out / Evict</button>
                                 </form>
 
-                                <!-- All three groups: the full biometric ban (needs the booking's face data) -->
-                                <button th:if="${visitor.faceEncoding != null}" type="button" class="btn btn-sm btn-outline-danger"
+                                <!-- All three groups: ban by face when the booking has face data, and always by email +
+                                     phone number (IdentityBans), so bookings made while AI features were off can be banned too -->
+                                <button type="button" class="btn btn-sm btn-outline-danger"
                                         data-bs-toggle="modal" data-bs-target="#banModal"
-                                        th:attr="data-ban-url=@{/admin/biometric-ban/{id}(id=${visitor.id})},data-ban-name=${visitor.name}">
-                                    <i class="bi bi-person-x"></i> Ban</button>
-                                <button th:if="${visitor.faceEncoding == null}" type="button" class="btn btn-sm btn-outline-danger" disabled
-                                        title="No face data on file for this booking, so it can't be banned">
+                                        th:attr="data-ban-url=@{/admin/biometric-ban/{id}(id=${visitor.id})},data-ban-name=${visitor.name},data-ban-face=${visitor.faceEncoding != null}">
                                     <i class="bi bi-person-x"></i> Ban</button>
                             </div>
                         </td>

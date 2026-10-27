@@ -49,6 +49,10 @@ public class GuardOperationController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.paf.aerovisit.service.UploadMirror uploadMirror;
 
+    // 🔔 Header bell (gate denials, failed approval emails, slots filling up). Optional, so test slices without it still start.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.paf.aerovisit.service.NotificationService notificationService;
+
     // ⏱️ The gate's clock: real Manila time in production (null = the system clock, read on every call);
     // tests fix it so every time-window case runs the same at any hour
     java.time.Clock clock;
@@ -182,8 +186,8 @@ public class GuardOperationController {
                     redirectAttributes.addFlashAttribute("error", "ACCESS DENIED: Booking is not approved (status: " + v.getStatus() + ").");
                     return "redirect:/admin";
                 }
-                // 🚫 Manual check-in is a Director override for pending bookings, but never for a banned face
-                if (isFaceBanned(v)) {
+                // 🚫 Manual check-in is a Director override for pending bookings, but never for a banned visitor
+                if (isBanned(v)) {
                     redirectAttributes.addFlashAttribute("error", BANNED_ENTRY);
                     return "redirect:/admin";
                 }
@@ -247,8 +251,8 @@ public class GuardOperationController {
         if ("CHECKED-IN".equals(v.getStatus())) return "Visitor is already CHECKED-IN.";
         // 🔒 Pending / unverified / denied bookings cannot enter, even with a valid token
         if (!"APPROVED".equals(v.getStatus())) return "ACCESS DENIED: Booking is not approved (status: " + v.getStatus() + ").";
-        // 🚫 Backstop for a pass whose face was banned after approval (the ban also revokes open bookings)
-        if (isFaceBanned(v)) return BANNED_ENTRY;
+        // 🚫 Backstop for a pass whose holder was banned after approval (the ban also revokes open bookings)
+        if (isBanned(v)) return BANNED_ENTRY;
         // 🔒 The QR is only valid on the scheduled date
         if (!LocalDate.now(clock()).equals(v.getVisitDate())) return "ACCESS DENIED: Scheduled for " + v.getVisitDate() + ".";
         // 🕒 ...and within the booked time window (opens 15 minutes early)
@@ -384,6 +388,7 @@ public class GuardOperationController {
         v.setEntryDenialReason(fullReason);
         v.setQrCodeUrl(null);
         repo.save(v);
+        if (notificationService != null) notificationService.gateDenied(v, reason.trim()); // never throws
         return null;
     }
 
@@ -406,7 +411,7 @@ public class GuardOperationController {
                     + (v.getStatus() != null ? v.getStatus() : "UNKNOWN") + " cannot be approved. Only pending requests can be approved.");
             return back;
         }
-        if (v != null && isFaceBanned(v)) {
+        if (v != null && isBanned(v)) {
             redirectAttributes.addFlashAttribute("error", BANNED_APPROVAL);
             return back;
         }
@@ -424,6 +429,7 @@ public class GuardOperationController {
                 return back;
             }
             v.setStatus("APPROVED");
+            boolean saved = false; // an email failure after this point leaves a real approval behind
             try {
                 Path uploadPath = Paths.get("uploads");
                 if (!Files.exists(uploadPath)) { Files.createDirectories(uploadPath); }
@@ -449,6 +455,8 @@ public class GuardOperationController {
                             : "Approval failed: this time slot is being updated by another approval right now. Please try again.");
                     return back;
                 }
+                saved = true;
+                notifySlotFilling(v);
                 emailService.sendApprovalEmailWithQR(v.getEmail(), v.getName(), v.getVisitDate().toString(), qrFileName, v.getReferenceId(), bookedWindow(v));
                 redirectAttributes.addFlashAttribute("success", "Visitor approved and Email sent successfully!");
                 if (v.isMasterBooking()) {
@@ -484,6 +492,7 @@ public class GuardOperationController {
             } catch (Exception e) {
                 System.err.println("❌ Approval QR/Email failed for visitor #" + v.getId() + ": " + e);
                 e.printStackTrace();
+                if (saved && notificationService != null) notificationService.approvalEmailFailed(v);
                 redirectAttributes.addFlashAttribute("error", "Approved, but failed to generate QR or send email: " + e.getMessage());
             }
         }
@@ -512,8 +521,8 @@ public class GuardOperationController {
             redirectAttributes.addFlashAttribute("error", "Master Bookings are exempt from the capacity check. Use the standard Approve button.");
             return back;
         }
-        // The override skips the seat count only: a banned face or a slot that does not exist still blocks it
-        if (isFaceBanned(v)) {
+        // The override skips the seat count only: a banned visitor or a slot that does not exist still blocks it
+        if (isBanned(v)) {
             redirectAttributes.addFlashAttribute("error", BANNED_APPROVAL);
             return back;
         }
@@ -535,6 +544,7 @@ public class GuardOperationController {
             v.setQrCodeUrl(qrFileName);
             v.setStatus("APPROVED");
             repo.save(v);
+            notifySlotFilling(v);
         } catch (Exception e) {
             System.err.println("❌ Force approval failed for visitor #" + v.getId() + ": " + e);
             redirectAttributes.addFlashAttribute("error", "Force approval failed, the booking is still pending: " + e.getMessage());
@@ -547,6 +557,7 @@ public class GuardOperationController {
             redirectAttributes.addFlashAttribute("success", "⚠️ Force-approved over capacity: " + v.getName() + ". Approval email sent.");
         } catch (Exception e) {
             System.err.println("❌ Force approval email failed for visitor #" + v.getId() + ": " + e);
+            if (notificationService != null) notificationService.approvalEmailFailed(v);
             redirectAttributes.addFlashAttribute("error", "Force-approved, but the approval email failed to send: " + e.getMessage());
         }
         return back;
@@ -575,6 +586,23 @@ public class GuardOperationController {
         else seatReservation.saveIfSeatsRemain(v);
     }
 
+    // 🔔 After an approval: tells the bell when the visit's time slot is almost full (or full). Master Bookings close the
+    // whole date anyway, so they are skipped. Never fails the approval.
+    private void notifySlotFilling(Visitor v) {
+        if (notificationService == null || v.isMasterBooking() || v.getVisitDate() == null) return;
+        try {
+            int capacity = slotCapacity(v);
+            if (capacity <= 0) return;
+            int taken = 0;
+            for (Visitor o : repo.findByVisitDate(v.getVisitDate())) {
+                if (o.holdsSeat() && java.util.Objects.equals(o.getTimeWindow(), v.getTimeWindow())) taken += Math.max(1, o.getGroupSize());
+            }
+            notificationService.slotFilling(v.getVisitDate(), v.getTimeWindow(), capacity - taken, capacity);
+        } catch (RuntimeException e) {
+            System.err.println("⚠️ Slot check skipped for visitor #" + v.getId() + ": " + e.getMessage());
+        }
+    }
+
     // Seats configured for the visit's date and time window; 0 when no such slot exists
     private int slotCapacity(Visitor v) {
         if (v.getVisitDate() == null || v.getTimeWindow() == null) return 0;
@@ -583,12 +611,12 @@ public class GuardOperationController {
                 .sum();
     }
 
-    // True when the face saved with this booking matches a banned face (whatever email the booking uses).
-    // A booking without face data (made before face matching, or purged) can't be matched and is not blocked here.
-    private boolean isFaceBanned(Visitor v) {
+    // True when this booking matches an active ban: by its saved face (whatever email it uses), or by its email or phone
+    // number (IdentityBans, which also covers bookings made while AI features were off and so have no face data).
+    // A name that only resembles a banned name is not blocked here: it was flagged for staff at booking time.
+    private boolean isBanned(Visitor v) {
         if (faceBanRepo == null) return false;
-        double[] face = com.paf.aerovisit.service.FaceEncodings.parse(v.getFaceEncoding());
-        return face != null && com.paf.aerovisit.service.FaceEncodings.isBanned(face, faceBanRepo.findAll());
+        return com.paf.aerovisit.service.IdentityBans.activeBan(v, faceBanRepo.findAll(), LocalDate.now()) != null;
     }
 
     @PostMapping("/admin/reject/{id}")

@@ -76,6 +76,12 @@ public class Visitor {
     @Column(length = 30)
     private String possibleDuplicateOf;
 
+    // 🪪 Set when the lead booker's or a companion's name resembles an active ban's name (IdentityBans.nameBan), e.g.
+    // "Ban #12: Juan Dela Cruz". Only a warning: the booking goes to manual review and staff compare it with the ban's
+    // photo. Set by /save only, never bound from the form; cleared by the 30-day retention purge.
+    @Column(length = 300)
+    private String possibleBanMatch;
+
     // --- QR Code Storage ---
     private String qrCodeUrl;  
 
@@ -262,6 +268,9 @@ public class Visitor {
 
     public String getPossibleDuplicateOf() { return possibleDuplicateOf; }
     public void setPossibleDuplicateOf(String possibleDuplicateOf) { this.possibleDuplicateOf = possibleDuplicateOf; }
+
+    public String getPossibleBanMatch() { return possibleBanMatch; }
+    public void setPossibleBanMatch(String possibleBanMatch) { this.possibleBanMatch = possibleBanMatch; }
 
     public String getQrCodeUrl() { return qrCodeUrl; }
     public void setQrCodeUrl(String qrCodeUrl) { this.qrCodeUrl = qrCodeUrl; }

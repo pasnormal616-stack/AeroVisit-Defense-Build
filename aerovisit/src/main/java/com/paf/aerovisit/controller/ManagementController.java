@@ -57,6 +57,10 @@ public class ManagementController {
     @Autowired(required = false)
     private com.paf.aerovisit.service.UploadMirror uploadMirror;
 
+    // 🔔 A deleted booking takes its bell notifications with it. Optional, so test slices without it still start.
+    @Autowired(required = false)
+    private com.paf.aerovisit.repository.AdminNotificationRepository notificationRepo;
+
     public ManagementController(VisitorRepository repo, StaffScheduleRepository staffRepo, BookingSlotRepository bookingRepo, MuseumEmployeeRepository employeeRepo, EmailService emailService, PredictiveAdvisorService aiService, TimeWindowConfigRepository timeWindowRepo, MuseumClosureRepository closureRepo) {
         this.repo = repo;
         this.staffRepo = staffRepo;
@@ -84,6 +88,7 @@ public class ManagementController {
                     uploadMirror.deleteUpload(v.getQrCodeUrl());
                 }
                 repo.delete(v);
+                if (notificationRepo != null) notificationRepo.deleteByVisitorId(id);
                 redirectAttributes.addFlashAttribute("success", "Visitor deleted and storage space freed up!");
             } catch (IOException e) {
                 redirectAttributes.addFlashAttribute("error", "Database record deleted, but files could not be removed.");
@@ -202,11 +207,14 @@ public class ManagementController {
             redirectAttributes.addFlashAttribute("error", "Visitor ID not found in database.");
             return "redirect:/admin";
         }
+        // 🪪 The face when the booking has one (AI on); always the email and phone number, so a booking made while AI
+        // features were off (no face data) can still be banned (IdentityBans)
         double[] face = com.paf.aerovisit.service.FaceEncodings.parse(v.getFaceEncoding());
-        if (face == null) {
-            redirectAttributes.addFlashAttribute("error", "No face data on file for " + v.getName()
-                    + " (no face was found in the selfie, the booking predates face matching, or it was removed by the 30-day purge)."
-                    + " This booking can't be banned; reject it instead.");
+        String email = com.paf.aerovisit.service.IdentityBans.email(v.getEmail());
+        String phone = com.paf.aerovisit.service.IdentityBans.phoneOf(v);
+        if (face == null && email == null && phone == null) {
+            redirectAttributes.addFlashAttribute("error", "Nothing to ban " + v.getName() + " by: this booking has no face data,"
+                    + " email or phone number on file (it may have been anonymized by the 30-day purge). Reject it instead.");
             return "redirect:/admin";
         }
         if (faceBanRepo == null) {
@@ -218,20 +226,26 @@ public class ManagementController {
 
         LocalDate today = LocalDate.now();
         LocalDate expiresAt = banExpiry(duration, today);
-        com.paf.aerovisit.model.BlacklistedFace ban = com.paf.aerovisit.service.FaceEncodings.activeBan(face, faceBanRepo.findAll(), today);
+        List<com.paf.aerovisit.model.BlacklistedFace> existingBans = faceBanRepo.findAll();
+        com.paf.aerovisit.model.BlacklistedFace ban = com.paf.aerovisit.service.FaceEncodings.activeBan(face, existingBans, today);
+        if (ban == null) ban = com.paf.aerovisit.service.IdentityBans.contactBan(email, phone, existingBans, today);
         boolean alreadyBanned = ban != null;
         if (alreadyBanned) {
             // Same person banned again: keep the longer of the two bans (permanent wins) and the newest reason
             if (ban.getExpiresAt() != null && (expiresAt == null || expiresAt.isAfter(ban.getExpiresAt()))) ban.setExpiresAt(expiresAt);
             ban.setReason(why);
+            // An identity ban made while AI was off gains the face once a booking of theirs has one
+            if (ban.getFaceEncoding() == null && face != null) ban.setFaceEncoding(v.getFaceEncoding());
         } else {
             ban = new com.paf.aerovisit.model.BlacklistedFace();
-            ban.setFaceEncoding(v.getFaceEncoding());
+            ban.setFaceEncoding(face != null ? v.getFaceEncoding() : null);
             ban.setReason(why);
             ban.setExpiresAt(expiresAt);
         }
-        // Name + mugshot for the guards (display only; the ban is enforced by the face vector alone). A ban that
-        // already has them keeps its first ones; one made before these columns existed gets them now.
+        if (ban.getEmail() == null) ban.setEmail(email);
+        if (ban.getPhone() == null) ban.setPhone(phone);
+        // Name + mugshot for the guards (and the name flag on new bookings). A ban that already has them keeps its
+        // first ones; one made before these columns existed gets them now.
         if (ban.getName() == null && v.getName() != null && !v.getName().isBlank()) {
             String name = v.getName().trim();
             ban.setName(name.length() > MAX_BAN_REASON ? name.substring(0, MAX_BAN_REASON) : name);
@@ -242,25 +256,30 @@ public class ManagementController {
             if (uploadMirror != null && ban.getImageUrl() != null) uploadMirror.pushUpload(ban.getImageUrl());
         }
         faceBanRepo.save(ban);
-        // Revoked either way: a booking made before the face was banned must not keep a live pass
-        int revoked = revokeOpenBookings(face, why);
-        String revokedNote = revoked > 0 ? " " + revoked + " open booking(s) with this face were revoked." : "";
+        // Revoked either way: a booking made before the ban must not keep a live pass
+        int revoked = revokeOpenBookings(ban, today, why);
+        String revokedNote = revoked > 0 ? " " + revoked + " open booking(s) of this person were revoked." : "";
+        String newBanNote = face != null
+                ? "🧬 Visitor banned " + untilText(expiresAt) + ": " + v.getName() + ". New bookings with this face will be refused."
+                : "🪪 Visitor banned " + untilText(expiresAt) + ": " + v.getName() + ". No face data on file (AI features were off),"
+                  + " so new bookings with this email or phone number will be refused, and bookings under a similar name will be"
+                  + " flagged for review.";
         redirectAttributes.addFlashAttribute("success", alreadyBanned
                 ? "🧬 " + v.getName() + " was already banned; the ban now runs " + untilText(ban.getExpiresAt()) + "." + revokedNote
-                : "🧬 Visitor banned " + untilText(expiresAt) + ": " + v.getName() + ". New bookings with this face will be refused." + revokedNote);
+                : newBanNote + revokedNote);
         return "redirect:/admin";
     }
 
-    // 🔒 BAN INTEGRITY: every request still waiting for review, plus every approved visit from today on, whose saved face
-    // is the banned face, becomes REJECTED with its QR code cleared, so no live pass is left behind under any email.
-    // Past approvals and finished visits stay as history. Returns how many bookings were revoked.
-    private int revokeOpenBookings(double[] bannedFace, String reason) {
-        LocalDate today = LocalDate.now();
+    // 🔒 BAN INTEGRITY: every request still waiting for review, plus every approved visit from today on, that the ban
+    // matches (same face, or same email / phone number) becomes REJECTED with its QR code cleared, so no live pass is left
+    // behind. Past approvals and finished visits stay as history. Returns how many bookings were revoked.
+    private int revokeOpenBookings(com.paf.aerovisit.model.BlacklistedFace ban, LocalDate today, String reason) {
+        List<com.paf.aerovisit.model.BlacklistedFace> justThisBan = List.of(ban);
         int revoked = 0;
         for (Visitor o : repo.findAll()) {
             boolean upcomingApproval = "APPROVED".equals(o.getStatus()) && (o.getVisitDate() == null || !o.getVisitDate().isBefore(today));
             if (!(o.awaitsApproval() || upcomingApproval)) continue;
-            if (!com.paf.aerovisit.service.FaceEncodings.samePerson(bannedFace, com.paf.aerovisit.service.FaceEncodings.parse(o.getFaceEncoding()))) continue;
+            if (com.paf.aerovisit.service.IdentityBans.activeBan(o, justThisBan, today) == null) continue;
             o.setStatus("REJECTED");
             o.setQrCodeUrl(null);
             o.setRejectionReason("Access revoked: visitor banned (" + reason + ")");

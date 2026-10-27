@@ -118,7 +118,7 @@ class KycAdminViewTest {
     }
 
     @Test
-    void theOnlyBanInTheMenuIsBanVisitorByFace() throws Exception {
+    void theOnlyBanInTheMenuIsBanVisitor() throws Exception {
         Visitor withFace = v(7, "Juan Dela Cruz", "s7.jpg", "c7.jpg", true);
         withFace.setFaceEncoding("[0.1]");
         String html = page(withFace, v(8, "Maria Santos", "s8.jpg", null, false));
@@ -126,8 +126,10 @@ class KycAdminViewTest {
         assertThat(html).doesNotContain("Block User", "/admin/block/", "/admin/execute-block", "Biometric Ban");
         assertThat(row(html, "Juan Dela Cruz")).contains("data-bs-target=\"#banModal\"", "data-ban-url=\"/admin/biometric-ban/7\"",
                 "data-ban-name=\"Juan Dela Cruz\"", "Ban Visitor</button>");
-        // No face data: the item is shown disabled with the reason, so staff know why they can't ban
-        assertThat(row(html, "Maria Santos")).contains("Ban Visitor (no face data)").doesNotContain("/admin/biometric-ban/8");
+        // No face data (AI features were off): still bannable, by email + phone number; the dialog is told there is no face
+        assertThat(row(html, "Juan Dela Cruz")).contains("data-ban-face=\"true\"");
+        assertThat(row(html, "Maria Santos")).contains("data-ban-url=\"/admin/biometric-ban/8\"", "data-ban-face=\"false\"")
+            .doesNotContain("Ban Visitor (no face data)");
         // One shared dialog: reason + 30 days (default) / 6 months / permanent; no form action until a row is chosen
         assertThat(html.split("id=\"banModal\"", -1)).hasSize(2);
         assertThat(html).containsPattern("<form id=\"banForm\" method=\"post\">")

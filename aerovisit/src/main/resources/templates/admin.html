@@ -250,6 +250,9 @@
                                         <!-- 🧬 Same face as another booking on this date (VisitorPortalController.duplicateFace): compare both in View KYC -->
                                         <span th:if="${visitor.possibleDuplicateOf != null}" class="av-badge av-badge--warn ms-1" title="This face is close to another booking on the same date. Compare both bookings' photos in View KYC: it may be the same person under another email, or only a look-alike">
                                             <i class="bi bi-people-fill me-1" aria-hidden="true"></i><span th:text="'Possible duplicate of ' + ${visitor.possibleDuplicateOf}">Possible duplicate</span></span>
+                                        <!-- 🪪 The name (or a companion's) resembles a banned visitor's (IdentityBans.nameBan): compare with the ban's photo -->
+                                        <a th:if="${visitor.possibleBanMatch != null}" href="/admin/blacklist" class="av-badge av-badge--warn ms-1 text-decoration-none" title="This booking's name, or a companion's, resembles a banned visitor. Compare the photos with the Banned Visitors page before approving: it may be the same person or only someone with a similar name">
+                                            <i class="bi bi-person-exclamation me-1" aria-hidden="true"></i><span th:text="'Possible banned visitor (' + ${visitor.possibleBanMatch} + ')'">Possible banned visitor</span></a>
                                     </div>
                                     <div class="av-person-meta" th:if="${visitor.age != null and visitor.sex != null}" th:text="${visitor.sex} + ', ' + ${visitor.age} + ' yrs old'"></div>
                                     <div class="av-person-meta" th:text="${visitor.email} + ' • ' + ${visitor.contactNumber != null ? visitor.contactNumber : visitor.phone}"></div>
@@ -342,16 +345,13 @@
                                 <div class="dropdown">
                                     <button class="btn btn-sm btn-light p-1" type="button" data-bs-toggle="dropdown" aria-label="Open action menu" title="More options"><i class="bi bi-three-dots-vertical"></i></button>
                                     <ul class="dropdown-menu dropdown-menu-end">
-                                        <!-- 🧬 The only ban: by face (biometric), so a new name or email can't get around it -->
-                                        <li th:if="${visitor.faceEncoding != null}">
+                                        <!-- 🧬 Ban by face when the booking has face data, and always by email + phone number
+                                             (IdentityBans), so a booking made while AI features were off can still be banned -->
+                                        <li>
                                             <!-- Opens the shared #banModal (reason + 30 days / 6 months / permanent) -->
                                             <button type="button" class="dropdown-item text-danger" data-bs-toggle="modal" data-bs-target="#banModal"
-                                                    th:attr="data-ban-url=@{/admin/biometric-ban/{id}(id=${visitor.id})},data-ban-name=${visitor.name}">
+                                                    th:attr="data-ban-url=@{/admin/biometric-ban/{id}(id=${visitor.id})},data-ban-name=${visitor.name},data-ban-face=${visitor.faceEncoding != null}">
                                                 <i class="bi bi-person-x me-2"></i> Ban Visitor</button>
-                                        </li>
-                                        <li th:if="${visitor.faceEncoding == null}">
-                                            <span class="dropdown-item disabled" title="No face data on file for this booking (older booking, no face found, or removed by the 30-day purge): reject it instead">
-                                                <i class="bi bi-person-x me-2"></i> Ban Visitor (no face data)</span>
                                         </li>
                                         <li th:if="${isDirector}">
                                             <form th:action="@{'/admin/delete/' + ${visitor.id}}" method="post" class="m-0" onsubmit="return confirm('Delete this record?');">

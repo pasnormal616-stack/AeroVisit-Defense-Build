@@ -175,13 +175,14 @@ class GuardDashboardTest {
     }
 
     @Test
-    void withoutFaceDataTheBanButtonIsDisabled() throws Exception {
+    void withoutFaceDataTheBanButtonStillWorksByEmailAndPhone() throws Exception {
+        // 🪪 A booking made while AI features were off has no face data: the ban uses its email + phone (IdentityBans)
         Visitor noFace = v(9, "No Face", "APPROVED", MORNING);
         noFace.setFaceEncoding(null);
         when(repo.findByVisitDate(TODAY)).thenReturn(new ArrayList<>(List.of(noFace)));
 
         String rows = tbody(mvc.perform(get("/guard/dashboard")).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
-        assertThat(rows).doesNotContain("data-ban-url").contains("disabled", "No face data on file");
+        assertThat(rows).contains("data-ban-url=\"/admin/biometric-ban/9\"", "data-ban-face=\"false\"").doesNotContain("No face data on file");
     }
 
     @Test

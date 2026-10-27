@@ -201,14 +201,85 @@ class BiometricBanTest {
         assertThat(saved.getExpiresAt()).isEqualTo(java.time.LocalDate.now().plusDays(30));
     }
 
+    // --- 🪪 Bookings made while AI features were off (no face data): banned by email + phone number ---
+
     @Test
-    void aBookingWithoutFaceDataCannotBeBanned() throws Exception {
-        visitorWithFace(null);
+    void aBookingWithoutFaceDataIsBannedByItsEmailAndPhone() throws Exception {
+        Visitor v = visitorWithFace(null);
+        v.setEmail("  Juan.DelaCruz@Example.com ");
+        v.setContactNumber("+63 917-123-4567");
+        when(faceBanRepo.findAll()).thenReturn(List.of());
+
+        mvc.perform(post("/admin/biometric-ban/7").with(csrf()).param("reason", "Fake ID Uploaded").param("duration", "PERMANENT"))
+           .andExpect(redirectedUrl("/admin"))
+           .andExpect(flash().attribute("success", "🪪 Visitor banned permanently: Juan Dela Cruz. No face data on file (AI features were off),"
+                   + " so new bookings with this email or phone number will be refused, and bookings under a similar name will be"
+                   + " flagged for review."));
+
+        BlacklistedFace ban = savedBan();
+        assertThat(ban.getFaceEncoding()).isNull();
+        assertThat(ban.getEmail()).isEqualTo("juan.delacruz@example.com");
+        assertThat(ban.getPhone()).isEqualTo("09171234567");
+        assertThat(ban.getName()).isEqualTo("Juan Dela Cruz");
+    }
+
+    @Test
+    void aFaceBanAlsoRecordsTheEmailAndPhone() throws Exception {
+        Visitor v = visitorWithFace(FaceEncodings.format(axis(2)));
+        v.setEmail("juan@example.com");
+        v.setContactNumber("09171234567");
+        when(faceBanRepo.findAll()).thenReturn(List.of());
+
+        mvc.perform(post("/admin/biometric-ban/7").with(csrf())).andExpect(redirectedUrl("/admin"));
+
+        BlacklistedFace ban = savedBan();
+        assertThat(ban.getFaceEncoding()).isNotNull();
+        assertThat(ban.getEmail()).isEqualTo("juan@example.com");
+        assertThat(ban.getPhone()).isEqualTo("09171234567");
+    }
+
+    @Test
+    void anEmailBanGainsTheFaceWhenTheSamePersonIsBannedAgainWithFaceData() throws Exception {
+        Visitor v = visitorWithFace(FaceEncodings.format(axis(2)));
+        v.setEmail("juan@example.com");
+        BlacklistedFace emailOnly = new BlacklistedFace();
+        emailOnly.setEmail("juan@example.com");
+        emailOnly.setExpiresAt(java.time.LocalDate.now().plusDays(10));
+        when(faceBanRepo.findAll()).thenReturn(List.of(emailOnly));
+
+        mvc.perform(post("/admin/biometric-ban/7").with(csrf()).param("duration", "PERMANENT"))
+           .andExpect(flash().attribute("success", "🧬 Juan Dela Cruz was already banned; the ban now runs permanently."));
+
+        assertThat(savedBan()).isSameAs(emailOnly);
+        assertThat(emailOnly.getFaceEncoding()).isEqualTo(FaceEncodings.format(axis(2)));
+        assertThat(emailOnly.getExpiresAt()).isNull();
+    }
+
+    @Test
+    void aBookingWithNoFaceEmailOrPhoneCannotBeBanned() throws Exception {
+        visitorWithFace(null); // e.g. anonymized by the 30-day purge
 
         mvc.perform(post("/admin/biometric-ban/7").with(csrf()))
            .andExpect(redirectedUrl("/admin"))
-           .andExpect(flash().attribute("error", "No face data on file for Juan Dela Cruz (no face was found in the selfie, the booking predates face matching, or it was removed by the 30-day purge). This booking can't be banned; reject it instead."));
+           .andExpect(flash().attribute("error", "Nothing to ban Juan Dela Cruz by: this booking has no face data, email or phone number"
+                   + " on file (it may have been anonymized by the 30-day purge). Reject it instead."));
         verify(faceBanRepo, never()).save(any());
+    }
+
+    @Test
+    void anEmailOnlyBanIsLabelledOnTheBannedVisitorsPageWithMaskedContactDetails() throws Exception {
+        BlacklistedFace ban = new BlacklistedFace();
+        ban.setId(4L);
+        ban.setReason("Fake ID");
+        ban.setName("Juan Dela Cruz");
+        ban.setEmail("juan.delacruz@example.com");
+        ban.setPhone("09171234567");
+        when(faceBanRepo.findAll()).thenReturn(List.of(ban));
+
+        String html = mvc.perform(get("/admin/blacklist")).andReturn().getResponse().getContentAsString();
+
+        assertThat(html).contains("Email &amp; phone ban (no face data)", "ju***@example.com", "0917***4567")
+            .doesNotContain("juan.delacruz@example.com", "09171234567");
     }
 
     // --- Banned Visitors page (sidebar): the face bans, newest first; the vectors themselves are never shown ---

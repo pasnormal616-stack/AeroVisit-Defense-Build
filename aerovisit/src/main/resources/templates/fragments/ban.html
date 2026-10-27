@@ -2,9 +2,11 @@
 <html lang="en" xmlns:th="http://www.thymeleaf.org">
 <body>
 
-<!-- 🧬 BAN VISITOR: one dialog for every row, pointed at the clicked visitor by banDialogScript. The ban follows the face.
+<!-- 🧬 BAN VISITOR: one dialog for every row, pointed at the clicked visitor by banDialogScript. The ban follows the face
+     when the booking has face data, and the email + phone number always (IdentityBans).
      Shared by the Command Dashboard (admin.html) and the Guard Dashboard (guard.html). A trigger needs
-     data-bs-toggle="modal" data-bs-target="#banModal" plus data-ban-url and data-ban-name. -->
+     data-bs-toggle="modal" data-bs-target="#banModal" plus data-ban-url, data-ban-name and data-ban-face ("false" when
+     the booking has no face data). -->
 <div th:fragment="banDialog" class="modal fade" id="banModal" tabindex="-1" aria-labelledby="banModalTitle" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -16,7 +18,9 @@
                 <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
                 <div class="modal-body text-start">
                     <p class="av-small av-muted mb-3">Target: <strong class="text-dark" id="banModalName"></strong></p>
-                    <p class="av-small av-muted mb-3">The ban follows this person's face, not their email: their open bookings are revoked, and new bookings with this face are refused under any name or email until the ban ends.</p>
+                    <p class="av-small av-muted mb-3" id="banModalFace">The ban follows this person's face, not their email: their open bookings are revoked, and new bookings with this face are refused under any name or email until the ban ends.</p>
+                    <!-- 🪪 Booking made while AI features were off: no face data, so the ban uses the email, phone number and name -->
+                    <p class="av-small av-muted mb-3" id="banModalIdentity" hidden>No face data on file for this booking (AI features were off), so the ban uses their email and phone number: their open bookings are revoked, new bookings with the same email or phone number are refused, and bookings under a similar name are flagged for review until the ban ends.</p>
                     <div class="mb-3">
                         <label class="form-label" for="banReason">Reason</label>
                         <select id="banReason" name="reason" class="form-select form-select-sm" required>
@@ -58,6 +62,9 @@
         if (!item) return;
         form.setAttribute('action', item.getAttribute('data-ban-url'));
         document.getElementById('banModalName').textContent = item.getAttribute('data-ban-name') || '';
+        var hasFace = item.getAttribute('data-ban-face') !== 'false';
+        document.getElementById('banModalFace').hidden = !hasFace;
+        document.getElementById('banModalIdentity').hidden = hasFace;
         document.getElementById('banDuration').value = '30_DAYS';
         document.getElementById('banReason').selectedIndex = 0;
     });

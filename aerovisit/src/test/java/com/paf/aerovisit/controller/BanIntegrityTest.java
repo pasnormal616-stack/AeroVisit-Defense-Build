@@ -44,8 +44,8 @@ import com.paf.aerovisit.service.FaceEncodings;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
 /**
- * Ban integrity (the face ban replaced the old email "Block"): banning revokes every live booking with that face under
- * any email, and approval / check-in refuse a banned face. No database.
+ * Ban integrity: banning revokes every live booking with that face under any email (and with that email or phone
+ * number), and approval / check-in refuse a banned face, email or phone number. No database.
  */
 @WebMvcTest({ManagementController.class, GuardOperationController.class})
 @Import(SecurityConfig.class)
@@ -110,19 +110,20 @@ class BanIntegrityTest {
         Visitor pastNoShow = v(6, "juan@example.com", JUAN, "APPROVED", TODAY.minusDays(10));     // history: kept
         Visitor inside = v(7, "juan@example.com", JUAN, "CHECKED-IN", TODAY);                    // inside the base: kept
         Visitor someoneElse = v(8, "ana@example.com", ANA, "APPROVED", TODAY.plusDays(2));       // different face
-        Visitor noFace = v(9, "juan@example.com", null, "APPROVED", TODAY.plusDays(2));          // can't be matched
+        Visitor noFace = v(9, "juan@example.com", null, "APPROVED", TODAY.plusDays(2));          // no face, same email: caught by email
+        Visitor strangerNoFace = v(11, "ana@example.com", null, "APPROVED", TODAY.plusDays(2));  // no face, other email: kept
         when(repo.findById(1L)).thenReturn(Optional.of(banned));
         when(faceBanRepo.findAll()).thenReturn(List.of());
         when(repo.findAll()).thenReturn(new ArrayList<>(List.of(banned, otherEmail, manualReview, approvedLater,
-                approvedToday, pastNoShow, inside, someoneElse, noFace)));
+                approvedToday, pastNoShow, inside, someoneElse, noFace, strangerNoFace)));
 
         mvc.perform(post("/admin/biometric-ban/1").with(csrf()).param("reason", "Fake ID"))
             .andExpect(redirectedUrl("/admin"))
             .andExpect(flash().attribute("success", "🧬 Visitor banned permanently: Visitor 1. New bookings with this face will be refused. "
-                    + "5 open booking(s) with this face were revoked."));
+                    + "6 open booking(s) of this person were revoked."));
 
         verify(faceBanRepo).save(any(BlacklistedFace.class));
-        for (Visitor revoked : List.of(banned, otherEmail, manualReview, approvedLater, approvedToday)) {
+        for (Visitor revoked : List.of(banned, otherEmail, manualReview, approvedLater, approvedToday, noFace)) {
             assertThat(revoked.getStatus()).as("visitor " + revoked.getId()).isEqualTo("REJECTED");
             assertThat(revoked.getQrCodeUrl()).as("visitor " + revoked.getId()).isNull();
             assertThat(revoked.getRejectionReason()).isEqualTo("Access revoked: visitor banned (Fake ID)");
@@ -130,7 +131,7 @@ class BanIntegrityTest {
         assertThat(pastNoShow.getStatus()).isEqualTo("APPROVED");
         assertThat(inside.getStatus()).isEqualTo("CHECKED-IN");
         assertThat(someoneElse.getStatus()).isEqualTo("APPROVED");
-        assertThat(noFace.getStatus()).isEqualTo("APPROVED");
+        assertThat(strangerNoFace.getStatus()).isEqualTo("APPROVED");
     }
 
     @Test
@@ -141,7 +142,7 @@ class BanIntegrityTest {
         when(repo.findAll()).thenReturn(new ArrayList<>(List.of(v)));
 
         mvc.perform(post("/admin/biometric-ban/10").with(csrf()))
-            .andExpect(flash().attribute("success", "🧬 Visitor 10 was already banned; the ban now runs permanently. 1 open booking(s) with this face were revoked."));
+            .andExpect(flash().attribute("success", "🧬 Visitor 10 was already banned; the ban now runs permanently. 1 open booking(s) of this person were revoked."));
 
         assertThat(v.getStatus()).isEqualTo("REJECTED");
     }
@@ -302,6 +303,92 @@ class BanIntegrityTest {
 
         mvc.perform(post("/admin/api/scan").with(csrf()).param("qrData", v.getSecureToken()))
             .andExpect(jsonPath("$.status").value("ready"));
+    }
+
+    // --- 🪪 Identity bans (made while AI features were off): email / phone number, no face data ---
+
+    private void juanIsBannedByEmailAndPhone() {
+        BlacklistedFace ban = new BlacklistedFace();
+        ban.setId(5L);
+        ban.setEmail("juan@example.com");
+        ban.setPhone("09171234567");
+        ban.setName("Juan Dela Cruz");
+        when(faceBanRepo.findAll()).thenReturn(List.of(ban));
+    }
+
+    @Test
+    void aBookingWithTheBannedEmailOrPhoneCannotBeApprovedOrCheckedIn() throws Exception {
+        juanIsBannedByEmailAndPhone();
+        Visitor sameEmail = v(50, "JUAN@example.com ", null, "PENDING", TODAY);          // case and spaces ignored
+        Visitor samePhone = v(51, "another@example.com", null, "PENDING", TODAY);
+        samePhone.setContactNumber("+63 917 123 4567");                                   // same number, other format
+        when(repo.findById(50L)).thenReturn(Optional.of(sameEmail));
+        when(repo.findById(51L)).thenReturn(Optional.of(samePhone));
+        when(repo.findByReferenceId("PAF-REF50")).thenReturn(Optional.of(sameEmail));
+
+        mvc.perform(post("/admin/approve/50").with(csrf())).andExpect(flash().attribute("error", GuardOperationController.BANNED_APPROVAL));
+        mvc.perform(post("/admin/approve/51").with(csrf())).andExpect(flash().attribute("error", GuardOperationController.BANNED_APPROVAL));
+        mvc.perform(post("/admin/manual-checkin").with(csrf()).param("referenceId", "PAF-REF50"))
+            .andExpect(flash().attribute("error", GuardOperationController.BANNED_ENTRY));
+
+        assertThat(sameEmail.getStatus()).isEqualTo("PENDING");
+        assertThat(samePhone.getStatus()).isEqualTo("PENDING");
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    @WithMockUser(roles = "GUARD")
+    void aPassWithTheBannedEmailIsRefusedAtTheScanner() throws Exception {
+        juanIsBannedByEmailAndPhone();
+        Visitor v = v(52, "juan@example.com", null, "APPROVED", TODAY);
+        v.setTimeWindow(null);
+        v.setSecureToken("3c1c2d9e-7b1a-4c55-9f0e-2a6b8d4c1e52");
+        when(repo.findBySecureToken(v.getSecureToken())).thenReturn(Optional.of(v));
+
+        mvc.perform(post("/admin/api/scan").with(csrf()).param("qrData", v.getSecureToken()))
+            .andExpect(jsonPath("$.status").value("error"))
+            .andExpect(jsonPath("$.message").value(GuardOperationController.BANNED_ENTRY));
+    }
+
+    @Test
+    void onlyTheNameMatchingAnIdentityBanDoesNotBlockApproval() throws Exception {
+        juanIsBannedByEmailAndPhone();
+        long id = 990304L; // approval writes uploads/QR_<id>.png, deleted afterwards
+        Visitor v = v(id, "different@example.com", null, "PENDING", TODAY.plusDays(3));
+        v.setName("Juan Dela Cruz"); // staff saw the flag and decided it is someone else
+        when(repo.findById(id)).thenReturn(Optional.of(v));
+        BookingSlot slot = new BookingSlot();
+        slot.setSlotDate(v.getVisitDate());
+        slot.setTimeWindow(WINDOW);
+        slot.setMaxCapacity(10);
+        when(bookingRepo.findBySlotDateAndTimeWindow(v.getVisitDate(), WINDOW)).thenReturn(List.of(slot));
+
+        try {
+            mvc.perform(post("/admin/approve/" + id).with(csrf())).andExpect(flash().attribute("success", "Visitor approved and Email sent successfully!"));
+        } finally {
+            Files.deleteIfExists(Paths.get("uploads", "QR_" + id + ".png"));
+        }
+        assertThat(v.getStatus()).isEqualTo("APPROVED");
+    }
+
+    @Test
+    void banningABookingWithoutFaceDataRevokesTheOpenBookingsWithItsEmailOrPhone() throws Exception {
+        when(faceBanRepo.findAll()).thenReturn(List.of());
+        Visitor banned = v(60, "juan@example.com", null, "PENDING_MANUAL_REVIEW", TODAY.plusDays(4));
+        banned.setContactNumber("0917-123-4567");
+        Visitor samePhone = v(61, "other@example.com", null, "APPROVED", TODAY.plusDays(1));
+        samePhone.setContactNumber("09171234567");
+        Visitor stranger = v(62, "ana@example.com", ANA, "APPROVED", TODAY.plusDays(1));
+        when(repo.findById(60L)).thenReturn(Optional.of(banned));
+        when(repo.findAll()).thenReturn(new ArrayList<>(List.of(banned, samePhone, stranger)));
+
+        mvc.perform(post("/admin/biometric-ban/60").with(csrf()).param("reason", "Fake ID"))
+            .andExpect(redirectedUrl("/admin"));
+
+        assertThat(banned.getStatus()).isEqualTo("REJECTED");
+        assertThat(samePhone.getStatus()).isEqualTo("REJECTED");
+        assertThat(samePhone.getQrCodeUrl()).isNull();
+        assertThat(stranger.getStatus()).isEqualTo("APPROVED");
     }
 
     // --- Check-in refuses a banned face (check-out still works) ---

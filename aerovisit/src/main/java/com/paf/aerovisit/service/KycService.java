@@ -92,6 +92,10 @@ public class KycService {
     @Autowired(required = false)
     AiSwitch aiSwitch;
 
+    // 🔔 Tells the Director's bell when the AI service stops answering (at most once an hour). Optional.
+    @Autowired(required = false)
+    NotificationService notificationService;
+
     public KycService(OcrService ocrService) {
         this.ocrService = ocrService;
     }
@@ -100,7 +104,10 @@ public class KycService {
         if (aiSwitch != null && !aiSwitch.enabled()) return review("AI_OFF", null);
         try {
             JSONObject answer = verify(idCardPhoto, livenessSelfie);
-            if (answer == null) return review("AI_SERVICE_UNAVAILABLE", null);
+            if (answer == null) {
+                if (notificationService != null) notificationService.aiServiceOffline(); // never throws
+                return review("AI_SERVICE_UNAVAILABLE", null);
+            }
             String reason = answer.optString("reason", "UNKNOWN");
             // 🔎 Logged on every booking so the blur threshold (KYC_MIN_FACE_SHARPNESS) can be tuned on real phone photos
             System.out.println("KYC readings: status=" + answer.optString("status", "-") + " reason=" + reason

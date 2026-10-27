@@ -243,27 +243,66 @@
 }
 .av-bell-badge[hidden] { display: none; }
 
-/* Bell dropdown (shell.html): pending requests row + the 10 latest notifications */
+/* Bell dropdown (shell.html): a social-media style feed. Avatar (initials + type badge, or a type icon), bold actor,
+   message, time; blue dot = unread; "..." menu = mark as read / remove; Pending approval link at the bottom. */
 .av-bell-wrap { display: inline-flex; }
-.av-app .av-notif-menu { width: 340px; max-width: calc(100vw - 32px); padding: 0; overflow: hidden; }
-.av-notif-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 10px; font-weight: 600; color: var(--text); border-bottom: 1px solid var(--border-subtle); }
-.av-notif-new { padding: 1px 8px; border-radius: 999px; background: var(--danger); color: var(--on-danger); font-size: 0.6875rem; font-weight: 700; }
-.av-notif-new[hidden] { display: none; }
-.av-notif-pending { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--primary-tint); color: var(--primary-ink); font-weight: 600; text-decoration: none; border-bottom: 1px solid var(--border-subtle); }
+.av-app .dropdown-menu.av-notif-menu { width: 380px; max-width: calc(100vw - 24px); padding: 0; overflow: hidden; border-radius: 14px; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18); }
+.av-notif-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px 6px; }
+.av-notif-title { font-size: 1.125rem; font-weight: 700; color: var(--text); }
+.av-notif-markall { border: 0; background: none; padding: 4px 6px; border-radius: 6px; color: var(--primary-ink); font-size: 0.8125rem; font-weight: 600; }
+.av-notif-markall:hover { background: var(--bg-hover); }
+.av-notif-markall[hidden] { display: none; }
+.av-notif-tabs { display: flex; gap: 6px; padding: 4px 16px 8px; }
+.av-notif-tab { border: 0; background: none; padding: 5px 12px; border-radius: 999px; color: var(--text); font-size: 0.8125rem; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+.av-notif-tab:hover { background: var(--bg-hover); }
+.av-notif-tab.is-active { background: var(--primary-tint); color: var(--primary-ink); }
+.av-notif-count { min-width: 18px; padding: 0 6px; border-radius: 999px; background: var(--danger); color: var(--on-danger); font-size: 0.6875rem; font-weight: 700; line-height: 18px; text-align: center; }
+.av-notif-count[hidden] { display: none; }
+.av-notif-list { max-height: min(440px, 62vh); overflow-y: auto; padding: 0 8px 8px; }
+.av-notif-group { padding: 8px 8px 4px; font-size: 0.8125rem; font-weight: 700; color: var(--text); }
+.av-notif-item { position: relative; display: flex; align-items: center; border-radius: 10px; }
+.av-notif-item:hover { background: var(--bg-hover); }
+.av-app .av-notif-link { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 8px 4px 8px 8px; color: var(--text); text-decoration: none; }
+.av-app .av-notif-link:hover { color: var(--text); }
+.av-notif-avatar { position: relative; flex: none; width: 44px; height: 44px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 1.125rem; }
+.av-notif-initials { font-size: 0.9375rem; font-weight: 700; letter-spacing: 0.02em; }
+.av-notif-mini { position: absolute; right: -3px; bottom: -3px; width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 0.625rem; border: 2px solid var(--bg-raised); }
+.av-notif-avatar.tone-primary { background: var(--primary-tint); color: var(--primary-ink); }
+.av-notif-avatar.tone-gold { background: var(--gold-tint); color: var(--gold-ink); }
+.av-notif-avatar.tone-info { background: var(--neutral-tint); color: var(--info-ink); }
+.av-notif-avatar.tone-success { background: var(--success-tint); color: var(--success-ink); }
+.av-notif-avatar.tone-danger { background: var(--danger-tint); color: var(--danger-ink); }
+.av-notif-avatar.tone-neutral { background: var(--neutral-tint); color: var(--text-muted); }
+.av-notif-mini.tone-primary { background: var(--primary); color: var(--on-primary); }
+.av-notif-mini.tone-gold { background: var(--gold); color: var(--on-gold); }
+.av-notif-mini.tone-info { background: var(--info-ink); color: #fff; }
+.av-notif-mini.tone-success { background: var(--success-ink); color: #fff; }
+.av-notif-mini.tone-danger { background: var(--danger); color: var(--on-danger); }
+.av-notif-mini.tone-neutral { background: var(--text-muted); color: #fff; }
+.av-notif-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.av-notif-text { overflow-wrap: anywhere; line-height: 1.35; font-size: 0.875rem; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.av-notif-text strong { font-weight: 700; }
+.av-notif-item.is-resolved .av-notif-text { color: var(--text-muted); }
+.av-notif-meta { display: flex; align-items: center; gap: 8px; }
+.av-notif-time { font-size: 0.75rem; color: var(--text-muted); }
+.av-notif-time.is-new { color: var(--primary-ink); font-weight: 600; }
+.av-notif-chip { padding: 0 8px; border-radius: 999px; background: var(--success-tint); color: var(--success-ink); font-size: 0.6875rem; font-weight: 600; line-height: 18px; }
+.av-notif-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--primary); margin-right: 2px; }
+.av-notif-more { flex: none; width: 32px; height: 32px; margin-right: 6px; border: 0; border-radius: 50%; background: var(--bg-raised); color: var(--text); box-shadow: 0 1px 4px rgba(15, 23, 42, 0.15); opacity: 0; transition: opacity 0.12s; }
+.av-notif-item:hover .av-notif-more, .av-notif-more:focus-visible, .av-notif-item:focus-within .av-notif-more { opacity: 1; }
+@media (hover: none) { .av-notif-more { opacity: 1; box-shadow: none; background: transparent; } }
+.av-notif-actions { position: absolute; right: 8px; top: calc(100% - 6px); z-index: 5; min-width: 220px; padding: 6px; border-radius: 10px; background: var(--bg-raised); border: 1px solid var(--border-subtle); box-shadow: 0 10px 24px rgba(15, 23, 42, 0.2); }
+.av-notif-actions.is-up { top: auto; bottom: calc(100% - 6px); }
+.av-notif-actions[hidden] { display: none; }
+.av-notif-actions button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: none; color: var(--text); font-size: 0.875rem; text-align: left; }
+.av-notif-actions button:hover { background: var(--bg-hover); }
+.av-notif-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 28px 14px; color: var(--text-muted); text-align: center; }
+.av-notif-empty .bi { font-size: 1.75rem; }
+.av-notif-pending { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--primary-tint); color: var(--primary-ink); font-weight: 600; text-decoration: none; border-top: 1px solid var(--border-subtle); }
 .av-notif-pending .bi-chevron-right { margin-left: auto; }
+.av-notif-pending .av-notif-count + .bi-chevron-right { margin-left: 0; }
+.av-notif-pending .av-notif-count { margin-left: auto; }
 .av-notif-pending:hover { color: var(--primary-ink); text-decoration: underline; }
-.av-notif-list { max-height: 360px; overflow-y: auto; }
-.av-app .av-notif-item { display: flex; gap: 10px; padding: 10px 14px; color: var(--text); text-decoration: none; border-bottom: 1px solid var(--border-subtle); }
-.av-notif-item:last-child { border-bottom: 0; }
-.av-app .av-notif-item:hover { background: var(--bg-hover); color: var(--text); }
-.av-notif-item.is-unread { background: var(--primary-tint); }
-.av-notif-item.is-unread .av-notif-text { font-weight: 600; }
-.av-notif-item .bi { flex: none; margin-top: 2px; color: var(--text-muted); }
-.av-notif-item .bi-emoji-frown { color: var(--danger-ink); }
-.av-notif-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.av-notif-text { overflow-wrap: anywhere; line-height: 1.4; }
-.av-notif-time { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-muted); }
-.av-notif-empty { padding: 18px 14px; color: var(--text-muted); text-align: center; }
 .av-toast-stack { z-index: 1090; }
 .av-app .av-toast { background: var(--primary); color: var(--on-primary); border: 0; }
 .av-toast-link { color: var(--on-primary); font-weight: 700; text-decoration: underline; }
