@@ -293,4 +293,18 @@ class GuardDashboardTest {
         stubToday();
         mvc.perform(get("/guard/dashboard").param("date", "13/45/2026")).andExpect(status().isBadRequest());
     }
+    // 🔄 Two gates sharing the Guard account: the page re-reads itself every 30 s and swaps in the rows, the tab counts
+    // and the headcount, so it needs those three ids and must leave the guard alone while they are busy
+    @Test
+    void theListRefreshesItselfButNotWhileTheGuardIsBusy() throws Exception {
+        String html = page("expected");
+        assertThat(html).contains("id=\"gateTable\"", "id=\"gateTabs\"", "id=\"gateMeta\"", "setInterval(refresh, EVERY_MS)",
+                "var EVERY_MS = 30000;");
+        String script = html.substring(html.indexOf("LIVE LIST"), html.indexOf("Deny dialog:"));
+        assertThat(script)
+                .contains("document.hidden", "'.modal.show'", "INPUT|TEXTAREA|SELECT")      // hidden tab, open dialog, typing
+                .contains("res.ok && !res.redirected", "if (!fresh.getElementById('gateTable')) return;") // signed out: page untouched
+                .contains("location.pathname + location.search");                              // same tab and date
+        assertThat(tbody(html)).contains("data-visitor-id=\"4\""); // keep-my-place still finds the rows
+    }
 }

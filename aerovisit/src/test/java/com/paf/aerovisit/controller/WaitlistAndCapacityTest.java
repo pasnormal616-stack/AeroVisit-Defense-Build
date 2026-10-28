@@ -96,6 +96,9 @@ class WaitlistAndCapacityTest {
             .andExpect(status().isOk())
             .andExpect(content().string(containsString("action=\"/admin/approve-override/3\" method=\"post\"")))
             .andExpect(content().string(containsString("Force Approve</button>")))
+            // In the row's ⋮ menu, not a loud yellow button beside Approve on every row
+            .andExpect(content().string(containsString("class=\"dropdown-item text-warning\"")))
+            .andExpect(content().string(not(containsString("btn btn-sm btn-warning"))))
             // Master Bookings and non-pending rows get no override button
             .andExpect(content().string(not(containsString("/admin/approve-override/8"))))
             .andExpect(content().string(not(containsString("/admin/approve-override/9"))))

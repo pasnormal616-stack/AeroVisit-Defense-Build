@@ -22,7 +22,7 @@
         <div class="vp-hero-grid">
             <div>
                 <span class="vp-eyebrow vp-eyebrow--on-dark vp-reveal" data-reveal-order="0"><span class="dot"></span>PAF Aerospace Museum &middot; Villamor Air Base</span>
-                <h1 class="vp-reveal" data-reveal-order="1">Discover Aviation <em>History.</em></h1>
+                <h1 class="vp-reveal" data-reveal-order="1">Discover Aviation History</h1>
                 <p class="vp-hero-lead vp-reveal" data-reveal-order="2">Secure your boarding pass to explore the Philippine Air Force Museum.</p>
                 <div class="vp-hero-ctas vp-reveal" data-reveal-order="3">
                     <a href="#booking" class="vp-btn vp-btn--gold" data-open-tab="book-tab">
@@ -603,7 +603,7 @@
         function pickDay(date, cell) {
             if (isMasterMode) return;
             pickedDate = date;
-            calendarEl.querySelectorAll('.vp-day-pick.is-picked').forEach(function (c) { c.classList.remove('is-picked'); c.setAttribute('aria-pressed', 'false'); });
+            calendarEl.querySelectorAll('.is-picked').forEach(function (c) { c.classList.remove('is-picked'); c.setAttribute('aria-pressed', 'false'); });
             cell.classList.add('is-picked');
             cell.setAttribute('aria-pressed', 'true');
             clearSelection();
@@ -669,7 +669,7 @@
             pickedDate = null;
             timePicker.classList.add('d-none');
             timeList.textContent = '';
-            if (calendarEl) calendarEl.querySelectorAll('.vp-day-pick.is-picked').forEach(function (c) { c.classList.remove('is-picked'); });
+            if (calendarEl) calendarEl.querySelectorAll('.is-picked').forEach(function (c) { c.classList.remove('is-picked'); c.setAttribute('aria-pressed', 'false'); });
         };
 
         if (calendarEl) {
@@ -678,6 +678,17 @@
                 headerToolbar: { left: 'prev,next', center: 'title', right: 'today' },
                 height: 'auto',
                 validRange: { start: new Date().toISOString().split('T')[0] },
+
+                // 🗓️ The pickable / picked look comes from here, not from dayCellDidMount: when you go to the next
+                // month, FullCalendar keeps the cells the two months share (e.g. Nov 2-6 seen at the bottom of
+                // October), doesn't mount them again and resets their classes, so they were still clickable but
+                // never showed as chosen. These class names are re-applied on every redraw.
+                dayCellClassNames: function (arg) {
+                    var date = ymd(arg.date);
+                    var slots = slotsByDate[date];
+                    if (!slots || arg.isDisabled || dayStatus(slots) === 'full') return [];
+                    return date === pickedDate ? ['vp-day-pick', 'is-picked'] : ['vp-day-pick'];
+                },
 
                 // Only a dot in each cell; full days get a red dot and can't be picked. Runs again after prev/next.
                 dayCellDidMount: function (arg) {
@@ -695,8 +706,6 @@
                         arg.el.setAttribute('aria-label', date + ': fully booked');
                         return;
                     }
-                    arg.el.classList.add('vp-day-pick');
-                    arg.el.classList.toggle('is-picked', date === pickedDate);
                     arg.el.setAttribute('role', 'button');
                     arg.el.setAttribute('tabindex', '0');
                     arg.el.setAttribute('aria-pressed', date === pickedDate ? 'true' : 'false');

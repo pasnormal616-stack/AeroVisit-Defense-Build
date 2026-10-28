@@ -101,7 +101,7 @@ class GateNotificationHookTest {
         when(repo.findByVisitDate(DATE)).thenReturn(List.of(v, other));
 
         mvc.perform(post("/admin/approve/5").with(csrf()))
-            .andExpect(flash().attribute("success", "Visitor approved and Email sent successfully!"));
+            .andExpect(flash().attribute("success", "Visitor approved. The approval email with the QR code is on its way."));
         verify(notificationService).slotFilling(DATE, WINDOW, 3, 10); // 6 + 1 of 10 taken
         verify(notificationService, never()).approvalEmailFailed(any());
     }

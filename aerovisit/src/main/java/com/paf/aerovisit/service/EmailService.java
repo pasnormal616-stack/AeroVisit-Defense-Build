@@ -240,6 +240,9 @@ public class EmailService {
 
         } catch (MailDeliveryException e) {
             System.err.println("❌ Failed to send email: " + e.getMessage());
+            // 📮 Passed on (after logging): the approval email is sent in the background (MailOutbox), which reports a
+            // failure to the Director's bell; without the QR code the visitor can't enter
+            throw e;
         }
     }
 
@@ -351,6 +354,7 @@ public class EmailService {
 
         } catch (MailDeliveryException e) {
             System.err.println("❌ Failed to send Rejection email: " + e.getMessage());
+            throw e; // 📮 passed on, like the approval email: the background sender reports it to the Director's bell
         }
     }
 

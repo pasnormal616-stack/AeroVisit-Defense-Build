@@ -123,7 +123,7 @@ class ApprovalStateMachineTest {
             try {
                 mvc.perform(post("/admin/approve/" + id).with(csrf()))
                     .andExpect(redirectedUrl("/admin"))
-                    .andExpect(flash().attribute("success", "Visitor approved and Email sent successfully!"));
+                    .andExpect(flash().attribute("success", "Visitor approved. The approval email with the QR code is on its way."));
             } finally {
                 Files.deleteIfExists(Paths.get("uploads", "QR_" + id + ".png"));
             }

@@ -117,14 +117,17 @@
 .vp-hero h1 {
     margin: 22px 0 18px;
     font-family: var(--font-display);
-    font-weight: 800;
+    font-weight: 700;
     font-size: clamp(2.75rem, 1.4rem + 5vw, 5.75rem);
-    line-height: 0.95;
-    letter-spacing: -0.03em;
+    line-height: 1;
+    letter-spacing: -0.035em;
     color: #FFFFFF;
     font-variation-settings: 'opsz' 96;
+    text-wrap: balance;                              /* even lines: "Discover / Aviation History", not a lone last word */
+    text-shadow: 0 2px 24px rgba(0, 10, 35, 0.45);   /* stays readable over any slideshow photo */
 }
-.vp-hero h1 em { font-style: normal; color: var(--paf-gold); }
+/* One colour, no full stop; the gold accent is a short rule under the title instead of a two-tone word */
+.vp-hero h1::after { content: ''; display: block; width: 72px; height: 4px; margin-top: 22px; border-radius: 999px; background: var(--paf-gold); }
 .vp-hero-lead { max-width: 34rem; font-size: clamp(1rem, 0.9rem + 0.4vw, 1.1875rem); line-height: 1.6; color: rgba(255,255,255,0.8); margin: 0 0 32px; }
 .vp-hero-ctas { display: flex; flex-wrap: wrap; gap: 12px; }
 

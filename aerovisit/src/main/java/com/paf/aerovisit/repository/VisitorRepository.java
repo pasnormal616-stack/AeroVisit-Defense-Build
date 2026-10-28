@@ -78,6 +78,13 @@ public interface VisitorRepository extends JpaRepository<Visitor, Long> {
     List<Visitor> findApprovedVisitorsToOverride(@org.springframework.data.repository.query.Param("visitDate") LocalDate visitDate,
                                                  @org.springframework.data.repository.query.Param("masterId") Long masterId);
 
+    // 🚦 Two gates on one booking: changes the status only if it is still `from`, in one UPDATE, so of two guards pressing
+    // Accept (or checking out) at once exactly one gets 1 back and the other gets 0. Used through GateClaim.
+    @Modifying
+    @Transactional
+    @Query("UPDATE Visitor v SET v.status = :to WHERE v.id = :id AND v.status = :from")
+    int claimStatus(Long id, String from, String to);
+
     // 10. Mock data: deletes only simulated visitors, never a real booking. Matches the rows MockVisitorGenerator makes
     // (email ends in @mock.aerovisit) and the two kinds the earlier mock generator made. Returns the number deleted.
     @Modifying

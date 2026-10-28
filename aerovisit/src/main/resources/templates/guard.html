@@ -27,7 +27,7 @@
 
     <!-- TOOLBAR: the only three groups a guard can see -->
     <div class="av-toolbar">
-        <nav class="av-tabs" aria-label="Gate view">
+        <nav class="av-tabs" aria-label="Gate view" id="gateTabs">
             <a href="/guard/dashboard?tab=expected" class="av-tab" th:classappend="${tab == 'expected'} ? 'is-active'" th:attr="aria-current=${tab == 'expected'} ? 'page'">
                 <i class="bi bi-box-arrow-in-right"></i> Expected Arrivals <span class="count" th:text="'(' + ${expectedCount} + ')'">(0)</span></a>
             <a href="/guard/dashboard?tab=inside" class="av-tab" th:classappend="${tab == 'inside'} ? 'is-active'" th:attr="aria-current=${tab == 'inside'} ? 'page'">
@@ -35,7 +35,7 @@
             <a href="/guard/dashboard?tab=left" class="av-tab" th:classappend="${tab == 'left'} ? 'is-active'" th:attr="aria-current=${tab == 'left'} ? 'page'">
                 <i class="bi bi-box-arrow-right"></i> Left Today <span class="count" th:text="'(' + ${leftCount} + ')'">(0)</span></a>
         </nav>
-        <div class="av-toolbar-meta av-mono">
+        <div class="av-toolbar-meta av-mono" id="gateMeta">
             <span>Inside <b class="text-dark" th:text="${headcountInside}">0</b> · <span th:text="${#temporals.format(today, 'EEE, MMM d')}"></span></span>
         </div>
     </div>
@@ -83,7 +83,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr th:each="visitor : ${visitors}">
+                    <tr th:each="visitor : ${visitors}" th:attr="data-visitor-id=${visitor.id}">
                         <td>
                             <div class="av-person-name" th:text="${visitor.name}"></div>
                             <div class="av-person-meta av-mono" th:text="${visitor.referenceId != null ? visitor.referenceId : 'No reference ID'}"></div>
@@ -193,6 +193,58 @@
 <th:block th:replace="~{fragments/shell :: scripts}"></th:block>
 <th:block th:replace="~{fragments/ban :: banDialogScript}"></th:block>
 <script>
+// 🔄 LIVE LIST: two gates can share the Guard account, so every 30 s this page quietly re-reads itself and swaps in the
+// fresh visitor rows, tab counts and headcount; a pass accepted at the other gate moves to Inside Now without a reload.
+// It waits while a dialog is open, the guard is typing or picking a date, or the tab is hidden, and never touches the
+// page if the answer isn't the Guard Dashboard (signed out, server restarting). Rows keep data-visitor-id, and the
+// buttons keep working because shell.js and the dialogs listen on the document, not on each row.
+(function () {
+    var EVERY_MS = 30000;
+    var table = document.getElementById('gateTable');
+    if (!table || !window.fetch || !window.DOMParser) return;
+    var last = Date.now();
+    var busy = false;
+
+    // A dialog open, typing, picking a date: the guard is in the middle of something, so the list stays as it is
+    function guardIsBusy() {
+        if (document.hidden) return true;
+        if (document.querySelector('.modal.show')) return true;
+        var el = document.activeElement;
+        return !!el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+    }
+
+    function swap(fresh, id, part) {
+        var now = document.getElementById(id), next = fresh.getElementById(id);
+        if (!now || !next) return;
+        var from = part ? now.querySelector(part) : now, to = part ? next.querySelector(part) : next;
+        if (from && to && from.innerHTML !== to.innerHTML) from.innerHTML = to.innerHTML;
+    }
+
+    function refresh() {
+        if (busy || guardIsBusy()) return;
+        busy = true;
+        fetch(location.pathname + location.search, { credentials: 'same-origin', cache: 'no-store', headers: { 'X-Requested-With': 'fetch' } })
+            .then(function (res) { return res.ok && !res.redirected ? res.text() : null; })
+            .then(function (html) {
+                if (!html || guardIsBusy()) return; // the guard started something while the page was loading
+                var fresh = new DOMParser().parseFromString(html, 'text/html');
+                if (!fresh.getElementById('gateTable')) return; // not the dashboard (e.g. the sign-in page)
+                swap(fresh, 'gateTable', 'tbody');
+                swap(fresh, 'gateTabs');
+                swap(fresh, 'gateMeta');
+                last = Date.now();
+            })
+            .catch(function () { /* offline for a moment: try again next round */ })
+            .then(function () { busy = false; });
+    }
+
+    setInterval(refresh, EVERY_MS);
+    // Back on the tab after a while (phone screen woke up): catch up at once instead of waiting for the next round
+    document.addEventListener('visibilitychange', function () {
+        if (!document.hidden && Date.now() - last >= EVERY_MS) refresh();
+    });
+})();
+
 // Deny dialog: Bootstrap passes the clicked "Deny Entry" button as relatedTarget; the name goes in as text, never HTML.
 // No visitor id until a row was chosen, so the form can't deny the wrong person.
 (function () {

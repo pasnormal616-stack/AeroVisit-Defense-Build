@@ -341,8 +341,11 @@ class EmailServiceTest {
     }
 
     @Test
-    void missingQrFileIsLoggedAndNothingIsSent() {
-        emailService.sendApprovalEmailWithQR("v@example.com", "Juan", "2026-10-01", "QR_does_not_exist.png", null);
+    void missingQrFileIsReportedAndNothingIsSent() {
+        // Thrown (after logging) so the background sender (MailOutbox) can report it to the Director's bell
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> emailService.sendApprovalEmailWithQR("v@example.com", "Juan", "2026-10-01", "QR_does_not_exist.png", null))
+            .isInstanceOf(EmailService.MailDeliveryException.class);
         assertThat(sent).isEmpty();
     }
 

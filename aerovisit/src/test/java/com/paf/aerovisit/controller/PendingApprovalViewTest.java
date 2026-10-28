@@ -112,8 +112,8 @@ class PendingApprovalViewTest {
             "data-group-head=\"" + TODAY + "\"", "Today · ", "1 request · 4 people", "Morning 3 left", "<span>Visitor 2</span>",
             "data-group-head=\"" + later + "\"", "Morning 30 left", "<span>Visitor 1</span>");
         // later dates start collapsed (server-side, so nothing flashes before the script runs); no tags = no data-tags
-        assertThat(html).containsPattern("<tr data-group=\"" + later + "\" data-search=\"[^\"]*\" hidden=\"hidden\">");
-        assertThat(html).containsPattern("<tr data-group=\"" + TODAY + "\" data-tags=\"conflict soon\" data-search=\"[^\"]*\">");
+        assertThat(html).containsPattern("<tr data-group=\"" + later + "\" data-search=\"[^\"]*\" data-visitor-id=\"\\d+\" hidden=\"hidden\">");
+        assertThat(html).containsPattern("<tr data-group=\"" + TODAY + "\" data-tags=\"conflict soon\" data-search=\"[^\"]*\" data-visitor-id=\"\\d+\">");
         // chips with counts, and the Pending tab skips DataTables (it would page through the date headers)
         assertThat(html).contains("data-triage=\"conflict\"", "Seat conflict", "data-triage-search",
             "if (document.querySelector('#visitorTable [data-group-toggle], #visitorTable .av-empty-row')) return;");
@@ -141,7 +141,7 @@ class PendingApprovalViewTest {
         String back = "/admin?filter=pending&amp;sort=desc&amp;dateFilter=" + TODAY + "&amp;capacityDate=" + TODAY;
         // Approve, Force Approve and the reject dialog each carry it
         assertThat(html.split(java.util.regex.Pattern.quote("name=\"returnTo\" value=\"" + back + "\""), -1).length - 1).isEqualTo(3);
-        // Other tabs post nothing extra: their actions keep returning to /admin as before
+        // Other tabs render no returnTo field: shell.js adds the current address when one of their forms is submitted
         when(repo.findByVisitDate(TODAY)).thenReturn(new ArrayList<>(List.of(v(5, "PENDING", TODAY, 1))));
         assertThat(mvc.perform(get("/admin")).andReturn().getResponse().getContentAsString()).doesNotContain("name=\"returnTo\"");
     }
@@ -155,8 +155,14 @@ class PendingApprovalViewTest {
         mvc.perform(post("/admin/reject-visitor").with(csrf()).param("id", "77").param("presetReason", "Other").param("returnTo", back))
             .andExpect(redirectedUrl(back));
 
-        for (String bad : new String[] {"https://evil.example/admin?filter=pending", "//evil.example", "/admin?filter=all",
-                "/admin/settings", "/admin?filter=pending&sort=asc&next=//evil", "/admin?filter=pending\r\nX-Evil: 1", ""}) {
+        // ↩️ Keep my place: the other dashboard tabs and the Guard Dashboard are accepted too (shell.js sends them)
+        for (String ours : new String[] {"/admin", "/admin?filter=all", "/admin?filter=today&range=week", "/guard/dashboard",
+                "/guard/dashboard?tab=inside", "/guard/dashboard?tab=expected&date=2026-10-20"}) {
+            mvc.perform(post("/admin/approve/77").with(csrf()).param("returnTo", ours)).andExpect(redirectedUrl(ours));
+        }
+        for (String bad : new String[] {"https://evil.example/admin?filter=pending", "//evil.example", "/admin/settings",
+                "/admin?filter=pending&sort=asc&next=//evil", "/admin?filter=pending\r\nX-Evil: 1", "", "/admin?filter=all%0d%0a",
+                "/guard/dashboard?tab=x&next=//evil", "/admin?filter=<script>", "/admin/../logout", "/guard/dashboard/../../x"}) {
             mvc.perform(post("/admin/approve/77").with(csrf()).param("returnTo", bad)).andExpect(redirectedUrl("/admin"));
         }
         mvc.perform(post("/admin/approve/77").with(csrf())).andExpect(redirectedUrl("/admin")); // no field: as before

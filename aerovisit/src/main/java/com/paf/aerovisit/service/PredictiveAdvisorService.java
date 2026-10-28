@@ -39,6 +39,16 @@ public class PredictiveAdvisorService {
         return aiSwitch != null && !aiSwitch.enabled();
     }
 
+    // 🔌 A network failure or 502-504 pauses the AI features until the AI service answers again (AiSwitch), so the
+    // next dashboard load or feedback form doesn't wait out the same time-out
+    private void noteFailure(Exception e, String what) {
+        if (aiSwitch != null && AiSwitch.unreachable(e)) aiSwitch.reportUnreachable(what);
+    }
+
+    private void noteStatus(int status, String what) {
+        if (aiSwitch != null && AiSwitch.unreachable(status)) aiSwitch.reportUnreachable(what);
+    }
+
     // Every call to the AI service starts here: address, time limit and the shared-secret header
     private HttpRequest.Builder aiRequest(String url) {
         HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(url)).timeout(timeout);
@@ -74,8 +84,10 @@ public class PredictiveAdvisorService {
                 prediction.setBaselineEstimate("baseline".equals(jsonResponse.optString("data_source")));
                 return prediction;
             }
+            noteStatus(response.statusCode(), "forecast");
         } catch (Exception e) {
             System.err.println("AI Tactical Engine Offline: " + e.getMessage());
+            noteFailure(e, "forecast");
         }
         return null;
     }
@@ -93,8 +105,10 @@ public class PredictiveAdvisorService {
             if (response.statusCode() == 200) {
                 return new JSONObject(response.body());
             }
+            noteStatus(response.statusCode(), "feedback analysis");
         } catch (Exception e) {
             System.err.println("NLP AI Offline: " + e.getMessage());
+            noteFailure(e, "feedback analysis");
         }
         return null;
     }
@@ -113,8 +127,10 @@ public class PredictiveAdvisorService {
             if (response.statusCode() == 200) {
                 return new JSONObject(response.body());
             }
+            noteStatus(response.statusCode(), "chatbot");
         } catch (Exception e) {
             System.err.println("Sgt. Aero Offline: " + e.getMessage());
+            noteFailure(e, "chatbot");
         }
         return null;
     }
@@ -130,9 +146,11 @@ public class PredictiveAdvisorService {
                     .build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             
+            noteStatus(response.statusCode(), "forecast retraining");
             return response.statusCode() == 200;
         } catch (Exception e) {
             System.err.println("AI Retrain Failed: " + e.getMessage());
+            noteFailure(e, "forecast retraining");
             return false;
         }
     }

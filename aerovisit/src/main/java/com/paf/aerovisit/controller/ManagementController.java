@@ -57,6 +57,14 @@ public class ManagementController {
     @Autowired(required = false)
     private com.paf.aerovisit.service.UploadMirror uploadMirror;
 
+    // 📮 The rejection email goes out in the background, so Reject answers at once; a failed send goes to the bell.
+    // Optional: without them (test slices) the email is sent right away, with the same handling (MailOutbox.send).
+    @Autowired(required = false)
+    private com.paf.aerovisit.service.MailOutbox mailOutbox;
+
+    @Autowired(required = false)
+    private com.paf.aerovisit.service.NotificationService notificationService;
+
     // 🔔 A deleted booking takes its bell notifications with it. Optional, so test slices without it still start.
     @Autowired(required = false)
     private com.paf.aerovisit.repository.AdminNotificationRepository notificationRepo;
@@ -73,8 +81,9 @@ public class ManagementController {
     }
 
     @PostMapping("/admin/delete/{id}")
-    public String deleteVisitor(@PathVariable Long id, RedirectAttributes redirectAttributes) {
-        if (id == null) return "redirect:/admin";
+    public String deleteVisitor(@PathVariable Long id, @RequestParam(value = "returnTo", required = false) String returnTo, RedirectAttributes redirectAttributes) {
+        String back = AdminReturnTo.redirect(returnTo); // ↩️ the page the officer acted from, or /admin
+        if (id == null) return back;
         Visitor v = repo.findById(id).orElse(null);
         if (v != null) {
             try {
@@ -94,7 +103,7 @@ public class ManagementController {
                 redirectAttributes.addFlashAttribute("error", "Database record deleted, but files could not be removed.");
             }
         }
-        return "redirect:/admin";
+        return back;
     }
 
     @PostMapping("/admin/reject-visitor")
@@ -128,13 +137,12 @@ public class ManagementController {
             visitor.setRejectionReason(finalDatabaseReason);
             repo.save(visitor);
             
-            try {
-                emailService.sendRejectionEmail(visitor.getEmail(), visitor.getFirstName(), presetReason, additionalNotes);
-                redirectAttributes.addFlashAttribute("success", "⚠️ Visitor rejected. Compliance instructions sent to " + visitor.getEmail());
-            } catch (Exception e) {
-                System.out.println("Mail server error: " + e.getMessage());
-                redirectAttributes.addFlashAttribute("error", "Visitor rejected, but compliance email failed to send.");
-            }
+            String to = visitor.getEmail(), firstName = visitor.getFirstName();
+            Visitor rejected = visitor;
+            com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "rejection email for visitor #" + visitor.getId(),
+                    () -> emailService.sendRejectionEmail(to, firstName, presetReason, additionalNotes),
+                    () -> { if (notificationService != null) notificationService.rejectionEmailFailed(rejected); });
+            redirectAttributes.addFlashAttribute("success", "⚠️ Visitor rejected. The rejection email to " + to + " is on its way.");
         }
         return back;
     }
@@ -197,15 +205,17 @@ public class ManagementController {
     public String biometricBan(@PathVariable Long visitorId,
                                @RequestParam(value = "reason", required = false) String reason,
                                @RequestParam(value = "duration", defaultValue = "PERMANENT") String duration,
+                               @RequestParam(value = "returnTo", required = false) String returnTo,
                                RedirectAttributes redirectAttributes) {
+        String back = AdminReturnTo.redirect(returnTo); // ↩️ the page the officer acted from, or /admin
         if (!BAN_DURATIONS.contains(duration)) {
             redirectAttributes.addFlashAttribute("error", "Choose a ban duration: 30 days, 6 months or permanent.");
-            return "redirect:/admin";
+            return back;
         }
         Visitor v = visitorId == null ? null : repo.findById(visitorId).orElse(null);
         if (v == null) {
             redirectAttributes.addFlashAttribute("error", "Visitor ID not found in database.");
-            return "redirect:/admin";
+            return back;
         }
         // 🪪 The face when the booking has one (AI on); always the email and phone number, so a booking made while AI
         // features were off (no face data) can still be banned (IdentityBans)
@@ -215,11 +225,11 @@ public class ManagementController {
         if (face == null && email == null && phone == null) {
             redirectAttributes.addFlashAttribute("error", "Nothing to ban " + v.getName() + " by: this booking has no face data,"
                     + " email or phone number on file (it may have been anonymized by the 30-day purge). Reject it instead.");
-            return "redirect:/admin";
+            return back;
         }
         if (faceBanRepo == null) {
             redirectAttributes.addFlashAttribute("error", "The ban list is not available right now.");
-            return "redirect:/admin";
+            return back;
         }
         String why = (reason == null || reason.isBlank()) ? "Banned (booking " + (v.getReferenceId() != null ? v.getReferenceId() : "#" + v.getId()) + ")" : reason.trim();
         if (why.length() > MAX_BAN_REASON) why = why.substring(0, MAX_BAN_REASON);
@@ -267,7 +277,7 @@ public class ManagementController {
         redirectAttributes.addFlashAttribute("success", alreadyBanned
                 ? "🧬 " + v.getName() + " was already banned; the ban now runs " + untilText(ban.getExpiresAt()) + "." + revokedNote
                 : newBanNote + revokedNote);
-        return "redirect:/admin";
+        return back;
     }
 
     // 🔒 BAN INTEGRITY: every request still waiting for review, plus every approved visit from today on, that the ban
@@ -1161,6 +1171,11 @@ public class ManagementController {
                         .sum();
 
                     com.paf.aerovisit.model.MuseumPrediction prediction = aiService.fetchTurnoutPrediction(dayOfWeek, "", preBookedCount);
+                    if (prediction == null) {
+                        // 🔌 The AI service didn't answer (or was paused after failing to): no forecast, no AI roster
+                        redirectAttributes.addFlashAttribute("error", "The AI service isn't answering right now, so no AI roster could be made. Use Fill from Staff Templates instead, or try again in a minute.");
+                        return "redirect:/admin/staff";
+                    }
                     String personnelReq = prediction.getPersonnel();
                     List<StaffSchedule> dailyShifts = new ArrayList<>();
 

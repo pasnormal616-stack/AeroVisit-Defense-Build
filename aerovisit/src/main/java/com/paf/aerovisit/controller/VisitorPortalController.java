@@ -73,6 +73,11 @@ public class VisitorPortalController {
     @Autowired(required = false)
     private com.paf.aerovisit.repository.BlacklistedFaceRepository faceBanRepo;
 
+    // 📮 The "booking received" email and the critical-feedback alert go out in the background, so Submit answers at once
+    // instead of waiting for the mail server. Optional: without it (test slices) they are sent right away (MailOutbox.send).
+    @Autowired(required = false)
+    private com.paf.aerovisit.service.MailOutbox mailOutbox;
+
     // ☁️ Copies the ID photos to S3 (off locally). Optional, so test slices without it still start.
     @Autowired(required = false)
     private com.paf.aerovisit.service.UploadMirror uploadMirror;
@@ -574,17 +579,11 @@ public class VisitorPortalController {
 
         // HUMAN-IN-THE-LOOP: every booking waits for the Director (KycService never approves), so the visitor is told
         // it is pending; the QR code is only made and emailed at approval (GuardOperationController.approveVisitor)
-        try {
-            emailService.sendPendingNotification(
-                savedVisitor.getEmail(),
-                savedVisitor.getName(),
-                savedVisitor.getVisitDate().toString(),
-                isMasterBooking,
-                savedVisitor.getReferenceId()
-            );
-        } catch (Exception e) {
-            System.err.println("❌ Could not send pending email: " + e);
-        }
+        String to = savedVisitor.getEmail(), name = savedVisitor.getName(), date = savedVisitor.getVisitDate().toString(),
+                ref = savedVisitor.getReferenceId();
+        boolean master = isMasterBooking;
+        com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "booking-received email for " + ref,
+                () -> emailService.sendPendingNotification(to, name, date, master, ref), null);
 
         return "redirect:/success-page"; 
     }
@@ -1074,12 +1073,10 @@ public class VisitorPortalController {
 
             // 📬 Critical alerts go to the system alert inbox (aerovisit.alerts.email), never an address in the code
             if (aiAnalysis != null && aiAnalysis.getBoolean("critical_alert") && alertEmail != null && !alertEmail.isBlank()) {
-                emailService.sendCriticalFeedbackAlert(
-                    alertEmail,
-                    v.getName(),
-                    v.getFeedback(),
-                    aiAnalysis.getDouble("score")
-                );
+                String inbox = alertEmail, name = v.getName(), text = v.getFeedback();
+                double score = aiAnalysis.getDouble("score");
+                com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "critical-feedback alert",
+                        () -> emailService.sendCriticalFeedbackAlert(inbox, name, text, score), null);
             }
         } catch (Exception e) {
             System.err.println("NLP Engine skipped: " + e.getMessage());

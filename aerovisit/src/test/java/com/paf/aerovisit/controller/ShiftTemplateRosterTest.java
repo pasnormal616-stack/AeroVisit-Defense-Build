@@ -202,6 +202,22 @@ class ShiftTemplateRosterTest {
     }
 
     @Test
+    void withoutAForecastTheAiRosterSaysSoInsteadOfFailing() throws Exception {
+        // 🔌 AI switched on but its server not answering: fetchTurnoutPrediction gives no forecast
+        BookingSlot monday = new BookingSlot();
+        monday.setSlotDate(MONDAY);
+        when(bookingRepo.findAll()).thenReturn(List.of(monday));
+        when(aiService.fetchTurnoutPrediction(anyInt(), anyString(), anyInt())).thenReturn(null);
+
+        mvc.perform(post("/admin/staff/ai-preview").with(csrf())
+                .param("startDate", MONDAY.toString()).param("endDate", MONDAY.toString()))
+            .andExpect(redirectedUrl("/admin/staff"))
+            .andExpect(flash().attribute("error", "The AI service isn't answering right now, so no AI roster could be made."
+                + " Use Fill from Staff Templates instead, or try again in a minute."));
+        verify(staffRepo, never()).save(any());
+    }
+
+    @Test
     void previewSuggestsOfficersOfTheRightRoleOnTheirWorkingDays() throws Exception {
         aiWants("2 Gate Guards, 1 Tour Guide");
         when(employeeRepo.findAll()).thenReturn(List.of(

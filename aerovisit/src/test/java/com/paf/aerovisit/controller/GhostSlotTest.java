@@ -113,7 +113,7 @@ class GhostSlotTest {
         Visitor v = pending(id, WINDOW);
         when(repo.findByVisitDate(DATE)).thenReturn(List.of(v));
         try {
-            mvc.perform(post("/admin/approve/" + id).with(csrf())).andExpect(flash().attribute("success", "Visitor approved and Email sent successfully!"));
+            mvc.perform(post("/admin/approve/" + id).with(csrf())).andExpect(flash().attribute("success", "Visitor approved. The approval email with the QR code is on its way."));
         } finally {
             Files.deleteIfExists(Paths.get("uploads", "QR_" + id + ".png"));
         }

@@ -949,6 +949,7 @@ button.av-nav-link { width: 100%; background: none; border: 0; font: inherit; te
 .av-app .dropdown-item { padding: 6px 10px; border-radius: var(--radius-sm); }
 .av-app .dropdown-item.text-danger { color: var(--danger-ink) !important; }
 .av-app .dropdown-item.text-danger:hover { background: var(--danger-tint); }
+.av-app .dropdown-item.text-warning:hover { background: var(--gold-tint); }   /* Force Approve in the row menu */
 
 .av-app .modal-content {
     background: var(--bg-raised);
@@ -1469,4 +1470,19 @@ button.av-nav-link { width: 100%; background: none; border: 0; font: inherit; te
 .av-empty-row { padding: 24px 12px !important; text-align: center; color: var(--text-muted) !important; }
 @media (max-width: 767.98px) {
     .av-triage-search { min-width: 0; width: 100%; margin-left: 0; }
+}
+
+/* --------------------------------------------------------------------------
+   17. Keep my place after an action (shell.js): the visitor just approved / rejected / banned flashes briefly, and the
+   result message floats under the header when the page was scrolled back down (it would otherwise be off-screen).
+   -------------------------------------------------------------------------- */
+@keyframes av-row-flash { from { background-color: var(--primary-tint); } to { background-color: transparent; } }
+.av-app .table > tbody > tr.av-row-flash > td { animation: av-row-flash 2.4s ease-out; }
+.av-app .alert.av-alert-float {
+    position: fixed; top: calc(var(--shell-header-h) + 8px); right: var(--shell-gutter); z-index: 1080;
+    width: min(440px, calc(100vw - 2 * var(--shell-gutter))); margin: 0;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.22);
+}
+@media (prefers-reduced-motion: reduce) {
+    .av-app .table > tbody > tr.av-row-flash > td { animation: none; background-color: var(--primary-tint); }
 }

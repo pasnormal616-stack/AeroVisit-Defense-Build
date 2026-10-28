@@ -229,7 +229,7 @@
                         </th>
                     </tr>
                     <tr th:with="pr=${pendingRows != null ? pendingRows.get(visitor.id) : null}"
-                        th:attr="data-group=${pr?.group},data-tags=${pr?.tags},data-search=${pr?.search}"
+                        th:attr="data-group=${pr?.group},data-tags=${pr?.tags},data-search=${pr?.search},data-visitor-id=${visitor.id}"
                         th:hidden="${pr != null and pr.collapsed}">
                         <!-- Civilian Profile -->
                         <td class="ps-4">
@@ -331,12 +331,6 @@
                                         <input type="hidden" name="returnTo" th:if="${pendingReturnTo != null}" th:value="${pendingReturnTo}">
                                         <button type="submit" class="btn btn-sm btn-outline-success" title="Approve">Approve</button>
                                     </form>
-                                    <!-- ⚠️ DIRECTOR OVERRIDE: approves past the slot's capacity (Master Bookings already skip the check) -->
-                                    <form th:if="${isDirector and !visitor.masterBooking and visitor.status != 'VERIFIED'}" th:action="@{'/admin/approve-override/' + ${visitor.id}}" method="post" class="m-0"
-                                          onsubmit="return confirm('Force Approve skips the capacity check and can overbook this time slot. Continue?');">
-                                        <input type="hidden" name="returnTo" th:if="${pendingReturnTo != null}" th:value="${pendingReturnTo}">
-                                        <button type="submit" class="btn btn-sm btn-warning" title="Approve even if the time slot is full (Director override)"><i class="bi bi-exclamation-triangle-fill me-1"></i>Force Approve</button>
-                                    </form>
                                     <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" th:data-bs-target="'#rejectModal' + ${visitor.id}" title="Reject">Reject</button>
                                 </th:block>
                                 <button th:if="${visitor.status == 'CHECKED-IN' and visitor.visitDate != null and visitor.visitDate.equals(#temporals.createToday())}"
@@ -345,6 +339,18 @@
                                 <div class="dropdown">
                                     <button class="btn btn-sm btn-light p-1" type="button" data-bs-toggle="dropdown" aria-label="Open action menu" title="More options"><i class="bi bi-three-dots-vertical"></i></button>
                                     <ul class="dropdown-menu dropdown-menu-end">
+                                        <!-- ⚠️ DIRECTOR OVERRIDE: approves past the slot's capacity (Master Bookings already skip the check).
+                                             In this menu, not beside Approve: a rare override shouldn't be the loudest button on every row. -->
+                                        <th:block th:if="${isDirector and visitor.awaitsApproval() and !visitor.masterBooking and visitor.status != 'VERIFIED'}">
+                                        <li>
+                                            <form th:action="@{'/admin/approve-override/' + ${visitor.id}}" method="post" class="m-0"
+                                                  onsubmit="return confirm('Force Approve skips the capacity check and can overbook this time slot. Continue?');">
+                                                <input type="hidden" name="returnTo" th:if="${pendingReturnTo != null}" th:value="${pendingReturnTo}">
+                                                <button type="submit" class="dropdown-item text-warning" title="Approve even if the time slot is full (Director override)"><i class="bi bi-exclamation-triangle-fill me-2"></i> Force Approve</button>
+                                            </form>
+                                        </li>
+                                        <li><hr class="dropdown-divider"></li>
+                                        </th:block>
                                         <!-- 🧬 Ban by face when the booking has face data, and always by email + phone number
                                              (IdentityBans), so a booking made while AI features were off can still be banned -->
                                         <li>
@@ -362,87 +368,6 @@
                                 </div>
                             </div>
 
-                            <div class="modal fade" th:id="'rejectModal' + ${visitor.id}" tabindex="-1" aria-hidden="true">
-                                <div class="modal-dialog">
-                                    <div class="modal-content">
-                                        <div class="modal-header av-modal--danger">
-                                            <h5 class="modal-title"><i class="bi bi-shield-exclamation me-2"></i>Reject Registration</h5>
-                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                        </div>
-                                        <form action="/admin/reject-visitor" method="post">
-                                            <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
-                                            <input type="hidden" name="returnTo" th:if="${pendingReturnTo != null}" th:value="${pendingReturnTo}">
-                                            <div class="modal-body text-start">
-                                                <p class="av-small av-muted mb-3">Target: <strong class="text-dark" th:text="${visitor.name}"></strong></p>
-                                                <input type="hidden" name="id" th:value="${visitor.id}">
-
-                                                <div class="mb-3">
-                                                    <label class="form-label" th:for="'presetReason' + ${visitor.id}">Primary Reason for Rejection</label>
-                                                    <select th:id="'presetReason' + ${visitor.id}" name="presetReason" class="form-select form-select-sm" required>
-                                                        <option value="" disabled selected>Select an official reason...</option>
-                                                        <option value="ID image is too blurry or unreadable">ID image is too blurry or unreadable</option>
-                                                        <option value="Name on ID does not match registration">Name on ID does not match registration</option>
-                                                        <option value="Expired ID presented">Expired ID presented</option>
-                                                        <option value="Invalid ID type (Must be Government or School issued)">Invalid ID type (Must be Government or School issued)</option>
-                                                        <option value="Security clearance failed">Security clearance failed</option>
-                                                        <option value="Capacity Reached">Capacity Reached - Please choose another date</option>
-                                                        <option value="Other">Other (Specify in notes below)</option>
-                                                    </select>
-                                                </div>
-
-                                                <div class="mb-3">
-                                                    <label class="form-label" th:for="'additionalNotes' + ${visitor.id}">Administrative Notes / Compliance Instructions</label>
-                                                    <textarea th:id="'additionalNotes' + ${visitor.id}" name="additionalNotes" class="form-control form-control-sm" rows="3" placeholder="Type specific instructions here... (Optional)"></textarea>
-                                                </div>
-                                            </div>
-                                            <div class="modal-footer">
-                                                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                                <button type="submit" class="btn btn-sm btn-danger">Send Rejection Alert</button>
-                                            </div>
-                                        </form>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- 🛑 GATE DENIAL: voids today's check-in when the IDs presented fail verification -->
-                            <div th:if="${visitor.status == 'CHECKED-IN'}" class="modal fade" th:id="'denyModal' + ${visitor.id}" tabindex="-1" aria-hidden="true">
-                                <div class="modal-dialog">
-                                    <div class="modal-content">
-                                        <div class="modal-header av-modal--danger">
-                                            <h5 class="modal-title"><i class="bi bi-shield-x me-2"></i>Void Check-In / Deny Entry</h5>
-                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                        </div>
-                                        <form action="/admin/deny-entry" method="post">
-                                            <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
-                                            <div class="modal-body text-start">
-                                                <p class="av-small av-muted mb-3">Target: <strong class="text-dark" th:text="${visitor.name}"></strong>
-                                                    <span th:if="${visitor.groupSize > 1}" th:text="'(group of ' + ${visitor.groupSize} + ')'"></span></p>
-                                                <input type="hidden" name="visitorId" th:value="${visitor.id}">
-                                                <div class="mb-3">
-                                                    <label class="form-label" th:for="'denyReason' + ${visitor.id}">Reason for Denial</label>
-                                                    <select th:id="'denyReason' + ${visitor.id}" name="reason" class="form-select form-select-sm" required>
-                                                        <option value="" disabled selected>Select an official reason...</option>
-                                                        <option value="Group does not match manifest">Group does not match manifest</option>
-                                                        <option value="Unregistered person in group">Unregistered person in group</option>
-                                                        <option value="ID does not match lead booker">ID does not match lead booker</option>
-                                                        <option value="Expired or invalid ID presented">Expired or invalid ID presented</option>
-                                                        <option value="Security concern">Security concern</option>
-                                                    </select>
-                                                </div>
-                                                <div class="mb-3">
-                                                    <label class="form-label" th:for="'denyNotes' + ${visitor.id}">Guard Notes (Optional)</label>
-                                                    <textarea th:id="'denyNotes' + ${visitor.id}" name="notes" class="form-control form-control-sm" rows="3" maxlength="400" placeholder="e.g. 2 of 4 guests had no matching ID"></textarea>
-                                                </div>
-                                                <p class="av-small text-danger mb-0"><i class="bi bi-exclamation-triangle me-1"></i>This is final: the QR code stops working and the booking cannot be re-approved.</p>
-                                            </div>
-                                            <div class="modal-footer">
-                                                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                                <button type="submit" class="btn btn-sm btn-danger">Deny Entry</button>
-                                            </div>
-                                        </form>
-                                    </div>
-                                </div>
-                            </div>
 
                         </td>
                     </tr>
@@ -451,6 +376,94 @@
             </table>
         </div>
     </div>
+
+    <!-- 📱 Row dialogs (Reject, Deny Entry) live here, outside the table and its panel, not inside each row's Actions cell. A dialog
+             inside the sideways-scrolling table (.table-responsive) is drawn UNDER the page's dark backdrop on phones
+             (iOS Safari), so the screen dims and nothing in the dialog can be tapped. Bootstrap's rule: keep a modal's
+             markup at the top level of the page. The buttons in each row still open them by id (#rejectModal<id>). -->
+        <th:block th:each="visitor : ${listVisitors}">
+        <div class="modal fade" th:id="'rejectModal' + ${visitor.id}" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header av-modal--danger">
+                        <h5 class="modal-title"><i class="bi bi-shield-exclamation me-2"></i>Reject Registration</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <form action="/admin/reject-visitor" method="post">
+                        <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                        <input type="hidden" name="returnTo" th:if="${pendingReturnTo != null}" th:value="${pendingReturnTo}">
+                        <div class="modal-body text-start">
+                            <p class="av-small av-muted mb-3">Target: <strong class="text-dark" th:text="${visitor.name}"></strong></p>
+                            <input type="hidden" name="id" th:value="${visitor.id}">
+
+                            <div class="mb-3">
+                                <label class="form-label" th:for="'presetReason' + ${visitor.id}">Primary Reason for Rejection</label>
+                                <select th:id="'presetReason' + ${visitor.id}" name="presetReason" class="form-select form-select-sm" required>
+                                    <option value="" disabled selected>Select an official reason...</option>
+                                    <option value="ID image is too blurry or unreadable">ID image is too blurry or unreadable</option>
+                                    <option value="Name on ID does not match registration">Name on ID does not match registration</option>
+                                    <option value="Expired ID presented">Expired ID presented</option>
+                                    <option value="Invalid ID type (Must be Government or School issued)">Invalid ID type (Must be Government or School issued)</option>
+                                    <option value="Security clearance failed">Security clearance failed</option>
+                                    <option value="Capacity Reached">Capacity Reached - Please choose another date</option>
+                                    <option value="Other">Other (Specify in notes below)</option>
+                                </select>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label" th:for="'additionalNotes' + ${visitor.id}">Administrative Notes / Compliance Instructions</label>
+                                <textarea th:id="'additionalNotes' + ${visitor.id}" name="additionalNotes" class="form-control form-control-sm" rows="3" placeholder="Type specific instructions here... (Optional)"></textarea>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" class="btn btn-sm btn-danger">Send Rejection Alert</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- 🛑 GATE DENIAL: voids today's check-in when the IDs presented fail verification -->
+        <div th:if="${visitor.status == 'CHECKED-IN'}" class="modal fade" th:id="'denyModal' + ${visitor.id}" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header av-modal--danger">
+                        <h5 class="modal-title"><i class="bi bi-shield-x me-2"></i>Void Check-In / Deny Entry</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <form action="/admin/deny-entry" method="post">
+                        <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                        <div class="modal-body text-start">
+                            <p class="av-small av-muted mb-3">Target: <strong class="text-dark" th:text="${visitor.name}"></strong>
+                                <span th:if="${visitor.groupSize > 1}" th:text="'(group of ' + ${visitor.groupSize} + ')'"></span></p>
+                            <input type="hidden" name="visitorId" th:value="${visitor.id}">
+                            <div class="mb-3">
+                                <label class="form-label" th:for="'denyReason' + ${visitor.id}">Reason for Denial</label>
+                                <select th:id="'denyReason' + ${visitor.id}" name="reason" class="form-select form-select-sm" required>
+                                    <option value="" disabled selected>Select an official reason...</option>
+                                    <option value="Group does not match manifest">Group does not match manifest</option>
+                                    <option value="Unregistered person in group">Unregistered person in group</option>
+                                    <option value="ID does not match lead booker">ID does not match lead booker</option>
+                                    <option value="Expired or invalid ID presented">Expired or invalid ID presented</option>
+                                    <option value="Security concern">Security concern</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label" th:for="'denyNotes' + ${visitor.id}">Guard Notes (Optional)</label>
+                                <textarea th:id="'denyNotes' + ${visitor.id}" name="notes" class="form-control form-control-sm" rows="3" maxlength="400" placeholder="e.g. 2 of 4 guests had no matching ID"></textarea>
+                            </div>
+                            <p class="av-small text-danger mb-0"><i class="bi bi-exclamation-triangle me-1"></i>This is final: the QR code stops working and the booking cannot be re-approved.</p>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" class="btn btn-sm btn-danger">Deny Entry</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        </th:block>
 
 </div>
 </main>
@@ -617,6 +630,15 @@
             "pageLength": 10,
             "ordering": false,
             "info": true,
+            // ↩️ Keep my place: the table page and search survive the reload after Approve / Reject / Ban (this browser
+            // tab only, one saved state per tab and filter, so Entire Database page 5 never leaks into Today's Manifest)
+            "stateSave": true,
+            "stateSaveCallback": function (settings, data) {
+                try { sessionStorage.setItem('av-dt' + location.search, JSON.stringify(data)); } catch (ignored) {}
+            },
+            "stateLoadCallback": function () {
+                try { return JSON.parse(sessionStorage.getItem('av-dt' + location.search)); } catch (ignored) { return null; }
+            },
             "dom": '<"d-flex justify-content-between align-items-center p-3 border-bottom"f>rt<"d-flex justify-content-between p-3"ip>',
             "language": {
                 "search": "",

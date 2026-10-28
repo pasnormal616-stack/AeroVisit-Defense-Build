@@ -160,6 +160,18 @@ public class NotificationService {
         }
     }
 
+    // A rejection was saved but its email could not be sent (sent in the background by MailOutbox)
+    public void rejectionEmailFailed(Visitor visitor) {
+        try {
+            if (visitor == null) return;
+            save(AdminNotification.TYPE_EMAIL_FAILED, name(visitor),
+                    "was rejected, but the rejection email could not be sent. Check the email settings or contact them directly.",
+                    dayUrl(visitor.getVisitDate()), visitor.getId(), null);
+        } catch (RuntimeException e) {
+            System.err.println("⚠️ Email failure notification skipped: " + e.getMessage());
+        }
+    }
+
     // The AI service did not answer a booking's identity check; at most once an hour
     public void aiServiceOffline() {
         try {

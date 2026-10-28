@@ -55,11 +55,14 @@ public class AiAdvisorService {
                 // 🚦 The AI service's own limit (per chat session / all chats per minute)
                 return "Sgt. Aero is answering a lot of questions right now. Please try again in a minute.";
             } else {
+                if (aiSwitch != null && com.paf.aerovisit.service.AiSwitch.unreachable(response.statusCode())) aiSwitch.reportUnreachable("chatbot");
                 return "Comm link degraded. Command server returned code: " + response.statusCode();
             }
 
         } catch (Exception e) {
             System.err.println("AI Chatbot Engine Offline: " + e.getMessage());
+            // 🔌 Next messages get the off-duty reply at once instead of each waiting out the time-out
+            if (aiSwitch != null && com.paf.aerovisit.service.AiSwitch.unreachable(e)) aiSwitch.reportUnreachable("chatbot");
             return "Sgt. Aero is currently away from the comms terminal. Please try again later.";
         }
     }

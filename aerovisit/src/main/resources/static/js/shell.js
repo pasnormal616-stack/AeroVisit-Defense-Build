@@ -110,4 +110,80 @@
         // Charts created by inline page scripts run before this; theme them once they exist.
         themeAllCharts();
     });
+
+    // ↩️ KEEP MY PLACE: every admin/guard action (Approve, Reject, Ban, Delete, Deny Entry, manual check-in/out) is a form
+    // post followed by a full page reload. Before, that reload landed on Today's Manifest at the top of the page. Now:
+    //  1. the form carries "returnTo" = this page's address, so the server sends the officer back to the same tab and
+    //     filters (AdminReturnTo accepts only our own dashboards);
+    //  2. the scroll position and the visitor acted on are remembered for the reload (sessionStorage, this tab only);
+    //  3. after the reload the page scrolls back, briefly highlights that visitor's row, and floats the result message
+    //     ("Visitor approved...") at the top of the screen so it isn't hidden above the scroll position.
+    var PLACE_KEY = 'av-place';
+    var PLACE_MAX_AGE_MS = 2 * 60 * 1000;
+
+    function here() { return location.pathname + location.search; }
+
+    function visitorIdOf(form) {
+        var input = form.querySelector('input[name="id"], input[name="visitorId"]');
+        if (input && /^\d+$/.test(input.value)) return input.value;
+        var m = (form.getAttribute('action') || '').match(/\/(\d+)(?:[/?#]|$)/);
+        if (m) return m[1];
+        var row = form.closest('[data-visitor-id]');
+        return row ? row.getAttribute('data-visitor-id') : null;
+    }
+
+    // Bubbling listener: runs after the form's own onsubmit (e.g. "Delete this record?"), so a cancelled confirm
+    // (defaultPrevented) leaves nothing behind
+    document.addEventListener('submit', function (e) {
+        var form = e.target;
+        if (e.defaultPrevented || !(form instanceof HTMLFormElement)) return;
+        if ((form.getAttribute('method') || 'get').toLowerCase() !== 'post') return;
+        var action = form.getAttribute('action') || '';
+        if (action.indexOf('/admin/') !== 0) return; // only our action endpoints (not logout, not filters)
+        if (!form.querySelector('input[name="returnTo"]')) {
+            var back = document.createElement('input');
+            back.type = 'hidden';
+            back.name = 'returnTo';
+            back.value = here();
+            form.appendChild(back);
+        }
+        try {
+            sessionStorage.setItem(PLACE_KEY, JSON.stringify({ url: here(), y: window.scrollY, id: visitorIdOf(form), t: Date.now() }));
+        } catch (ignored) { /* private mode: the page simply starts at the top, as before */ }
+    });
+
+    // On 'load' (not DOMContentLoaded): the tables, DataTables paging and charts are laid out by then, so the
+    // remembered position still points at the same rows
+    window.addEventListener('load', function () {
+        var place = null;
+        try {
+            place = JSON.parse(sessionStorage.getItem(PLACE_KEY) || 'null');
+            sessionStorage.removeItem(PLACE_KEY);
+        } catch (ignored) { return; }
+        if (!place || place.url !== here() || !(Date.now() - place.t < PLACE_MAX_AGE_MS)) return;
+
+        var y = Math.max(0, Number(place.y) || 0);
+        if (y > 0) window.scrollTo(0, y);
+
+        if (place.id) {
+            var row = document.querySelector('[data-visitor-id="' + String(place.id).replace(/[^0-9]/g, '') + '"]');
+            if (row && row.offsetParent !== null) {
+                row.classList.add('av-row-flash');
+                setTimeout(function () { row.classList.remove('av-row-flash'); }, 2600);
+            }
+        }
+
+        // The result message sits at the top of the page; float it into view when the page was scrolled back down
+        if (y > 120) {
+            document.querySelectorAll('.av-workspace > .alert.alert-dismissible').forEach(function (alert) {
+                alert.classList.add('av-alert-float');
+                if (alert.classList.contains('alert-success')) {
+                    setTimeout(function () {
+                        alert.classList.remove('show');
+                        setTimeout(function () { if (alert.parentNode) alert.parentNode.removeChild(alert); }, 200);
+                    }, 6000);
+                }
+            });
+        }
+    });
 })();

@@ -53,6 +53,27 @@ public class GuardOperationController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.paf.aerovisit.service.NotificationService notificationService;
 
+    // 📮 Approval, VIP-cancellation and manual check-in/out emails go out in the background, so Approve and the manual
+    // gate buttons answer at once instead of waiting for the mail server. Optional: without it (test slices) the email
+    // is sent right away, with the same failure handling (MailOutbox.send).
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.paf.aerovisit.service.MailOutbox mailOutbox;
+
+    // 🚦 Two gates pressing Accept (or checking out) on the same pass at once: only the first one goes through, so the
+    // visitor is checked in once and gets one email. Optional: without it (test slices) the status is saved as before.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.paf.aerovisit.service.GateClaim gateClaim;
+
+    static final String ALREADY_CHECKED_IN = "Visitor is already CHECKED-IN: another gate accepted this pass a moment ago.";
+    static final String ALREADY_CHECKED_OUT = "Visitor has already CHECKED-OUT: another gate checked this pass out a moment ago.";
+
+    // True if this request is the one that moves the visitor on (see GateClaim)
+    private boolean claim(Visitor v, String to) {
+        return com.paf.aerovisit.service.GateClaim.claim(gateClaim, v.getId(), v.getStatus(), to);
+    }
+
+    static final String APPROVED_MESSAGE = "Visitor approved. The approval email with the QR code is on its way.";
+
     // ⏱️ The gate's clock: real Manila time in production (null = the system clock, read on every call);
     // tests fix it so every time-window case runs the same at any hour
     java.time.Clock clock;
@@ -123,6 +144,9 @@ public class GuardOperationController {
                     // ⏳ DEBOUNCE: a re-scan within 2 minutes of check-in leaves the visitor CHECKED-IN
                     response.put("status", "error");
                     response.put("message", "⏳ Cooldown: Visitor checked in less than 2 minutes ago. Please wait before checking out.");
+                } else if ("CHECKED-IN".equals(v.getStatus()) && !claim(v, "CHECKED-OUT")) {
+                    response.put("status", "error");
+                    response.put("message", ALREADY_CHECKED_OUT);
                 } else if ("CHECKED-IN".equals(v.getStatus())) {
                     // If scanning a second time, check them out.
                     v.setStatus("CHECKED-OUT");
@@ -159,7 +183,9 @@ public class GuardOperationController {
     // Manual check-in is a staff override: unlike the QR scan, it does not require an APPROVED booking.
     // It only enforces the scheduled date and time window, and refuses rejected or checked-out visitors.
     @PostMapping("/admin/manual-checkin")
-    public String manualCheckIn(@RequestParam("referenceId") String referenceId, RedirectAttributes redirectAttributes) {
+    public String manualCheckIn(@RequestParam("referenceId") String referenceId,
+                                @RequestParam(value = "returnTo", required = false) String returnTo, RedirectAttributes redirectAttributes) {
+        String back = AdminReturnTo.redirect(returnTo); // ↩️ the page the officer acted from, or /admin
         // The guard types the Booking Reference ID from the visitor's email (e.g. PAF-A7X92K), not the database id
         Visitor v = referenceId.isBlank() ? null
                 : repo.findByReferenceId(referenceId.trim().toUpperCase(java.util.Locale.ROOT)).orElse(null);
@@ -174,34 +200,38 @@ public class GuardOperationController {
             } else if ("NO_SHOW".equals(v.getStatus())) {
                 // 🚫 The visit window passed without a check-in; the visitor must book again
                 redirectAttributes.addFlashAttribute("error", "ACCESS DENIED: This booking was marked as a no-show. The visitor must book a new visit.");
+            } else if ("CHECKED-IN".equals(v.getStatus()) && !claim(v, "CHECKED-OUT")) {
+                redirectAttributes.addFlashAttribute("error", ALREADY_CHECKED_OUT);
             } else if ("CHECKED-IN".equals(v.getStatus())) {
                 v.setStatus("CHECKED-OUT");
                 v.setCheckOutTime(LocalDateTime.now(clock()));
                 repo.save(v);
-                emailService.sendCheckOutFeedback(v.getEmail(), v.getName(), v.getSecureToken());
+                String to = v.getEmail(), name = v.getName(), token = v.getSecureToken();
+                com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "check-out email for visitor #" + v.getId(),
+                        () -> emailService.sendCheckOutFeedback(to, name, token), null);
                 redirectAttributes.addFlashAttribute("success", "👋 CHECKED-OUT via Manual Override: " + v.getName());
             } else {
                 // 🛂 Admitting a booking nobody approved is the Director's override; a Guard can only check in an approved pass
                 if (!"APPROVED".equals(v.getStatus()) && !com.paf.aerovisit.config.SecurityConfig.isDirector()) {
                     redirectAttributes.addFlashAttribute("error", "ACCESS DENIED: Booking is not approved (status: " + v.getStatus() + ").");
-                    return "redirect:/admin";
+                    return back;
                 }
                 // 🚫 Manual check-in is a Director override for pending bookings, but never for a banned visitor
                 if (isBanned(v)) {
                     redirectAttributes.addFlashAttribute("error", BANNED_ENTRY);
-                    return "redirect:/admin";
+                    return back;
                 }
                 LocalDate today = LocalDate.now(clock());
                 LocalTime now = LocalTime.now(clock());
                 if (!today.equals(v.getVisitDate())) {
                     redirectAttributes.addFlashAttribute("error", "ACCESS DENIED: Scheduled for " + v.getVisitDate() + ".");
-                    return "redirect:/admin";
+                    return back;
                 }
                 // 🕒 Same booked-time-window rule as the QR scan
                 String windowError = timeWindowBlocker(v.getTimeWindow(), now);
                 if (windowError != null) {
                     redirectAttributes.addFlashAttribute("error", windowError);
-                    return "redirect:/admin";
+                    return back;
                 }
                 if (v.getVisitTime() != null) {
                     LocalTime allowedStart = v.getVisitTime().minusMinutes(30);
@@ -210,22 +240,28 @@ public class GuardOperationController {
                         java.time.format.DateTimeFormatter formatter = java.time.format.DateTimeFormatter.ofPattern("hh:mm a", java.util.Locale.US);
                         String formattedTime = v.getVisitTime().format(formatter);
                         redirectAttributes.addFlashAttribute("error", "ACCESS DENIED: Outside of approved visit window. Scheduled time is " + formattedTime + ".");
-                        return "redirect:/admin"; 
+                        return back; 
                     }
                 }
-                
+
+                if (!claim(v, "CHECKED-IN")) {
+                    redirectAttributes.addFlashAttribute("error", ALREADY_CHECKED_IN);
+                    return back;
+                }
                 v.setStatus("CHECKED-IN");
                 v.setCheckedInBy(getActiveGuardName() + " (Manual)");
                 v.setCheckInTime(LocalDateTime.now(clock()));
                 repo.save(v);
-                emailService.sendCheckInGuidelines(v.getEmail(), v.getName(), getActiveTourGuideName());
+                String to = v.getEmail(), name = v.getName(), tourGuide = getActiveTourGuideName();
+                com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "check-in email for visitor #" + v.getId(),
+                        () -> emailService.sendCheckInGuidelines(to, name, tourGuide), null);
                 String groupAddon = (v.getGroupSize() > 1) ? " (Group of " + v.getGroupSize() + ")" : "";
                 redirectAttributes.addFlashAttribute("success", "🟢 Checked-In via Manual Override: " + v.getName() + groupAddon);
             }
         } else {
             redirectAttributes.addFlashAttribute("error", "Reference ID not found in database.");
         }
-        return "redirect:/admin";
+        return back;
     }
 
     // Runs on its own two small daemon threads ("gate-mail"), not the JVM-wide ForkJoin common pool, which is sized to
@@ -319,6 +355,13 @@ public class GuardOperationController {
             return ResponseEntity.ok(response);
         }
 
+        // 🚦 Another gate may have pressed Accept on this pass at the same moment: only the first one checks in and emails
+        if (!claim(v, "CHECKED-IN")) {
+            response.put("status", "error");
+            response.put("message", ALREADY_CHECKED_IN);
+            return ResponseEntity.ok(response);
+        }
+
         // --- SUCCESSFUL CHECK-IN PROTOCOL ---
         v.setStatus("CHECKED-IN");
         v.setCheckedInBy(getActiveGuardName());
@@ -357,7 +400,9 @@ public class GuardOperationController {
     public String denyEntryFromDashboard(@RequestParam("visitorId") Long visitorId,
                                          @RequestParam(value = "reason", required = false) String reason,
                                          @RequestParam(value = "notes", required = false) String notes,
+                                         @RequestParam(value = "returnTo", required = false) String returnTo,
                                          RedirectAttributes redirectAttributes) {
+        String back = AdminReturnTo.redirect(returnTo); // ↩️ the page the officer acted from, or /admin
         Visitor v = repo.findById(visitorId).orElse(null);
         String error = denyEntry(v, reason, notes);
         if (error != null) {
@@ -365,7 +410,7 @@ public class GuardOperationController {
         } else {
             redirectAttributes.addFlashAttribute("success", "⛔ ENTRY DENIED: " + v.getName() + ". Check-in voided and logged.");
         }
-        return "redirect:/admin";
+        return back;
     }
 
     // Turns a same-day APPROVED pass (scanner, before check-in) or CHECKED-IN visit (dashboard reversal) into DENIED_ENTRY,
@@ -457,8 +502,8 @@ public class GuardOperationController {
                 }
                 saved = true;
                 notifySlotFilling(v);
-                emailService.sendApprovalEmailWithQR(v.getEmail(), v.getName(), v.getVisitDate().toString(), qrFileName, v.getReferenceId(), bookedWindow(v));
-                redirectAttributes.addFlashAttribute("success", "Visitor approved and Email sent successfully!");
+                sendApprovalEmail(v, qrFileName);
+                redirectAttributes.addFlashAttribute("success", APPROVED_MESSAGE);
                 if (v.isMasterBooking()) {
                     // 🔒 VIP buyout override: cancel standard visitors already APPROVED for that date and notify each one
                     int cancelled = 0;
@@ -471,11 +516,9 @@ public class GuardOperationController {
                         repo.saveAll(displaced);
                         cancelled = displaced.size();
                         for (Visitor d : displaced) {
-                            try {
-                                emailService.sendOverrideCancellationEmail(d.getEmail(), d.getName(), d.getVisitDate().toString(), d.getReferenceId());
-                            } catch (Exception mailError) {
-                                System.err.println("❌ Override email failed for visitor #" + d.getId() + ": " + mailError.getMessage());
-                            }
+                            String to = d.getEmail(), name = d.getName(), date = String.valueOf(d.getVisitDate()), ref = d.getReferenceId();
+                            com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "VIP-buyout cancellation email for visitor #" + d.getId(),
+                                    () -> emailService.sendOverrideCancellationEmail(to, name, date, ref), null);
                         }
                     } catch (Exception overrideError) {
                         System.err.println("❌ Buyout override failed for " + v.getVisitDate() + ": " + overrideError);
@@ -486,14 +529,14 @@ public class GuardOperationController {
                             .filter(o -> !o.getId().equals(v.getId()) && !"REJECTED".equals(o.getStatus()) && !"CANCELLED_OVERRIDE".equals(o.getStatus()) && !"CANCELLED_BY_VISITOR".equals(o.getStatus()) && !"DENIED_ENTRY".equals(o.getStatus()))
                             .count();
                     redirectAttributes.addFlashAttribute("success", "🔒 VIP Buyout approved: " + v.getVisitDate() + " is now closed to public bookings."
-                            + (cancelled > 0 ? " 📭 " + cancelled + " approved visitor(s) were cancelled and notified by email." : "")
+                            + (cancelled > 0 ? " 📭 " + cancelled + " approved visitor(s) were cancelled and are being notified by email." : "")
                             + (others > 0 ? " ⚠️ " + others + " other booking(s) already exist for that date and need to be contacted or rescheduled." : ""));
                 }
             } catch (Exception e) {
-                System.err.println("❌ Approval QR/Email failed for visitor #" + v.getId() + ": " + e);
+                System.err.println("❌ Approval QR failed for visitor #" + v.getId() + ": " + e);
                 e.printStackTrace();
                 if (saved && notificationService != null) notificationService.approvalEmailFailed(v);
-                redirectAttributes.addFlashAttribute("error", "Approved, but failed to generate QR or send email: " + e.getMessage());
+                redirectAttributes.addFlashAttribute("error", "Approved, but the QR code could not be created: " + e.getMessage());
             }
         }
         return back;
@@ -552,15 +595,18 @@ public class GuardOperationController {
         }
         System.out.println("⚠️ CAPACITY OVERRIDE: visitor #" + v.getId() + " force-approved by " + (principal != null ? principal.getName() : "unknown"));
 
-        try {
-            emailService.sendApprovalEmailWithQR(v.getEmail(), v.getName(), String.valueOf(v.getVisitDate()), qrFileName, v.getReferenceId(), bookedWindow(v));
-            redirectAttributes.addFlashAttribute("success", "⚠️ Force-approved over capacity: " + v.getName() + ". Approval email sent.");
-        } catch (Exception e) {
-            System.err.println("❌ Force approval email failed for visitor #" + v.getId() + ": " + e);
-            if (notificationService != null) notificationService.approvalEmailFailed(v);
-            redirectAttributes.addFlashAttribute("error", "Force-approved, but the approval email failed to send: " + e.getMessage());
-        }
+        sendApprovalEmail(v, qrFileName);
+        redirectAttributes.addFlashAttribute("success", "⚠️ Force-approved over capacity: " + v.getName() + ". The approval email is on its way.");
         return back;
+    }
+
+    // 📮 The approval email (with the QR code) in the background; a failed send goes to the Director's bell, since the
+    // page has already answered. The values are read now, so the email doesn't depend on the entity later.
+    private void sendApprovalEmail(Visitor v, String qrFileName) {
+        String to = v.getEmail(), name = v.getName(), date = String.valueOf(v.getVisitDate()), ref = v.getReferenceId(), window = bookedWindow(v);
+        com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "approval email for visitor #" + v.getId(),
+                () -> emailService.sendApprovalEmailWithQR(to, name, date, qrFileName, ref, window),
+                () -> { if (notificationService != null) notificationService.approvalEmailFailed(v); });
     }
 
     // True when the visitor's group still fits its date and time window, counting only seat-holding

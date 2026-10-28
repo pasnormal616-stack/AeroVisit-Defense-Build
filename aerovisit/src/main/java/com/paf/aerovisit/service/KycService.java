@@ -187,6 +187,7 @@ public class KycService {
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
                 System.out.println("KYC service answered HTTP " + response.statusCode());
+                if (aiSwitch != null && AiSwitch.unreachable(response.statusCode())) aiSwitch.reportUnreachable("identity check");
                 return null;
             }
             return new JSONObject(response.body());
@@ -195,6 +196,8 @@ public class KycService {
             return null;
         } catch (Exception e) {
             System.out.println("KYC service unreachable: " + e.getMessage());
+            // 🔌 Later bookings skip the check at once (manual review) instead of each waiting out the time-out
+            if (aiSwitch != null && AiSwitch.unreachable(e)) aiSwitch.reportUnreachable("identity check");
             return null;
         }
     }

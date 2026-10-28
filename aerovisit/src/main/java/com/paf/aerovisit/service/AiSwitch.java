@@ -70,6 +70,28 @@ public class AiSwitch {
         System.out.println("🤖 AI features switched " + (on ? "ON (waiting for the AI service to answer)" : "OFF"));
     }
 
+    /**
+     * 🔌 AUTOMATIC FALLBACK: a call found the AI service not answering (connection refused or timed out, or a 502/503/504
+     * from the web server in front of it): its server crashed, is rebooting, or was stopped without using this switch.
+     * Until it answers again (probeWhileStarting, every 30 s) the AI features act as switched off, so each booking,
+     * dashboard load and feedback form doesn't wait out its own 10-20 s time-out first. The Director's choice is kept.
+     */
+    public void reportUnreachable(String what) {
+        if (wanted() && reachable) {
+            reachable = false;
+            System.out.println("🤖 AI service not answering (" + what + "): AI features paused until it answers again");
+        }
+    }
+
+    /** The checks every AI caller shares: a network failure, or a 502-504 from the AI server's own web server. */
+    public static boolean unreachable(Exception e) {
+        return e instanceof java.io.IOException; // ConnectException, HttpTimeoutException, connection reset...
+    }
+
+    public static boolean unreachable(int httpStatus) {
+        return httpStatus == 502 || httpStatus == 503 || httpStatus == 504;
+    }
+
     // Every 30 s while STARTING: the features come back on their own once the AI service answers
     @Scheduled(fixedDelay = 30_000, initialDelay = 30_000)
     public void probeWhileStarting() {
