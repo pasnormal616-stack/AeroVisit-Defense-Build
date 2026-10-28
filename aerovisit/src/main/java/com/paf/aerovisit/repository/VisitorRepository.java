@@ -148,6 +148,14 @@ public interface VisitorRepository extends JpaRepository<Visitor, Long> {
                       @org.springframework.data.repository.query.Param("statuses") java.util.Collection<String> statuses,
                       @org.springframework.data.repository.query.Param("excludeId") Long excludeId);
 
+    // 9b. Booking calendar: seats held per date + time window from `from` onwards, one row per pair
+    // [visitDate, timeWindow, seats], counted in the same way as sumSeatsHeld. The database adds them up, so opening the
+    // booking page reads a few dozen numbers instead of every visitor ever saved (with their face data).
+    @Query("SELECT v.visitDate, v.timeWindow, COALESCE(SUM(CASE WHEN v.groupSize < 1 THEN 1 ELSE v.groupSize END), 0)"
+         + " FROM Visitor v WHERE v.visitDate >= :from AND v.status IN :statuses GROUP BY v.visitDate, v.timeWindow")
+    List<Object[]> sumSeatsHeldFrom(@org.springframework.data.repository.query.Param("from") LocalDate from,
+                                    @org.springframework.data.repository.query.Param("statuses") java.util.Collection<String> statuses);
+
     // 12. Data retention purge: finished visits dated before the cutoff that still have an ID photo, QR file or face
     // vector, or whose personal details are not anonymized yet (rows purged before anonymization existed included)
     @Query("SELECT v FROM Visitor v WHERE v.status IN :statuses AND v.visitDate < :cutoff"

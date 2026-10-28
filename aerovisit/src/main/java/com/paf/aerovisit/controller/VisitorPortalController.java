@@ -293,25 +293,24 @@ public class VisitorPortalController {
         session.setAttribute(KYC_NONCE, kycNonce);
         model.addAttribute(KYC_NONCE, kycNonce);
 
-        List<BookingSlot> allSlots = bookingRepo.findAll();
-        List<Visitor> allVisitors = repo.findAll();
-        List<Map<String, Object>> slotDataList = new ArrayList<>();
+        // ⚡ Only today's and later slots, and the seats already held on them, totalled by the database. This page is the
+        // one everybody opens, so it must not load every visitor ever saved (face data included) on each view: that
+        // grew heavier with every booking and could run the server out of memory when a crowd opened the site at once.
         LocalDate today = LocalDate.now();
+        List<BookingSlot> allSlots = bookingRepo.findBySlotDateGreaterThanEqualOrderBySlotDateAsc(today);
+        Map<String, Integer> seatsHeld = new HashMap<>(); // "2026-11-02|Full Day (09:00 AM - 05:00 PM)" -> seats
+        for (Object[] row : repo.sumSeatsHeldFrom(today, Visitor.SEAT_HOLDING_STATUSES)) { // PENDING holds no seats
+            if (row[0] != null && row[1] != null) seatsHeld.put(row[0] + "|" + row[1], ((Number) row[2]).intValue());
+        }
+        List<Map<String, Object>> slotDataList = new ArrayList<>();
         Set<LocalDate> buyoutDates = new HashSet<>(repo.findBuyoutDates());
         Set<LocalDate> closureDates = new HashSet<>(repo.findClosureDates());
-        
+
         for (BookingSlot slot : allSlots) {
             if (slot.getSlotDate() != null && !slot.getSlotDate().isBefore(today)) {
-                
-                int bookedCount = 0;
-                for (Visitor v : allVisitors) {
-                    if (v.getVisitDate() != null && v.getVisitDate().equals(slot.getSlotDate()) 
-                        && v.getTimeWindow() != null && v.getTimeWindow().equals(slot.getTimeWindow())
-                        && v.holdsSeat()) { // PENDING requests are on the waitlist and hold no seats
-                        bookedCount += Math.max(1, v.getGroupSize());
-                    }
-                }
-                
+
+                int bookedCount = seatsHeld.getOrDefault(slot.getSlotDate() + "|" + slot.getTimeWindow(), 0);
+
                 int remaining = slot.getMaxCapacity() - bookedCount;
                 if (remaining < 0) remaining = 0;
                 if (buyoutDates.contains(slot.getSlotDate())) remaining = 0; // 🔒 VIP buyout: reserved for an approved Master Booking

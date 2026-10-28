@@ -91,7 +91,7 @@ class EmergencyClosurePortalTest {
     @Test
     @SuppressWarnings("unchecked")
     void calendarShowsNoSeatsOnAClosedDate() throws Exception {
-        when(bookingRepo.findAll()).thenReturn(List.of(slot(CLOSED, 50), slot(OPEN, 50)));
+        when(bookingRepo.findBySlotDateGreaterThanEqualOrderBySlotDateAsc(org.mockito.ArgumentMatchers.any())).thenReturn(List.of(slot(CLOSED, 50), slot(OPEN, 50)));
         when(repo.findClosureDates()).thenReturn(List.of(CLOSED));
 
         MvcResult result = mvc.perform(get("/")).andExpect(status().isOk()).andReturn();
