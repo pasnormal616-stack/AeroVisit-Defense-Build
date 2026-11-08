@@ -4,6 +4,11 @@
     <th:block th:replace="~{fragments/shell :: head}"></th:block>
     <title>AeroVisit - Settings</title>
     <script src="/js/shell.js"></script>
+    <style>
+        .av-settings-group { margin: 2rem 0 0.75rem; font-size: 0.8125rem; font-weight: 700; letter-spacing: 0.06em;
+                             text-transform: uppercase; color: var(--text-muted); }
+        .av-settings-group:first-of-type { margin-top: 0.5rem; }
+    </style>
 </head>
 <body class="av-app">
 
@@ -19,7 +24,7 @@
         <div>
             <span class="av-mono av-code">SYS-01</span>
             <h1 class="av-pagehead-title">Settings</h1>
-            <p class="av-pagehead-desc">Your account, sign-in security and system details.</p>
+            <p class="av-pagehead-desc" th:text="${isDirector} ? 'Booking rules, prices and payment, accounts and system details.' : 'Your account, sign-in security and system details.'">Your account, sign-in security and system details.</p>
         </div>
         <div class="av-pagehead-actions"></div>
     </div>
@@ -45,9 +50,140 @@
         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     </div>
 
+    <!-- Settings are grouped by use: booking rules, prices and payment (Director only), then accounts, then system -->
+    <h2 th:if="${isDirector}" class="av-settings-group"><i class="bi bi-calendar-week me-2" aria-hidden="true"></i>Bookings &amp; Visits</h2>
+    <div th:if="${isDirector}" class="row g-4">
+        <!-- 📅 ADVANCE BOOKINGS (DIRECTOR ONLY): the fewest days ahead an advance booking may be made -->
+        <div class="col-12" id="advanceBookingSettings">
+            <div class="av-panel mb-0">
+                <div class="av-panel-head"><span><i class="bi bi-calendar-check me-2"></i>Advance Bookings</span></div>
+                <div class="av-panel-body">
+                    <p class="mb-3 text-muted">With 1, the earliest advance date is tomorrow (Manila time). Today is Walk-in only.
+                        Bookings already made are not changed.</p>
+                    <form action="/admin/settings/advance-booking" method="post" autocomplete="off">
+                        <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                        <div class="av-field-row">
+                            <div class="av-field">
+                                <label class="form-label-custom" for="advanceMinDaysAhead">Advance bookings: minimum days ahead</label>
+                                <input type="number" id="advanceMinDaysAhead" name="advanceMinDaysAhead" class="form-control-custom" min="1" max="30" step="1"
+                                       inputmode="numeric" required th:value="${advanceMinDaysAhead}">
+                            </div>
+                        </div>
+                        <button type="submit" class="btn-primary-custom"><i class="bi bi-save"></i>Save Advance Booking Setting</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <!-- 🚶 WALK-INS (DIRECTOR ONLY): the largest walk-in group and the minutes a walk-in has to pay -->
+        <div class="col-12" id="walkInSettings">
+            <div class="av-panel mb-0">
+                <div class="av-panel-head"><span><i class="bi bi-person-walking me-2"></i>Walk-ins</span></div>
+                <div class="av-panel-body">
+                    <p class="mb-3 text-muted">People already at the museum can book for today with a photo of their ID; the guard checks their ID and receipt at the gate.
+                        An unpaid walk-in is released after the minutes below (never later than the end of its time window); a free walk-in must check in within them.</p>
+                    <form action="/admin/settings/walk-in" method="post" autocomplete="off">
+                        <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                        <div class="av-field-row">
+                            <div class="av-field">
+                                <label class="form-label-custom" for="walkInMaxPax">Maximum persons per walk-in booking</label>
+                                <input type="number" id="walkInMaxPax" name="walkInMaxPax" class="form-control-custom" min="1" max="100" step="1"
+                                       inputmode="numeric" required th:value="${walkInMaxPax}">
+                            </div>
+                            <div class="av-field">
+                                <label class="form-label-custom" for="walkInPaymentMinutes">Minutes to pay (or to check in, when free)</label>
+                                <input type="number" id="walkInPaymentMinutes" name="walkInPaymentMinutes" class="form-control-custom" min="5" max="240" step="1"
+                                       inputmode="numeric" required th:value="${walkInPaymentMinutes}">
+                            </div>
+                        </div>
+                        <button type="submit" class="btn-primary-custom"><i class="bi bi-save"></i>Save Walk-in Settings</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <!-- 📝 FEEDBACK EMAIL (DIRECTOR ONLY): minutes after the booked time window ends -->
+        <div class="col-12" id="feedbackSettings">
+            <div class="av-panel mb-0">
+                <div class="av-panel-head"><span><i class="bi bi-chat-heart me-2"></i>Feedback Email</span></div>
+                <div class="av-panel-body">
+                    <p class="mb-3 text-muted">Every visitor who was checked in gets one feedback email this many minutes after their booked time window ends
+                        (or at check-out, if that comes first). Visitors still shown as inside are not checked out by it.</p>
+                    <form action="/admin/settings/feedback" method="post" autocomplete="off">
+                        <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                        <div class="av-field-row">
+                            <div class="av-field">
+                                <label class="form-label-custom" for="feedbackDelayMinutes">Minutes after the time window ends</label>
+                                <input type="number" id="feedbackDelayMinutes" name="feedbackDelayMinutes" class="form-control-custom" min="0" max="180" step="1"
+                                       inputmode="numeric" required th:value="${feedbackDelayMinutes}">
+                            </div>
+                        </div>
+                        <button type="submit" class="btn-primary-custom"><i class="bi bi-save"></i>Save Feedback Email Setting</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <h2 th:if="${isDirector}" class="av-settings-group"><i class="bi bi-cash-stack me-2" aria-hidden="true"></i>Prices &amp; Payment</h2>
+    <div th:if="${isDirector}" class="row g-4" id="admissionPrices">
+        <div class="col-12">
+            <div class="av-panel mb-0">
+                <div class="av-panel-head"><span><i class="bi bi-cash-coin me-2"></i>Admission Prices</span></div>
+                <div class="av-panel-body">
+                    <p class="mb-3 text-muted">Shown on the public booking page and used to price new bookings. Bookings already made keep the prices they were made at.</p>
+                    <form action="/admin/settings/admission-prices" method="post" autocomplete="off">
+                        <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                        <div class="av-field-row">
+                            <div class="av-field">
+                                <label class="form-label-custom" for="regularPrice">Private Individuals (Regular), PHP</label>
+                                <input type="number" id="regularPrice" name="regularPrice" class="form-control-custom" min="0" max="100000" step="0.01"
+                                       inputmode="decimal" required th:value="${regularPricePesos}">
+                            </div>
+                            <div class="av-field">
+                                <label class="form-label-custom" for="discountedPrice">Students / Reservists / Retired Military and Dependents (Discounted), PHP</label>
+                                <input type="number" id="discountedPrice" name="discountedPrice" class="form-control-custom" min="0" max="100000" step="0.01"
+                                       inputmode="decimal" required th:value="${discountedPricePesos}">
+                            </div>
+                        </div>
+                        <p class="av-hint mb-3"><i class="bi bi-info-circle me-1"></i> Active Military / AFP CivHR / Dependents of Active Military are always free.</p>
+                        <button type="submit" class="btn-primary-custom"><i class="bi bi-save"></i>Save Prices</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div th:if="${isDirector}" class="row g-4 mt-0">
+        <div class="col-12" id="paymentSettings">
+            <div class="av-panel mb-0">
+                <div class="av-panel-head"><span><i class="bi bi-credit-card me-2"></i>Payment</span></div>
+                <div class="av-panel-body">
+                    <p class="mb-3 text-muted">Visitors pay on LANDBANK Link.BizPortal and upload their receipt. Unpaid bookings release their seats at the deadline:
+                        the earlier of the hours below after approval and the start of the booked time window.</p>
+                    <form action="/admin/settings/payment" method="post" autocomplete="off">
+                        <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                        <div class="av-field-row">
+                            <div class="av-field">
+                                <label class="form-label-custom" for="paymentWindowHours">Hours to pay after approval</label>
+                                <input type="number" id="paymentWindowHours" name="paymentWindowHours" class="form-control-custom" min="1" max="720" step="1"
+                                       inputmode="numeric" required th:value="${paymentWindowHours}">
+                            </div>
+                            <div class="av-field">
+                                <label class="form-label-custom" for="landbankUrl">LANDBANK payment page link</label>
+                                <input type="url" id="landbankUrl" name="landbankUrl" class="form-control-custom" maxlength="300" pattern="https://.+"
+                                       placeholder="https://..." th:value="${landbankUrl}" aria-describedby="landbankHelp">
+                            </div>
+                        </div>
+                        <p class="av-hint mb-3" id="landbankHelp"><i class="bi bi-info-circle me-1"></i> Must start with https://. Leave it empty to hide the
+                            "Open LANDBANK Payment Page" button; visitors then see the museum contact email instead.</p>
+                        <button type="submit" class="btn-primary-custom"><i class="bi bi-save"></i>Save Payment Settings</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <h2 class="av-settings-group"><i class="bi bi-people me-2" aria-hidden="true"></i>Accounts &amp; Security</h2>
     <div class="row g-4">
-        <!-- 1. ACCOUNT PROFILE -->
-        <div class="col-lg-4">
+        <div class="col-lg-6">
             <div class="av-panel h-100 mb-0">
                 <div class="av-panel-head"><span><i class="bi bi-person-badge me-2"></i>Account Profile</span></div>
                 <div class="av-panel-body">
@@ -68,8 +204,7 @@
             </div>
         </div>
 
-        <!-- 2. SECURITY -->
-        <div class="col-lg-4">
+        <div class="col-lg-6">
             <div class="av-panel h-100 mb-0">
                 <div class="av-panel-head"><span><i class="bi bi-shield-lock me-2"></i>Security</span></div>
                 <div class="av-panel-body">
@@ -96,23 +231,7 @@
                 </div>
             </div>
         </div>
-
-        <!-- 3. SYSTEM INFORMATION -->
-        <div class="col-lg-4">
-            <div class="av-panel h-100 mb-0">
-                <div class="av-panel-head"><span><i class="bi bi-hdd-network me-2"></i>System Information</span></div>
-                <div class="av-panel-body">
-                    <ul class="av-kv">
-                        <li><span>AeroVisit Version</span> <strong class="av-mono">1.0.0</strong></li>
-                        <li><span>Environment</span> <strong>Production</strong></li>
-                        <li><span>Server Time</span> <strong class="av-mono" th:text="${#temporals.format(serverDate, 'EEE, MMM d, yyyy')}">today</strong></li>
-                    </ul>
-                </div>
-            </div>
-        </div>
     </div>
-
-    <!-- 4. STAFF ACCOUNTS (DIRECTOR ONLY): the Guard account, and the security code that confirms any change -->
     <div th:if="${isDirector}" class="row g-4 mt-4" id="staffAccounts">
         <div class="col-lg-6">
             <div class="av-panel h-100 mb-0">
@@ -157,16 +276,29 @@
         </div>
     </div>
 
-    <!-- 5. AI FEATURES (DIRECTOR ONLY): on/off switch, confirmed with the same emailed code (StaffManagementController) -->
-    <div th:if="${isDirector}" class="row g-4 mt-4" id="aiFeatures">
-        <div class="col-12">
+    <h2 class="av-settings-group"><i class="bi bi-hdd-network me-2" aria-hidden="true"></i>System</h2>
+    <div class="row g-4">
+        <div class="col-lg-4">
+            <div class="av-panel h-100 mb-0">
+                <div class="av-panel-head"><span><i class="bi bi-hdd-network me-2"></i>System Information</span></div>
+                <div class="av-panel-body">
+                    <ul class="av-kv">
+                        <li><span>AeroVisit Version</span> <strong class="av-mono">1.0.0</strong></li>
+                        <li><span>Environment</span> <strong>Production</strong></li>
+                        <li><span>Server Time</span> <strong class="av-mono" th:text="${#temporals.format(serverDate, 'EEE, MMM d, yyyy')}">today</strong></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div th:if="${isDirector}" class="col-lg-8" id="aiFeatures">
             <div class="av-panel mb-0">
                 <div class="av-panel-head">
                     <span><i class="bi bi-cpu me-2"></i>AI Features</span>
                     <span class="badge-soft" id="aiStateBadge">loading...</span>
                 </div>
                 <div class="av-panel-body">
-                    <p class="mb-2">Face check at booking, face bans, duplicate-face check, Sgt. Aero chatbot, walk-in forecast, feedback analysis and the AI roster.</p>
+                    <p class="mb-2">Face check at booking, face bans, duplicate-face check, Sgt. Aero chatbot, walk-in forecast and feedback analysis.</p>
                     <p class="mb-3 text-muted">AI server in AWS: <strong id="aiServerState">loading...</strong></p>
                     <div class="alert alert-warning small" role="note">
                         <i class="bi bi-exclamation-triangle-fill me-1"></i> With the AI off, bookings still work but every one goes to manual photo review, and

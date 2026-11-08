@@ -38,7 +38,6 @@ import com.paf.aerovisit.model.Visitor;
 import com.paf.aerovisit.repository.BookingSlotRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
-import com.paf.aerovisit.service.OcrService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
 /** Emergency closure on the public side: calendar, new bookings, Manage Booking. No database. */
@@ -57,7 +56,6 @@ class EmergencyClosurePortalTest {
     @MockitoBean private VisitorRepository repo;
     @MockitoBean private BookingSlotRepository bookingRepo;
     @MockitoBean private EmailService emailService;
-    @MockitoBean private OcrService ocrService;
     @MockitoBean private PredictiveAdvisorService aiService;
 
     private static BookingSlot slot(LocalDate date, int max) {
@@ -106,11 +104,10 @@ class EmergencyClosurePortalTest {
         when(repo.findClosureDates()).thenReturn(List.of(CLOSED));
 
         mvc.perform(multipart("/save")
-                .file(new MockMultipartFile("livenessImage", new byte[0]))
                 .file(new MockMultipartFile("highResIdImage", new byte[0]))
                 .param("fullName", "Juan Dela Cruz").param("email", "juan@example.com")
-                .param("visitDate", CLOSED.toString()).param("timeWindow", WINDOW)
-                .param("isMasterBooking", "true").with(csrf()).with(kycNonce()))  // not even a VIP buyout request may book a closed day
+                .param("visitDate", CLOSED.toString()).param("timeWindow", WINDOW).param("termsAccepted", "true")
+                .with(csrf()).with(kycNonce()))
             .andExpect(redirectedUrl("/"))
             .andExpect(flash().attribute("error", CLOSED_MESSAGE));
 
@@ -125,8 +122,8 @@ class EmergencyClosurePortalTest {
         when(repo.findClosureDates()).thenReturn(List.of(CLOSED));
         when(bookingRepo.findAll()).thenReturn(List.of(slot(CLOSED, 50)));
 
-        mvc.perform(post("/manage-booking/update").with(csrf()).session(signedIn()).param("formToken", "tok-123")
-                .param("slot", CLOSED + "|" + WINDOW))
+        mvc.perform(post("/manage-booking/reschedule").with(csrf()).session(signedIn()).param("formToken", "tok-123")
+                .param("visitDate", CLOSED.toString()).param("timeWindow", WINDOW))
             .andExpect(redirectedUrl("/manage-booking"))
             .andExpect(flash().attribute("error", CLOSED_MESSAGE));
 
@@ -155,8 +152,7 @@ class EmergencyClosurePortalTest {
         mvc.perform(get("/manage-booking").session(signedIn()))
             .andExpect(status().isOk())
             .andExpect(model().attribute("statusLabel", "Cancelled by Museum"))
-            .andExpect(model().attribute("editable", false))
-            .andExpect(model().attribute("cancellable", false))
+            .andExpect(model().attribute("reschedulable", false))
             .andExpect(content().string(containsString("The museum is closed on this date due to an emergency")));
     }
 }

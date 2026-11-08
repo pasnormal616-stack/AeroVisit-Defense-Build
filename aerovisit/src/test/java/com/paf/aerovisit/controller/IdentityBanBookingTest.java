@@ -40,14 +40,13 @@ import com.paf.aerovisit.repository.BlacklistedFaceRepository;
 import com.paf.aerovisit.repository.BookingSlotRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
-import com.paf.aerovisit.service.KycService;
-import com.paf.aerovisit.service.OcrService;
+import com.paf.aerovisit.service.IdentityBans;
 import com.paf.aerovisit.service.OtpService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
 /**
- * 🪪 Identity bans on /save (IdentityBans): with AI features off there is no face to compare, so the same email or phone
- * number as an active ban is refused, and a similar lead or companion name is only flagged for staff. No database, no Python.
+ * 🪪 Bans on /save (IdentityBans): the same email or phone number as an active ban is refused, and a similar
+ * representative name is only flagged for staff. No face check, no database, no Python.
  */
 @WebMvcTest({VisitorPortalController.class, OtpController.class})
 @Import(SecurityConfig.class)
@@ -56,33 +55,28 @@ class IdentityBanBookingTest {
     private static final LocalDate DAY = LocalDate.now().plusDays(3);
     private static final String WINDOW = "Morning (08:00 AM - 12:00 PM)";
     private static final String EMAIL = "juan@example.com";
-    private static final byte[] SELFIE = {(byte) 0xFF, (byte) 0xD8, 9};
-    private static final byte[] ID_CARD = {(byte) 0xFF, (byte) 0xD8, 4, 4};
-    // What KycService answers when AI features are switched off in Settings: manual review, no face data
-    private static final KycService.KycResult AI_OFF = new KycService.KycResult(KycService.MANUAL_REVIEW, "AI_OFF", null, null);
+    // Real JPEGs: /save checks the photos' bytes (signature + decode), not only their declared type
+    private static final byte[] ID_CARD = com.paf.aerovisit.TestImages.jpeg(44);
 
     @Autowired private MockMvc mvc;
 
     @MockitoBean private VisitorRepository repo;
     @MockitoBean private BookingSlotRepository bookingRepo;
     @MockitoBean private EmailService emailService;
-    @MockitoBean private OcrService ocrService;
     @MockitoBean private PredictiveAdvisorService aiService;
     @MockitoBean private OtpService otpService;
-    @MockitoBean private KycService kycService;
     @MockitoBean private BlacklistedFaceRepository faceBanRepo;
 
     private final List<Path> createdFiles = new ArrayList<>();
 
     @BeforeEach
-    void openSlotWithAiOff() {
+    void openSlot() {
         BookingSlot slot = new BookingSlot();
         slot.setSlotDate(DAY);
         slot.setTimeWindow(WINDOW);
         slot.setMaxCapacity(50);
         when(bookingRepo.findBySlotDateAndTimeWindow(DAY, WINDOW)).thenReturn(List.of(slot));
         when(otpService.isVerified(anyString())).thenReturn(true);
-        when(kycService.screen(any(), any(), anyString(), anyString())).thenReturn(AI_OFF);
         when(repo.save(any(Visitor.class))).thenAnswer(inv -> {
             Visitor v = inv.getArgument(0);
             if (v.getIdImageUrl() != null) createdFiles.add(Paths.get("uploads").resolve(v.getIdImageUrl()));
@@ -103,10 +97,9 @@ class IdentityBanBookingTest {
     private MockMultipartHttpServletRequestBuilder booking(String fullName, String email, String phone, int groupSize) {
         MockMultipartHttpServletRequestBuilder req = multipart("/save");
         req.with(csrf()).with(kycNonce());
-        req.file(new MockMultipartFile("livenessImage", "selfie-with-id.jpg", "image/jpeg", SELFIE));
         req.file(new MockMultipartFile("highResIdImage", "id-card.jpg", "image/jpeg", ID_CARD));
         req.param("fullName", fullName).param("email", email).param("contactNumber", phone)
-           .param("visitDate", DAY.toString()).param("timeWindow", WINDOW).param("groupSize", String.valueOf(groupSize));
+           .param("visitDate", DAY.toString()).param("timeWindow", WINDOW).param("freeCount", String.valueOf(groupSize)).param("termsAccepted", "true");
         return req;
     }
 
@@ -126,17 +119,16 @@ class IdentityBanBookingTest {
         return saved.getAllValues().get(0);
     }
 
-    // --- Same email or phone number: refused, nothing saved, no AI call ---
+    // --- Same email or phone number: refused, nothing saved ---
 
     @Test
     void theBannedEmailIsRefusedWithTheNeutralMessage() throws Exception {
         when(faceBanRepo.findAll()).thenReturn(List.of(ban(12, "Juan Dela Cruz", EMAIL, null)));
 
         mvc.perform(booking("Totally Different", "  JUAN@example.com", "09998887777"))
-           .andExpect(redirectedUrl("/")).andExpect(flash().attribute("error", KycService.FACE_BANNED));
+           .andExpect(redirectedUrl("/")).andExpect(flash().attribute("error", IdentityBans.BANNED_MESSAGE));
 
         verify(repo, never()).save(any());
-        verify(kycService, never()).screen(any(), any(), anyString(), anyString());
         verify(otpService, never()).consume(anyString());
     }
 
@@ -145,7 +137,7 @@ class IdentityBanBookingTest {
         when(faceBanRepo.findAll()).thenReturn(List.of(ban(12, "Juan Dela Cruz", "old@example.com", "09171234567")));
 
         mvc.perform(booking("Totally Different", "new@example.com", "+63 917 123 4567"))
-           .andExpect(redirectedUrl("/")).andExpect(flash().attribute("error", KycService.FACE_BANNED));
+           .andExpect(redirectedUrl("/")).andExpect(flash().attribute("error", IdentityBans.BANNED_MESSAGE));
 
         verify(repo, never()).save(any());
     }
@@ -164,35 +156,36 @@ class IdentityBanBookingTest {
     // --- Similar name: saved, but flagged for staff ---
 
     @Test
-    void aSimilarNameIsSavedForManualReviewWithTheBanNamed() throws Exception {
+    void aSimilarNameIsSavedAsAnOrdinaryPendingRequestFlaggedWithTheBanNamed() throws Exception {
         when(faceBanRepo.findAll()).thenReturn(List.of(ban(12, "Juan Dela Cruz", "old@example.com", "09171234567")));
 
         mvc.perform(booking("Dela Cruz, Juan P.", "new@example.com", "09998887777")).andExpect(redirectedUrl("/success-page"));
 
         Visitor v = saved();
-        assertThat(v.getStatus()).isEqualTo(KycService.MANUAL_REVIEW);
+        assertThat(v.getStatus()).isEqualTo("PENDING"); // only a flag on the Pending row, not manual review
         assertThat(v.getPossibleBanMatch()).isEqualTo("Ban #12: Juan Dela Cruz");
     }
 
     @Test
-    void aBookingThatPassedEveryCheckIsStillFlaggedWhenTheNameMatches() throws Exception {
-        when(kycService.screen(any(), any(), anyString(), anyString()))
-                .thenReturn(new KycService.KycResult("PENDING", "OK", null, null));
+    void aNameOnlyBanFromBeforeStillFlagsTheSameName() throws Exception {
         when(faceBanRepo.findAll()).thenReturn(List.of(ban(12, "Juan Dela Cruz", null, null)));
 
         mvc.perform(booking("Juan Dela Cruz", "new@example.com", "09998887777")).andExpect(redirectedUrl("/success-page"));
 
-        assertThat(saved().getStatus()).isEqualTo(KycService.MANUAL_REVIEW);
+        assertThat(saved().getPossibleBanMatch()).isEqualTo("Ban #12: Juan Dela Cruz");
+        assertThat(saved().getStatus()).isEqualTo("PENDING");
     }
 
     @Test
-    void aCompanionWithABannedNameFlagsTheGroup() throws Exception {
+    void aPostedCompanionNameIsIgnoredSoOnlyTheRepresentativeIsChecked() throws Exception {
+        // Companion names are no longer collected: a stale form that still sends one has it dropped, not stored or matched
         when(faceBanRepo.findAll()).thenReturn(List.of(ban(15, "Pedro Santos", null, null)));
 
         mvc.perform(booking("Maria Reyes", "maria@example.com", "09998887777", 2).param("companionNames", "Santos, Pedro"))
            .andExpect(redirectedUrl("/success-page"));
 
-        assertThat(saved().getPossibleBanMatch()).isEqualTo("Ban #15: Pedro Santos");
+        assertThat(saved().getPossibleBanMatch()).isNull();
+        assertThat(saved().getCompanionNames()).isNull();
     }
 
     @Test

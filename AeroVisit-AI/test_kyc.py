@@ -373,6 +373,84 @@ class FaceSharpnessTest(unittest.TestCase):
         self.assertGreater(kyc.face_sharpness(self.sharp, small_row), 0.0)   # upscaled to 112, not skipped
 
 
+# --- ID photo only: POST /kyc/verify-id (no selfie) ---
+
+def id_only(image):
+    return kyc.verify_id(kyc.IdOnlyRequest(id_image=to_b64(image)))
+
+
+def decode_png(b64):
+    return cv2.imdecode(np.frombuffer(base64.b64decode(b64), np.uint8), cv2.IMREAD_COLOR)
+
+
+class IdOnlyEndpointTest(unittest.TestCase):
+    """Face finding and SFace are mocked (synthetic cards have no real face); the card finder is real."""
+
+    def setUp(self):
+        self.photo = paste_card(noisy_background(), (300, 250), 900, thumb=False)
+        sharp = mock.patch.object(kyc, "face_sharpness", return_value=120.0)
+        sharp.start()
+        self.addCleanup(sharp.stop)
+
+    def portrait(self, found=True):
+        def biggest(image, accept=lambda img, row: True, max_side=kyc.FACE_WORK_MAX_SIDE, score=kyc.FACE_SCORE_THRESHOLD):
+            self.searched = (image.shape[:2], max_side, score)
+            row = np.zeros(15, np.float32)
+            row[:4] = (60, 140, 160, 220)      # the portrait box on the flattened card
+            row[14] = 0.72
+            return (image, row) if found else (None, None)
+        return mock.patch.object(kyc, "_biggest_face_any_turn", side_effect=biggest)
+
+    def test_returns_the_card_crop_the_id_face_vector_and_a_crop_of_the_face_only(self):
+        v = unit_vector(7)
+        with mock.patch.object(kyc, "FACE_READY", True), self.portrait(), mock.patch.object(kyc, "_feature", return_value=v):
+            result = id_only(self.photo)
+        self.assertEqual(result["status"], kyc.SUCCESS)
+        self.assertEqual(result["reason"], kyc.OK)
+        self.assertIs(result["id_detected"], True)
+        self.assertEqual(decode_png(result["id_crop_b64"]).shape[:2], (kyc.CROP_HEIGHT, kyc.CROP_WIDTH))
+        self.assertEqual(len(result["id_face_encoding"]), 128)
+        self.assertEqual(result["id_face_score"], 0.72)
+        # The ban photo is the face with a small margin, never the whole card
+        face = decode_png(result["id_face_crop_b64"])
+        self.assertEqual(face.shape[:2], (220 + 2 * 55, 160 + 2 * 40))
+        self.assertLess(face.shape[0] * face.shape[1], kyc.CROP_HEIGHT * kyc.CROP_WIDTH / 4)
+        # The portrait is searched on the full-size card crop at the lower ID threshold, like /kyc/verify
+        self.assertEqual(self.searched, ((kyc.CROP_HEIGHT, kyc.CROP_WIDTH), kyc.CROP_WIDTH, kyc.ID_FACE_SCORE_THRESHOLD))
+        self.assertNotIn("live_face_encoding", result)
+
+    def test_no_face_on_the_id_still_returns_the_crop_for_the_name_check(self):
+        with mock.patch.object(kyc, "FACE_READY", True), self.portrait(found=False):
+            result = id_only(self.photo)
+        self.assertEqual(result["status"], kyc.POOR_QUALITY)
+        self.assertEqual(result["reason"], kyc.NO_ID_FACE)
+        self.assertIsNotNone(decode_png(result["id_crop_b64"]))
+        self.assertIsNone(result["id_face_encoding"])
+        self.assertIsNone(result["id_face_crop_b64"])
+
+    def test_a_photo_without_a_card_outline_is_read_whole(self):
+        close_up = noisy_background(1200, 900, seed=11)  # e.g. the card fills the photo: no outline to find
+        with mock.patch.object(kyc, "FACE_READY", True), self.portrait(), mock.patch.object(kyc, "_feature", return_value=unit_vector(3)):
+            result = id_only(close_up)
+        self.assertEqual(result["reason"], kyc.FULL_PHOTO)
+        self.assertIs(result["id_detected"], False)
+        self.assertEqual(decode_png(result["id_crop_b64"]).shape[1], kyc.CROP_WIDTH)
+        self.assertEqual(len(result["id_face_encoding"]), 128)
+
+    def test_unreadable_upload_and_missing_models_never_raise(self):
+        with mock.patch.object(kyc, "FACE_READY", True):
+            bad = kyc.verify_id(kyc.IdOnlyRequest(id_image="not base64!"))
+        self.assertEqual((bad["status"], bad["reason"]), (kyc.ERROR, kyc.BAD_IMAGE))
+        with mock.patch.object(kyc, "FACE_READY", False):
+            self.assertEqual(id_only(self.photo)["reason"], kyc.FACE_MODELS_UNAVAILABLE)
+        with mock.patch.object(kyc, "CV_READY", False):
+            self.assertEqual(id_only(self.photo)["reason"], kyc.OPENCV_UNAVAILABLE)
+        with mock.patch.object(kyc, "FACE_READY", True), mock.patch.object(kyc, "verify_id_only", side_effect=RuntimeError("boom")):
+            failed = id_only(self.photo)
+        self.assertEqual(failed["reason"], kyc.INTERNAL_ERROR)
+        self.assertIsNone(failed["id_face_encoding"])
+
+
 @unittest.skipUnless(kyc.FACE_READY, "YuNet/SFace models not in ./models")
 class RealFaceModelTest(unittest.TestCase):
     """The real YuNet model on synthetic images: a card with an empty grey portrait box has no face to compare,

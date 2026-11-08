@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Booking Released</title></head>
+<!--/* Variables: name, referenceId (may be null), billingNumber, amount, deadline, contactEmail, bookUrl */-->
+<body th:replace="~{email/layout :: layout('Booking Released: Payment Not Received', ~{::content})}">
+<div th:fragment="content">
+  <p style="margin:0 0 14px;">Dear <span th:text="${name}">Juan Dela Cruz</span>,</p>
+  <p style="margin:0 0 16px;">We did not receive a payment receipt for billing number <strong th:text="${billingNumber}">000123</strong> (<span th:text="${amount}">PHP 650.00</span>) by the deadline of <span th:text="${deadline}">Mon, Nov 2, 2026 at 9:00 AM</span>, so your reservation has been released and the seats are now open to other visitors.</p>
+  <p th:if="${referenceId != null}" style="margin:0 0 14px;">Released Booking Reference ID: <strong th:text="${referenceId}">PAF-A7X92K</strong></p>
+  <p style="margin:0 0 14px; padding:12px 14px; background-color:#fff8e1; border-left:4px solid #f59e0b;"><strong>Already paid at Landbank?</strong> Contact the museum at <a th:href="${'mailto:' + contactEmail}" th:text="${contactEmail}" href="#" style="color:#002B80;">museum@example.com</a> with your payment receipt and billing number <strong th:text="${billingNumber}">000123</strong>, and we will help you.</p>
+  <p style="margin:0 0 20px;">You are welcome to book a new visit at any time.</p>
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 4px;">
+    <tr>
+      <td style="background-color:#002B80;">
+        <a th:href="${bookUrl}" href="#" style="display:inline-block; padding:12px 24px; font-family:Arial, Helvetica, sans-serif; font-size:15px; font-weight:bold; color:#ffffff; text-decoration:none;">Book a New Visit</a>
+      </td>
+    </tr>
+  </table>
+  <p style="margin:12px 0 0; font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:1.5; color:#6b7280;">
+    Button not working? Copy this link into your browser:<br>
+    <a th:href="${bookUrl}" th:text="${bookUrl}" href="#" style="color:#002B80; word-break:break-all;">link</a>
+  </p>
+</div>
+</body>
+</html>

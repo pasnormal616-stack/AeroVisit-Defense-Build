@@ -37,8 +37,6 @@ import com.paf.aerovisit.model.Visitor;
 import com.paf.aerovisit.repository.BookingSlotRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
-import com.paf.aerovisit.service.KycService;
-import com.paf.aerovisit.service.OcrService;
 import com.paf.aerovisit.service.OtpService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
@@ -53,17 +51,14 @@ class KycNonceTest {
     private static final LocalDate DAY = LocalDate.now().plusDays(3);
     private static final String WINDOW = "Morning (08:00 AM - 12:00 PM)";
     private static final String EMAIL = "juan@example.com";
-    private static final String FACE = com.paf.aerovisit.service.FaceEncodings.format(new double[128]);
 
     @Autowired private MockMvc mvc;
 
     @MockitoBean private VisitorRepository repo;
     @MockitoBean private BookingSlotRepository bookingRepo;
     @MockitoBean private EmailService emailService;
-    @MockitoBean private OcrService ocrService;
     @MockitoBean private PredictiveAdvisorService aiService;
     @MockitoBean private OtpService otpService;
-    @MockitoBean private KycService kycService;
 
     private final List<Path> createdFiles = new ArrayList<>();
 
@@ -75,8 +70,6 @@ class KycNonceTest {
         slot.setMaxCapacity(50);
         when(bookingRepo.findBySlotDateAndTimeWindow(DAY, WINDOW)).thenReturn(List.of(slot));
         when(otpService.isVerified(EMAIL)).thenReturn(true);
-        when(kycService.screen(any(), any(), anyString(), anyString()))
-                .thenReturn(new KycService.KycResult("PENDING", "OK", null, FACE));
         when(repo.save(any(Visitor.class))).thenAnswer(inv -> {
             Visitor v = inv.getArgument(0);
             if (v.getIdImageUrl() != null) createdFiles.add(Paths.get("uploads").resolve(v.getIdImageUrl()));
@@ -93,10 +86,9 @@ class KycNonceTest {
     // A complete booking in this session, sending the given nonce (or none)
     private MockMultipartHttpServletRequestBuilder booking(MockHttpSession session, String nonce) {
         MockMultipartHttpServletRequestBuilder req = multipart("/save");
-        req.file(new MockMultipartFile("livenessImage", "selfie-with-id.jpg", "image/jpeg", new byte[] {(byte) 0xFF, (byte) 0xD8, 9}));
-        req.file(new MockMultipartFile("highResIdImage", "id-card.jpg", "image/jpeg", new byte[] {(byte) 0xFF, (byte) 0xD8, 4}));
+        req.file(new MockMultipartFile("highResIdImage", "id-card.jpg", "image/jpeg", com.paf.aerovisit.TestImages.jpeg(44)));
         req.param("fullName", "Dela Cruz, Juan P.").param("email", EMAIL)
-           .param("visitDate", DAY.toString()).param("timeWindow", WINDOW).param("groupSize", "1");
+           .param("visitDate", DAY.toString()).param("timeWindow", WINDOW).param("freeCount", "1").param("termsAccepted", "true");
         req.session(session);
         if (nonce != null) req.param(VisitorPortalController.KYC_NONCE, nonce);
         return req;
@@ -110,7 +102,6 @@ class KycNonceTest {
 
     private void assertRefusedBeforeAnyCheck() {
         verify(otpService, never()).isVerified(anyString());
-        verify(kycService, never()).screen(any(), any(), anyString(), anyString());
         verify(repo, never()).save(any());
     }
 

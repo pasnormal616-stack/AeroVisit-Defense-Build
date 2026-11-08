@@ -69,7 +69,7 @@ class NotificationApiControllerTest {
             notification(1, AdminNotification.TYPE_ARRIVING_TODAY, "Juan", "arrives today · group of 20.", true, LocalDateTime.now().minusDays(2), null)));
         when(notificationRepo.countByTypeInAndIsReadFalseAndSeenFalse(AdminNotification.DIRECTOR_TYPES)).thenReturn(1L);
         when(notificationRepo.countByTypeInAndIsReadFalse(AdminNotification.DIRECTOR_TYPES)).thenReturn(1L);
-        when(visitorRepo.countByStatusIn(AdminDashboardController.AWAITING_REVIEW_STATUSES)).thenReturn(4L);
+        when(visitorRepo.countPendingQueue()).thenReturn(4L);
 
         mvc.perform(get("/api/notifications"))
             .andExpect(status().isOk())
@@ -98,7 +98,7 @@ class NotificationApiControllerTest {
         AdminNotification approved = notification(1, AdminNotification.TYPE_BOOKING_REQUEST, "Ana", "requested", false, LocalDateTime.now(), 10L);
         AdminNotification waiting = notification(2, AdminNotification.TYPE_BOOKING_REQUEST, "Ben", "requested", false, LocalDateTime.now(), 11L);
         AdminNotification gone = notification(3, AdminNotification.TYPE_MASTER_BOOKING_REQUEST, "Cara", "requested", false, LocalDateTime.now(), 12L);
-        when(notificationRepo.findByTypeInAndResolvedFalseAndVisitorIdIsNotNull(AdminNotification.REQUEST_TYPES)).thenReturn(List.of(approved, waiting, gone));
+        when(notificationRepo.findByTypeInAndResolvedFalseAndVisitorIdIsNotNull(AdminNotification.SELF_RESOLVING_TYPES)).thenReturn(List.of(approved, waiting, gone));
         when(visitorRepo.findAllById(List.of(10L, 11L, 12L))).thenReturn(List.of(booking(10, "APPROVED"), booking(11, "PENDING")));
 
         mvc.perform(get("/api/notifications")).andExpect(status().isOk());
@@ -136,7 +136,7 @@ class NotificationApiControllerTest {
             .andExpect(jsonPath("$.notifications.length()").value(0))
             .andExpect(jsonPath("$.pendingCount").value(0));
         // Booking review is Director-only: the guard's bell never counts the pending queue or resolves requests
-        verify(visitorRepo, never()).countByStatusIn(anyCollection());
+        verify(visitorRepo, never()).countPendingQueue();
         verify(notificationRepo, never()).findByTypeInAndResolvedFalseAndVisitorIdIsNotNull(anyCollection());
         verify(notificationRepo).countByTypeInAndIsReadFalseAndSeenFalse(AdminNotification.GUARD_TYPES);
 
@@ -196,7 +196,7 @@ class NotificationApiControllerTest {
         verify(notificationRepo, never()).findTop30ByTypeInOrderByCreatedAtDescIdDesc(anyCollection());
         verify(notificationRepo, never()).markAllReadByTypeIn(any());
         verify(notificationRepo, never()).deleteAll(anyIterable());
-        verify(visitorRepo, never()).countByStatusIn(anyCollection());
+        verify(visitorRepo, never()).countPendingQueue();
     }
 
     @Test

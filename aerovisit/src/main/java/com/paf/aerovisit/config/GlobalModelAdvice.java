@@ -36,7 +36,7 @@ public class GlobalModelAdvice {
         return SecurityConfig.isGuard();
     }
 
-    // 🤖 AI features switch (Settings): templates hide the chatbot, AI roster and forecast when false. Optional, so web
+    // 🤖 AI features switch (Settings): templates hide the chatbot and forecast when false. Optional, so web
     // test slices (no AiSwitch bean) still start, and then the AI counts as on, as before the switch existed.
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     com.paf.aerovisit.service.AiSwitch aiSwitch;

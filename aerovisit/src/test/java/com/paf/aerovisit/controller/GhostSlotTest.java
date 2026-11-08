@@ -33,7 +33,6 @@ import com.paf.aerovisit.repository.BookingSlotRepository;
 import com.paf.aerovisit.repository.StaffScheduleRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
-import com.paf.aerovisit.service.OcrService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
 /** Ghost slots: no default capacity of 100. A booking or approval for a slot that doesn't exist is refused. No database. */
@@ -55,7 +54,6 @@ class GhostSlotTest {
     @MockitoBean private BookingSlotRepository bookingRepo;
     @MockitoBean private StaffScheduleRepository staffRepo;
     @MockitoBean private EmailService emailService;
-    @MockitoBean private OcrService ocrService;
     @MockitoBean private PredictiveAdvisorService aiService;
 
     private Visitor pending(long id, String window) {
@@ -121,17 +119,20 @@ class GhostSlotTest {
     }
 
     @Test
-    void aMasterBookingStillNeedsNoPublicSlot() throws Exception {
-        // VIP buyouts can fall on days with no public slots; their time window is "Master Booking Bypass"
+    void anOlderMasterBookingWithNoPublicSlotIsRefusedLikeAnyOtherBooking() throws Exception {
+        // Master Booking was removed: its old "Master Booking Bypass" window is not a real slot, so Approve and Force
+        // Approve both refuse it, the same as any made-up window
         long id = 990402L;
-        Visitor master = pending(id, "Master Booking Bypass");
-        master.setPurpose(Visitor.MASTER_BOOKING_PURPOSE);
-        try {
-            mvc.perform(post("/admin/approve/" + id).with(csrf())).andExpect(flash().attributeExists("success"));
-        } finally {
-            Files.deleteIfExists(Paths.get("uploads", "QR_" + id + ".png"));
-        }
-        assertThat(master.getStatus()).isEqualTo("APPROVED");
+        Visitor old = pending(id, "Master Booking Bypass");
+        old.setPurpose("Educational Tour (Master Booking Request)");
+
+        mvc.perform(post("/admin/approve/" + id).with(csrf()))
+            .andExpect(flash().attribute("error", GuardOperationController.INVALID_SLOT));
+        mvc.perform(post("/admin/approve-override/" + id).with(csrf()))
+            .andExpect(flash().attribute("error", GuardOperationController.INVALID_SLOT));
+
+        assertThat(old.getStatus()).isEqualTo("PENDING");
+        verify(repo, never()).save(any());
     }
 
     // --- Public booking form (/save). The email OTP and selfie KYC checks run before the slot check, so the check is tested directly. ---

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Choose a New Date</title></head>
+<!--/* Variables: name, date, deadline, billingNumber, amount, referenceId (may be null), bookUrl (Manage Booking).
+       reminder: the one reminder 7 days before the deadline. unreviewed: the paid request was not reviewed before its
+       date (otherwise the museum closed on it). EmailService.sendRescheduleNeeded. */-->
+<body th:replace="~{email/layout :: layout('Choose a New Date', ~{::content})}">
+<div th:fragment="content">
+  <p style="margin:0 0 14px;">Dear <span th:text="${name}">Juan Dela Cruz</span>,</p>
+  <p th:if="${reminder}" style="margin:0 0 16px;">This is a reminder that your paid booking for <strong th:text="${date}" style="white-space:nowrap;">2026-10-20</strong> still needs a new date.</p>
+  <p th:if="${!reminder and unreviewed}" style="margin:0 0 16px;">We are sorry: the museum was unable to review your booking for <strong th:text="${date}" style="white-space:nowrap;">2026-10-20</strong> before your visit date.</p>
+  <p th:if="${!reminder and !unreviewed}" style="margin:0 0 16px;">The museum was closed on your booked date, <strong th:text="${date}" style="white-space:nowrap;">2026-10-20</strong>.</p>
+  <p style="margin:0 0 16px;">Please choose another available date and time through Manage Booking by <strong th:text="${deadline}" style="white-space:nowrap;">2026-11-19</strong>. Your new date goes to the museum for approval.</p>
+  <p th:if="${referenceId != null}" style="margin:0 0 14px;">Booking Reference ID: <strong th:text="${referenceId}">PAF-A7X92K</strong></p>
+  <p style="margin:0 0 20px;">Your payment (billing number <strong th:text="${billingNumber}">000123</strong>, <span th:text="${amount}">PHP 650.00</span>) is kept for your new date; no new payment is needed. Your Entry QR Code is sent once your new date is approved.</p>
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 4px;">
+    <tr>
+      <td style="background-color:#002B80;">
+        <a th:href="${bookUrl}" href="#" style="display:inline-block; padding:12px 24px; font-family:Arial, Helvetica, sans-serif; font-size:15px; font-weight:bold; color:#ffffff; text-decoration:none;">Choose a New Date</a>
+      </td>
+    </tr>
+  </table>
+  <!--/* Backup for phones where Gmail disables the button: the visitor can still copy the address */-->
+  <p style="margin:12px 0 0; font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:1.5; color:#6b7280;">
+    Button not working? Copy this link into your browser:<br>
+    <a th:href="${bookUrl}" th:text="${bookUrl}" href="#" style="color:#002B80; word-break:break-all;">link</a>
+  </p>
+</div>
+</body>
+</html>

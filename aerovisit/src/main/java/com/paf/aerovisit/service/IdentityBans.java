@@ -8,16 +8,18 @@ import java.util.Locale;
 import com.paf.aerovisit.model.BlacklistedFace;
 import com.paf.aerovisit.model.Visitor;
 
-// 🪪 IDENTITY BANS: the ban checks that need no AI service, so banning keeps working when AI features are switched off
-// (Settings) and no face vector exists.
-//   - Same email or phone number as an active ban = the same person: refused, like a face match.
-//   - A name that resembles a banned name (FuzzyNameMatcher, the OCR tolerance) is NOT proof: different people share
-//     names, so it only flags the booking for staff (human in the loop).
-// A new email and phone number get past the first check; the name flag, the face check (AI on) and the guards' ID check
-// at the gate are the backstops.
+// 🪪 IDENTITY BANS: the only ban checks (no face data, no AI service).
+//   - Same email or phone number as an active ban = the same person: refused.
+//   - A name that resembles a banned name (FuzzyNameMatcher's tolerance) is NOT proof: different people share names, so
+//     it only flags the booking for staff (human in the loop).
+// A new email and phone number get past the first check; the name flag and the guards' ID check at the gate are the
+// backstops. Older bans that only have a face vector (no email, phone or name) no longer match anything.
 public final class IdentityBans {
 
     private IdentityBans() {}
+
+    // What a refused (banned) visitor is told: neutral, never "you are banned"
+    public static final String BANNED_MESSAGE = "Booking Failed. We are unable to process your request at this time. Please try again later or contact the reception desk for assistance.";
 
     // Trimmed, lower case; null when blank or not an address
     public static String email(String raw) {
@@ -60,11 +62,10 @@ public final class IdentityBans {
         return v == null ? null : contactBan(v.getEmail(), phoneOf(v), bans, day);
     }
 
-    // What refuses a booking at approval and at the gate: its face (when it has one) or its email / phone number
+    // What refuses a booking at approval and at the gate: its email or phone number (a name alone only ever flags)
     public static BlacklistedFace activeBan(Visitor v, Iterable<BlacklistedFace> bans, LocalDate day) {
         if (v == null || bans == null) return null;
-        BlacklistedFace byFace = FaceEncodings.activeBan(FaceEncodings.parse(v.getFaceEncoding()), bans, day);
-        return byFace != null ? byFace : contactBan(v, bans, day);
+        return contactBan(v, bans, day);
     }
 
     // The first active ban whose recorded name matches one of these names (the lead booker, then each companion), or

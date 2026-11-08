@@ -1,12 +1,10 @@
 package com.paf.aerovisit.model;
 
 import jakarta.persistence.*;
-import java.time.DayOfWeek;
-import java.time.format.TextStyle;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
 
+// 👤 Staff Directory entry. Since 2026-11-06 the directory is names only: the Director adds, renames and removes officers
+// by full name/rank. The other fields below are no longer read or written; they stay mapped so their columns and the
+// values already in them are kept (ddl-auto=update never drops a column).
 @Entity
 public class MuseumEmployee {
 
@@ -21,18 +19,12 @@ public class MuseumEmployee {
     @Column(length = 100)
     private String jobTitle;
 
-    // --- Shift Template (all optional; null on officers added before these fields existed) ---
-    // Where the published duty roster is emailed
+    // Unused since 2026-11-06 (the old shift template and roster email address). Kept so the columns stay mapped.
     private String email;
-
-    // Comma-separated days this officer normally works, e.g. "MONDAY,WEDNESDAY,FRIDAY"
     private String workingDays;
-
-    // "Morning", "Afternoon" or "Full Day"
     private String defaultShift;
 
-    // 👻 GHOST RULE: a deactivated officer stays in the directory (history keeps their name) but is never scheduled again.
-    // ddl-auto=update adds the column with this default, so every existing officer starts active.
+    // Unused since 2026-11-06 (Deactivate/Reactivate was removed). Kept so the column and its default stay as they are.
     @Column(nullable = false, columnDefinition = "boolean default true")
     private boolean active = true;
 
@@ -61,21 +53,4 @@ public class MuseumEmployee {
     public void setActive(boolean active) { this.active = active; }
     public void setDefaultShift(String defaultShift) { this.defaultShift = defaultShift; }
 
-    // True when this officer's shift template includes the given day of the week
-    public boolean worksOn(DayOfWeek day) {
-        if (workingDays == null || day == null) return false;
-        for (String d : workingDays.split(",")) {
-            if (d.trim().equalsIgnoreCase(day.name())) return true;
-        }
-        return false;
-    }
-
-    // Short form for the Staff Directory table, e.g. "Mon, Wed, Fri" (empty when no working days are set)
-    public String getWorkingDaysLabel() {
-        List<String> labels = new ArrayList<>();
-        for (DayOfWeek day : DayOfWeek.values()) {
-            if (worksOn(day)) labels.add(day.getDisplayName(TextStyle.SHORT, Locale.US));
-        }
-        return String.join(", ", labels);
-    }
 }

@@ -1,14 +1,14 @@
 package com.paf.aerovisit.controller;
 
 import com.paf.aerovisit.model.BookingSlot;
-import com.paf.aerovisit.model.StaffSchedule;
 import com.paf.aerovisit.model.Visitor;
 import com.paf.aerovisit.repository.BlacklistedFaceRepository;
 import com.paf.aerovisit.repository.BookingSlotRepository;
-import com.paf.aerovisit.repository.StaffScheduleRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
+import com.paf.aerovisit.service.PaymentWorkflow;
 import com.paf.aerovisit.service.SeatReservationService;
+import com.paf.aerovisit.service.UploadMirror;
 import com.paf.aerovisit.util.QRCodeGenerator;
 
 import org.springframework.http.ResponseEntity;
@@ -32,7 +32,6 @@ import java.util.Map;
 public class GuardOperationController {
 
     private final VisitorRepository repo;
-    private final StaffScheduleRepository staffRepo;
     private final EmailService emailService;
     private final BookingSlotRepository bookingRepo;
 
@@ -45,15 +44,25 @@ public class GuardOperationController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private SeatReservationService seatReservation;
 
+    // 📝 The feedback email, once per booking (a check-out after the window-end sweep sends nothing again). Optional, so
+    // test slices without it still start: then the booking's own timestamp guards the send.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.paf.aerovisit.service.FeedbackEmails feedbackEmails;
+
     // ☁️ Copies each new QR code to S3 (off locally). Optional, so test slices without it still start.
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.paf.aerovisit.service.UploadMirror uploadMirror;
+
+    // 💳 Payment at approval (billing number, deadline). Optional, so test slices without it still start; without it a
+    // booking that needs payment can't be approved (it is never given a QR unpaid).
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private PaymentWorkflow paymentWorkflow;
 
     // 🔔 Header bell (gate denials, failed approval emails, slots filling up). Optional, so test slices without it still start.
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.paf.aerovisit.service.NotificationService notificationService;
 
-    // 📮 Approval, VIP-cancellation and manual check-in/out emails go out in the background, so Approve and the manual
+    // 📮 Approval and manual check-in/out emails go out in the background, so Approve and the manual
     // gate buttons answer at once instead of waiting for the mail server. Optional: without it (test slices) the email
     // is sent right away, with the same failure handling (MailOutbox.send).
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -74,8 +83,9 @@ public class GuardOperationController {
 
     static final String APPROVED_MESSAGE = "Visitor approved. The approval email with the QR code is on its way.";
 
-    // ⏱️ The gate's clock: real Manila time in production (null = the system clock, read on every call);
-    // tests fix it so every time-window case runs the same at any hour
+    // ⏱️ The gate's clock: the shared Clock bean (ClockConfig, real Manila time) in production; null = the system clock,
+    // read on every call. Tests fix it so every time-window case runs the same at any hour
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
     java.time.Clock clock;
     private java.time.Clock clock() { return clock != null ? clock : java.time.Clock.systemDefaultZone(); }
 
@@ -95,9 +105,8 @@ public class GuardOperationController {
     private static final java.time.format.DateTimeFormatter GATE_TIME =
             java.time.format.DateTimeFormatter.ofPattern("hh:mm a", java.util.Locale.US);
 
-    public GuardOperationController(VisitorRepository repo, StaffScheduleRepository staffRepo, EmailService emailService, BookingSlotRepository bookingRepo) {
+    public GuardOperationController(VisitorRepository repo, EmailService emailService, BookingSlotRepository bookingRepo) {
         this.repo = repo;
-        this.staffRepo = staffRepo;
         this.emailService = emailService;
         this.bookingRepo = bookingRepo;
     }
@@ -109,8 +118,8 @@ public class GuardOperationController {
 
     @PostMapping("/admin/api/scan")
     @ResponseBody
-    public ResponseEntity<Map<String, String>> scanVisitorAjax(@RequestParam("qrData") String qrData) {
-        Map<String, String> response = new HashMap<>();
+    public ResponseEntity<Map<String, Object>> scanVisitorAjax(@RequestParam("qrData") String qrData) {
+        Map<String, Object> response = new HashMap<>();
         try {
             // 🔥 NEW: Search by Secure Token instead of plain ID
             // 🔒 Only the unguessable secure token is accepted. The old "ID:x | Name:y" format was
@@ -120,13 +129,23 @@ public class GuardOperationController {
 
             if (v != null) {
                 // Ensure we have an image URL to send back for visual verification
-                String imageUrl = v.getIdImageUrl() != null ? "/uploads/" + v.getIdImageUrl() : "";
+                // 🪪 The ID photo (an older booking's selfie when it has one), labelled for the guard
+                String imageUrl = v.gatePhoto() != null ? "/uploads/" + v.gatePhoto() : "";
                 response.put("imageUrl", imageUrl);
+                response.put("imageLabel", v.gatePhotoLabel());
                 response.put("visitorName", v.getName());
-                // 🪖 GROUP MANIFEST: lead, headcount and companions so the guard can check every ID in the party
+                // 🪖 GROUP: the representative and the headcount. Companion names exist only on older bookings
+                // (empty for new ones); the scanner lists them when present.
                 response.put("leadName", (v.getFullName() != null && !v.getFullName().isBlank()) ? v.getFullName() : v.getName());
                 response.put("headcount", String.valueOf(Math.max(1, v.getGroupSize())));
                 response.put("companions", String.join("\n", Visitor.parseCompanionNames(v.getCompanionNames())));
+                // 💱 Admission breakdown and total, e.g. "2 Discounted · 3 Regular · 1 Free · PHP 650.00" (empty for older bookings)
+                response.put("admission", v.admissionCounted()
+                        ? v.admissionSummary() + (v.getAdmissionTotalCentavos() != null ? " · " + v.admissionTotalText() : "") : "");
+                // 💳 THE PAYMENT, shown next to the ID photo on every scan: billing number, amount due, status, the receipt
+                // (only through the checked /admin/payments/{id}/receipt, and only when this user may see it) and who
+                // verified it ("Free, no payment" when nothing is due)
+                putPayment(response, v);
 
                 // 🔥 SINGLE-SCAN LOCKOUT LOGIC
                 if ("CHECKED-OUT".equals(v.getStatus())) {
@@ -152,9 +171,25 @@ public class GuardOperationController {
                     v.setStatus("CHECKED-OUT");
                     v.setCheckOutTime(LocalDateTime.now(clock()));
                     repo.save(v);
-                    sendInBackground(() -> emailService.sendCheckOutFeedback(v.getEmail(), v.getName(), v.getSecureToken()));
+                    // 📝 The feedback email, unless the window-end sweep already sent it (once per booking)
+                    sendInBackground(() -> com.paf.aerovisit.service.FeedbackEmails.sendOnce(feedbackEmails, emailService, v, LocalDateTime.now(clock())));
                     response.put("status", "success");
                     response.put("message", "👋 CHECKED-OUT: " + v.getName());
+                } else if (v.walkIn()) {
+                    // 🚶 SCAN TO OPEN: a walk-in QR only opens its Process panel (the same ticks and server rules as the
+                    // dashboard's Process button), over the camera on the scanner page; "panel" carries what it shows
+                    // (WalkInPanelData, the same values as the dashboard's data-px-*). Nothing is saved here.
+                    String refusal = walkInScanRefusal(v);
+                    if (refusal != null) {
+                        response.put("status", "error");
+                        response.put("message", refusal);
+                    } else {
+                        response.put("status", "process");
+                        response.put("visitorId", String.valueOf(v.getId()));
+                        response.put("processUrl", WALK_IN_PROCESS_URL + v.getId());
+                        response.put("panel", WalkInPanelData.of(v, banOf(v), receiptVisible(v)));
+                        response.put("message", "🚶 WALK-IN: " + v.getName());
+                    }
                 } else {
                     String blocker = checkInBlocker(v);
                     if (blocker != null) {
@@ -165,8 +200,9 @@ public class GuardOperationController {
                         // press Accept (/admin/api/confirm-check-in) or Deny Entry (/admin/api/deny-entry).
                         response.put("status", "ready");
                         response.put("visitorId", String.valueOf(v.getId()));
-                        response.put("masterBooking", String.valueOf(v.isMasterBooking()));
-                        response.put("message", (v.isMasterBooking() ? "🚌 MASTER BOOKING: " : "🔎 VERIFY: ") + v.getName());
+                        // 🪪 Free / Discounted visitors: the card shows this tick and Accept waits for it (empty = none)
+                        response.put("idsCheckText", v.eligibilityCheckText());
+                        response.put("message", "🔎 VERIFY: " + v.getName());
                     }
                 }
             } else {
@@ -180,11 +216,63 @@ public class GuardOperationController {
         return ResponseEntity.ok(response);
     }
 
+    // 🚶 Where a walk-in scan sends the guard: the Walk-ins tab with that walk-in's Process panel opened (guard.html)
+    static final String WALK_IN_PROCESS_URL = "/guard/dashboard?tab=walkins&process=";
+    static final String WALK_IN_USE_PROCESS = "This is a walk-in: check the group in with its Process panel (scan its QR or use Process on the Walk-ins tab).";
+    private static final java.time.format.DateTimeFormatter WALK_IN_DAY =
+            java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d", java.util.Locale.US);
+
+    // Why a scanned walk-in QR can't open its Process panel now, or null. Checked-in / checked-out / denied / rejected
+    // passes were already answered by the scan's earlier branches (a second scan of a group inside checks it out).
+    String walkInScanRefusal(Visitor v) {
+        if (!LocalDate.now(clock()).equals(v.getVisitDate())) {
+            return "WRONG DAY: This walk-in QR was for " + (v.getVisitDate() == null ? "another day" : v.getVisitDate().format(WALK_IN_DAY))
+                    + ". Walk-in passes work only on the day they were made.";
+        }
+        if ("NO_SHOW".equals(v.getStatus())) {
+            return "EXPIRED: This walk-in pass was released because the group was not checked in in time. The visitor must make a new walk-in booking.";
+        }
+        if (Visitor.STATUS_PAYMENT_EXPIRED.equals(v.getStatus())) {
+            return "EXPIRED: This walk-in pass was released because it was not paid in time. The visitor must make a new walk-in booking.";
+        }
+        if (!"APPROVED".equals(v.getStatus())) {
+            return "ACCESS DENIED: This walk-in booking was cancelled (status: " + v.getStatus() + ").";
+        }
+        return null;
+    }
+
+    // 💳 The scan card's payment block (see scanVisitorAjax)
+    private void putPayment(Map<String, Object> response, Visitor v) {
+        boolean due = v.paymentRequired();
+        response.put("billingNumber", due && v.getBillingNumber() != null ? v.getBillingNumber() : "");
+        response.put("amountDue", due ? v.amountDueText() : "");
+        response.put("paymentStatus", due ? v.paymentStatusLabel() : "");
+        response.put("paymentNote", v.paymentNote());
+        boolean receipt = v.getReceiptImageUrl() != null && receiptVisible(v);
+        response.put("receiptUrl", receipt ? "/admin/payments/" + v.getId() + "/receipt" : "");
+    }
+
+    // May the signed-in user see this booking's receipt (the rule of /admin/payments/{id}/receipt)
+    private boolean receiptVisible(Visitor v) {
+        org.springframework.security.core.Authentication auth =
+                org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        return PaymentAdminController.canViewReceipt(auth, v, LocalDate.now(clock()));
+    }
+
+    // The ban a flagged walk-in's name resembles (the same lookup as the Guard Dashboard), or null
+    private com.paf.aerovisit.model.BlacklistedFace banOf(Visitor v) {
+        if (faceBanRepo == null || v.getPossibleBanId() == null) return null;
+        return faceBanRepo.findById(v.getPossibleBanId()).orElse(null);
+    }
+
     // Manual check-in is a staff override: unlike the QR scan, it does not require an APPROVED booking.
     // It only enforces the scheduled date and time window, and refuses rejected or checked-out visitors.
     @PostMapping("/admin/manual-checkin")
     public String manualCheckIn(@RequestParam("referenceId") String referenceId,
-                                @RequestParam(value = "returnTo", required = false) String returnTo, RedirectAttributes redirectAttributes) {
+                                @RequestParam(value = "returnTo", required = false) String returnTo,
+                                @RequestParam(value = "banChecked", required = false) String banChecked,
+                                @RequestParam(value = "idsChecked", required = false) String idsChecked,
+                                RedirectAttributes redirectAttributes) {
         String back = AdminReturnTo.redirect(returnTo); // ↩️ the page the officer acted from, or /admin
         // The guard types the Booking Reference ID from the visitor's email (e.g. PAF-A7X92K), not the database id
         Visitor v = referenceId.isBlank() ? null
@@ -197,6 +285,10 @@ public class GuardOperationController {
                 redirectAttributes.addFlashAttribute("error", "ACCESS DENIED: Entry was already denied at the gate (" + v.getEntryDenialReason() + ").");
             } else if ("REJECTED".equals(v.getStatus()) || "CANCELLED_OVERRIDE".equals(v.getStatus()) || "CANCELLED_BY_VISITOR".equals(v.getStatus()) || "CANCELLED".equals(v.getStatus())) {
                 redirectAttributes.addFlashAttribute("error", "ACCESS DENIED: Visitor rejected or booking cancelled.");
+            } else if (Visitor.STATUS_PAYMENT_EXPIRED.equals(v.getStatus())) {
+                redirectAttributes.addFlashAttribute("error", "ACCESS DENIED: This booking was released because it was not paid by the deadline.");
+            } else if (Visitor.STATUS_RESCHEDULE_REQUIRED.equals(v.getStatus())) {
+                redirectAttributes.addFlashAttribute("error", "ACCESS DENIED: The museum closed on this booking's date; the visitor must choose a new date in Manage Booking.");
             } else if ("NO_SHOW".equals(v.getStatus())) {
                 // 🚫 The visit window passed without a check-in; the visitor must book again
                 redirectAttributes.addFlashAttribute("error", "ACCESS DENIED: This booking was marked as a no-show. The visitor must book a new visit.");
@@ -206,14 +298,18 @@ public class GuardOperationController {
                 v.setStatus("CHECKED-OUT");
                 v.setCheckOutTime(LocalDateTime.now(clock()));
                 repo.save(v);
-                String to = v.getEmail(), name = v.getName(), token = v.getSecureToken();
-                com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "check-out email for visitor #" + v.getId(),
-                        () -> emailService.sendCheckOutFeedback(to, name, token), null);
+                // 📝 The feedback email, unless the window-end sweep already sent it (once per booking)
+                com.paf.aerovisit.service.FeedbackEmails.sendOnce(feedbackEmails, emailService, v, LocalDateTime.now(clock()));
                 redirectAttributes.addFlashAttribute("success", "👋 CHECKED-OUT via Manual Override: " + v.getName());
             } else {
                 // 🛂 Admitting a booking nobody approved is the Director's override; a Guard can only check in an approved pass
                 if (!"APPROVED".equals(v.getStatus()) && !com.paf.aerovisit.config.SecurityConfig.isDirector()) {
                     redirectAttributes.addFlashAttribute("error", "ACCESS DENIED: Booking is not approved (status: " + v.getStatus() + ").");
+                    return back;
+                }
+                // 💳 ...and never for a booking whose payment is not verified
+                if (!v.paymentCleared()) {
+                    redirectAttributes.addFlashAttribute("error", PAYMENT_NOT_VERIFIED);
                     return back;
                 }
                 // 🚫 Manual check-in is a Director override for pending bookings, but never for a banned visitor
@@ -244,17 +340,30 @@ public class GuardOperationController {
                     }
                 }
 
+                // 🚶 A walk-in whose name resembles a ban: the guard compares the ID with the ban's photo first
+                if (banCheckMissing(v, banChecked)) {
+                    redirectAttributes.addFlashAttribute("error", BAN_CHECK_REQUIRED);
+                    return back;
+                }
+                // 🪪 Free / Discounted visitors: only with the IDs tick (the header's quick box has none, so it points
+                // the guard to Process or the scanner)
+                if (eligibilityCheckMissing(v, idsChecked)) {
+                    redirectAttributes.addFlashAttribute("error", IDS_CHECK_MANUAL);
+                    return back;
+                }
                 if (!claim(v, "CHECKED-IN")) {
                     redirectAttributes.addFlashAttribute("error", ALREADY_CHECKED_IN);
                     return back;
                 }
+                recordBanCheck(v);
+                recordEligibilityCheck(v);
                 v.setStatus("CHECKED-IN");
-                v.setCheckedInBy(getActiveGuardName() + " (Manual)");
+                v.setCheckedInBy(signedInStaffName() + " (Manual)");
                 v.setCheckInTime(LocalDateTime.now(clock()));
                 repo.save(v);
-                String to = v.getEmail(), name = v.getName(), tourGuide = getActiveTourGuideName();
+                String to = v.getEmail(), name = v.getName();
                 com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "check-in email for visitor #" + v.getId(),
-                        () -> emailService.sendCheckInGuidelines(to, name, tourGuide), null);
+                        () -> emailService.sendCheckInGuidelines(to, name), null);
                 String groupAddon = (v.getGroupSize() > 1) ? " (Group of " + v.getGroupSize() + ")" : "";
                 redirectAttributes.addFlashAttribute("success", "🟢 Checked-In via Manual Override: " + v.getName() + groupAddon);
             }
@@ -283,10 +392,150 @@ public class GuardOperationController {
 
     // Why this visitor cannot be checked in right now, or null when they can (APPROVED and scheduled for today).
     // Shared by the scan (verify) and the confirm step, so a stale card can never admit someone the scan would refuse.
+    static final String PAYMENT_NOT_VERIFIED = "ACCESS DENIED: Payment not verified.";
+    static final String BAN_CHECK_REQUIRED = "Tick \"ID checked against the ban\" before checking in this walk-in.";
+
+    // 🚶 True when this walk-in's name resembles a ban and the guard has not ticked "ID checked against the ban"
+    static boolean banCheckMissing(Visitor v, String banChecked) {
+        return v.walkIn() && v.banCheckPending() && !"true".equals(banChecked);
+    }
+
+    // Records which guard compared the ID with the ban's photo, and when (only for a flagged walk-in)
+    private void recordBanCheck(Visitor v) {
+        if (v.walkIn() && v.banCheckPending()) {
+            v.setBanCheckedBy(signedInStaffName());
+            v.setBanCheckedAt(LocalDateTime.now(clock()));
+        }
+    }
+
+    // 🪪 FREE / DISCOUNTED IDs: a group with Free or Discounted visitors is checked in (walk-in Process panel, QR Accept,
+    // manual check-in) only after the guard ticks that they checked those visitors' IDs. Recorded once, like the ban check.
+    static final String IDS_CHECK_REQUIRED = "Tick \"Checked the IDs of the Free and Discounted visitors\" before checking in this group.";
+    static final String IDS_CHECK_MANUAL = "This group has Free or Discounted visitors: check them in with Process (walk-ins) or the scanner (advance bookings), where you confirm their IDs.";
+
+    static boolean eligibilityCheckMissing(Visitor v, String idsChecked) {
+        return v.eligibilityCheckNeeded() && !"true".equals(idsChecked);
+    }
+
+    private void recordEligibilityCheck(Visitor v) {
+        if (v.eligibilityCheckNeeded()) {
+            v.setEligibilityCheckedBy(signedInStaffName());
+            v.setEligibilityCheckedAt(LocalDateTime.now(clock()));
+        }
+    }
+
+    // ✅ Checks in an APPROVED, cleared visitor (the checks are the caller's): claims the pass so two gates can't both admit
+    // it, records the ticks, saves, and emails the check-in guidelines in the background. Null on success, else why not.
+    private String admit(Visitor v, String checkedInBy) {
+        if (!claim(v, "CHECKED-IN")) return ALREADY_CHECKED_IN;
+        recordBanCheck(v);
+        recordEligibilityCheck(v);
+        v.setStatus("CHECKED-IN");
+        v.setCheckedInBy(checkedInBy);
+        v.setCheckInTime(LocalDateTime.now(clock()));
+        repo.save(v);
+        String to = v.getEmail(), name = v.getName();
+        com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "check-in email for visitor #" + v.getId(),
+                () -> emailService.sendCheckInGuidelines(to, name), null);
+        return null;
+    }
+
+    private static String groupAddon(Visitor v) {
+        return v.getGroupSize() > 1 ? " (Group of " + v.getGroupSize() + ")" : "";
+    }
+
+    // 🚶 PROCESS WALK-IN (Guard Dashboard, Walk-ins Today): every tick that applies is required here, on the server.
+    // Verify & Check In = mark the receipt PAID (when there is one to verify), record the ticks, then check the group in
+    // through the usual gate rules. A refused check-in (e.g. the window hasn't opened) keeps the payment verified.
+    // Who may: the payment rule (PaymentAdminController.canVerify): a Guard only for today's walk-ins, else 403.
+    static final String PROCESS_WALK_IN_ONLY = "Process is for walk-in bookings only.";
+
+    @PostMapping("/admin/walk-ins/{id}/process")
+    public String processWalkIn(@PathVariable Long id,
+                                @RequestParam(value = "matchConfirmed", required = false) String matchConfirmed,
+                                @RequestParam(value = "idsChecked", required = false) String idsChecked,
+                                @RequestParam(value = "banChecked", required = false) String banChecked,
+                                @RequestParam(value = "returnTo", required = false) String returnTo,
+                                RedirectAttributes redirectAttributes) {
+        String back = AdminReturnTo.isOurs(returnTo) ? "redirect:" + returnTo : "redirect:" + PaymentAdminController.GUARD_RETURN;
+        Outcome outcome = processWalkInOutcome(id, matchConfirmed, idsChecked, banChecked);
+        redirectAttributes.addFlashAttribute(outcome.ok() ? "success" : "error", outcome.message());
+        return back;
+    }
+
+    // 📷 The same Process action for the scanner's overlay (fetch with X-Requested-With: fetch): {status, message} instead
+    // of a redirect, so the camera page never reloads. Same URL, so the same security rule and the same checks.
+    @PostMapping(value = "/admin/walk-ins/{id}/process", headers = AJAX_HEADER)
+    @ResponseBody
+    public ResponseEntity<Map<String, String>> processWalkInAjax(@PathVariable Long id,
+                                @RequestParam(value = "matchConfirmed", required = false) String matchConfirmed,
+                                @RequestParam(value = "idsChecked", required = false) String idsChecked,
+                                @RequestParam(value = "banChecked", required = false) String banChecked) {
+        return ResponseEntity.ok(processWalkInOutcome(id, matchConfirmed, idsChecked, banChecked).json());
+    }
+
+    // The answer of a panel action: ok (green) or not (red, nothing more happened), and what to tell the guard
+    record Outcome(boolean ok, String message) {
+        Map<String, String> json() {
+            Map<String, String> body = new HashMap<>();
+            body.put("status", ok ? "success" : "error");
+            body.put("message", message);
+            return body;
+        }
+    }
+
+    // The scanner overlay's requests carry this header (the dashboard's normal form posts don't)
+    static final String AJAX_HEADER = "X-Requested-With=fetch";
+
+    private Outcome processWalkInOutcome(Long id, String matchConfirmed, String idsChecked, String banChecked) {
+        org.springframework.security.core.Authentication auth =
+                org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        Visitor v = repo.findById(id).orElse(null);
+        if (v == null) {
+            if (!com.paf.aerovisit.config.SecurityConfig.isDirector()) throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN);
+            return new Outcome(false, "Booking not found.");
+        }
+        if (!PaymentAdminController.canVerify(auth, v, LocalDate.now(clock()))) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+        String refusal = !v.walkIn() ? PROCESS_WALK_IN_ONLY
+                : "CHECKED-IN".equals(v.getStatus()) ? v.getName() + " is already inside."
+                : !"APPROVED".equals(v.getStatus()) ? "This walk-in can't be checked in (status: " + v.getStatus() + ")." : null;
+        boolean verifyPayment = v.paymentRequired() && !Visitor.PAY_PAID.equals(v.getPaymentStatus());
+        if (refusal == null && verifyPayment && !Visitor.PAY_PROOF_SUBMITTED.equals(v.getPaymentStatus())) {
+            refusal = "Waiting for the receipt: nothing to verify yet"
+                    + (v.getPaymentDueAt() != null ? " (the visitor has until " + v.getPaymentDueAt().format(GATE_TIME) + ")." : ".");
+        }
+        if (refusal != null) return new Outcome(false, refusal);
+
+        // No tick, no action: every missing tick is named, and nothing is saved
+        List<String> missing = new ArrayList<>();
+        if (verifyPayment && !"true".equals(matchConfirmed)) missing.add("\"Billing number and amount match the receipt\"");
+        if (eligibilityCheckMissing(v, idsChecked)) missing.add("\"Checked the IDs of the Free and Discounted visitors\"");
+        if (v.banCheckPending() && !"true".equals(banChecked)) missing.add("\"ID checked against the ban\"");
+        if (!missing.isEmpty()) return new Outcome(false, "Nothing was saved. Please tick " + String.join(", ", missing) + ".");
+
+        LocalDateTime now = LocalDateTime.now(clock());
+        if (verifyPayment) PaymentWorkflow.recordPaid(v, auth == null ? "unknown" : auth.getName(), now, "");
+        recordEligibilityCheck(v);
+        recordBanCheck(v);
+        repo.save(v);
+
+        String paid = verifyPayment ? "Payment verified for billing " + v.getBillingNumber() + " (" + v.amountDueText() + ")" : null;
+        String blocker = checkInBlocker(v);
+        if (blocker == null) blocker = admit(v, signedInStaffName());
+        if (blocker != null) {
+            return new Outcome(false, (paid != null ? paid + ", but check-in was refused: " : "Not checked in: ") + blocker);
+        }
+        return new Outcome(true, "✅ " + (paid != null ? paid + " and checked in: " : "Checked in: ") + v.getName() + groupAddon(v));
+    }
+
     private String checkInBlocker(Visitor v) {
         if ("CHECKED-IN".equals(v.getStatus())) return "Visitor is already CHECKED-IN.";
         // 🔒 Pending / unverified / denied bookings cannot enter, even with a valid token
         if (!"APPROVED".equals(v.getStatus())) return "ACCESS DENIED: Booking is not approved (status: " + v.getStatus() + ").";
+        // 💳 A booking with an admission total must be verified as paid by the Director
+        if (!v.paymentCleared()) return PAYMENT_NOT_VERIFIED;
         // 🚫 Backstop for a pass whose holder was banned after approval (the ban also revokes open bookings)
         if (isBanned(v)) return BANNED_ENTRY;
         // 🔒 The QR is only valid on the scheduled date
@@ -312,7 +561,7 @@ public class GuardOperationController {
     }
 
     // The time window for the approval email: only a real slot ("Morning (08:00 AM - 12:00 PM)"), never a label the
-    // gate can't read (a Master Booking's "Master Booking Bypass"), so the email states exactly what the gate enforces
+    // gate can't read (e.g. an older booking's "Master Booking Bypass"), so the email states exactly what the gate enforces
     static String bookedWindow(Visitor v) {
         return parseTimeWindow(v.getTimeWindow()) == null ? null : v.getTimeWindow();
     }
@@ -341,14 +590,14 @@ public class GuardOperationController {
     @PostMapping("/admin/api/confirm-check-in")
     @ResponseBody
     public ResponseEntity<Map<String, String>> confirmCheckIn(@RequestParam("visitorId") Long visitorId,
-                                                              @RequestParam(value = "headcount", required = false) Integer headcount) {
+                                                              @RequestParam(value = "banChecked", required = false) String banChecked,
+                                                              @RequestParam(value = "idsChecked", required = false) String idsChecked) {
         Map<String, String> response = new HashMap<>();
         Visitor v = repo.findById(visitorId).orElse(null);
-        String error = (v == null) ? "Visitor ID not found in database." : checkInBlocker(v);
-        // 🚌 Master Booking: the guard enters how many guests actually arrived
-        if (error == null && v.isMasterBooking() && (headcount == null || headcount < 1 || headcount > v.getGroupSize())) {
-            error = "Headcount must be between 1 and " + v.getGroupSize() + " (the approved group size).";
-        }
+        // 🚶 A walk-in goes in only through its Process panel (receipt match, IDs and ban ticks), never through Accept
+        String error = (v == null) ? "Visitor ID not found in database." : v.walkIn() ? WALK_IN_USE_PROCESS : checkInBlocker(v);
+        if (error == null && banCheckMissing(v, banChecked)) error = BAN_CHECK_REQUIRED;
+        if (error == null && eligibilityCheckMissing(v, idsChecked)) error = IDS_CHECK_REQUIRED;
         if (error != null) {
             response.put("status", "error");
             response.put("message", error);
@@ -363,20 +612,15 @@ public class GuardOperationController {
         }
 
         // --- SUCCESSFUL CHECK-IN PROTOCOL ---
+        recordBanCheck(v);
+        recordEligibilityCheck(v);
         v.setStatus("CHECKED-IN");
-        v.setCheckedInBy(getActiveGuardName());
+        v.setCheckedInBy(signedInStaffName());
         v.setCheckInTime(LocalDateTime.now(clock()));
-        if (v.isMasterBooking()) {
-            // Record who actually arrived; every dashboard count already reads groupSize
-            v.setBookedGroupSize(v.getGroupSize());
-            v.setGroupSize(headcount);
-        }
         repo.save(v);
-        String tourGuide = getActiveTourGuideName(); // looked up now, so the email names the guide on duty at check-in
-        sendInBackground(() -> emailService.sendCheckInGuidelines(v.getEmail(), v.getName(), tourGuide));
+        sendInBackground(() -> emailService.sendCheckInGuidelines(v.getEmail(), v.getName()));
 
-        String groupAddon = (v.getBookedGroupSize() != null) ? " (" + v.getGroupSize() + " of " + v.getBookedGroupSize() + " arrived)"
-                : (v.getGroupSize() > 1) ? " (Group of " + v.getGroupSize() + ")" : "";
+        String groupAddon = (v.getGroupSize() > 1) ? " (Group of " + v.getGroupSize() + ")" : "";
         response.put("status", "success");
         response.put("message", "🟢 CHECKED-IN: " + v.getName() + groupAddon);
         return ResponseEntity.ok(response);
@@ -428,7 +672,7 @@ public class GuardOperationController {
         if (fullReason.length() > 500) return "Reason is too long (max 500 characters).";
 
         v.setStatus("DENIED_ENTRY");
-        v.setEntryDeniedBy(getActiveGuardName());
+        v.setEntryDeniedBy(signedInStaffName());
         v.setEntryDeniedAt(LocalDateTime.now(clock()));
         v.setEntryDenialReason(fullReason);
         v.setQrCodeUrl(null);
@@ -449,6 +693,10 @@ public class GuardOperationController {
             redirectAttributes.addFlashAttribute("error", "Approval refused: this visitor was denied entry at the gate. The denial is final for this booking.");
             return back;
         }
+        if (v != null && v.awaitsReceipt()) {
+            redirectAttributes.addFlashAttribute("error", AWAITING_RECEIPT_APPROVAL);
+            return back;
+        }
         if (v != null && !v.awaitsApproval()) {
             // 🔒 STATE MACHINE: only a pending request can be approved, so a checked-in, checked-out, rejected or
             // cancelled booking can never be moved back to APPROVED (which would re-activate its QR code)
@@ -461,40 +709,46 @@ public class GuardOperationController {
             return back;
         }
         if (v != null) {
-            // 👻 GHOST SLOTS: a standard booking needs a real slot for its date and time window (never created, deleted,
-            // or a made-up window from a hand-made request). Master Bookings may take a day with no public slots.
-            if (!v.isMasterBooking() && slotCapacity(v) <= 0) {
+            // 👻 GHOST SLOTS: every booking needs a real slot for its date and time window (never created, deleted,
+            // or a made-up window from a hand-made request)
+            if (slotCapacity(v) <= 0) {
                 redirectAttributes.addFlashAttribute("error", INVALID_SLOT);
                 return back;
             }
-            // 🔒 Just-in-time capacity check: PENDING requests hold no seats, so the slot is re-counted at approval.
-            // Master Bookings are exempt: the VIP buyout override below takes over the whole date.
-            if (!v.isMasterBooking() && !hasSeatsForApproval(v)) {
+            // 🔒 Capacity check: a pending booking already holds its seats (pay first), and its own seats are left out of
+            // the count, so this only fails when the slot was overbooked (e.g. a Force Approve)
+            if (!hasSeatsForApproval(v)) {
                 redirectAttributes.addFlashAttribute("error", "Approval failed: Not enough seats remaining in this time slot.");
+                return back;
+            }
+            String receiptError = receiptBlocker(v);
+            if (receiptError != null) {
+                redirectAttributes.addFlashAttribute("error", receiptError);
+                return back;
+            }
+            // 💳 PAYMENT: approving a booking with a submitted receipt also marks it paid, then the QR goes out; a total
+            // of 0 gets its QR now, as before
+            LocalDateTime now = LocalDateTime.now(clock());
+            markReceiptPaid(v, now);
+            PaymentWorkflow.Next next = paymentStep(v, now);
+            if (next == null) {
+                redirectAttributes.addFlashAttribute("error", PAYMENT_UNAVAILABLE);
                 return back;
             }
             v.setStatus("APPROVED");
             boolean saved = false; // an email failure after this point leaves a real approval behind
             try {
-                Path uploadPath = Paths.get("uploads");
-                if (!Files.exists(uploadPath)) { Files.createDirectories(uploadPath); }
-                
-                // 🔥 ANTI-FORGERY FIX: Use the secure UUID token instead of plain text!
-                String qrContent = v.getSecureToken() != null ? v.getSecureToken() : java.util.UUID.randomUUID().toString();
-                v.setSecureToken(qrContent); // Ensure it's saved if it was generated here
-                
-                String qrFileName = "QR_" + v.getId() + ".png";
-                String qrPath = "uploads/" + qrFileName;
-                QRCodeGenerator.generateQRCode(qrContent, qrPath);
-                v.setQrCodeUrl(qrFileName);
-                if (uploadMirror != null) uploadMirror.pushUpload(qrFileName);
+                // 🔥 ANTI-FORGERY FIX: the QR carries the secure UUID token, never plain text
+                String qrFileName = next == PaymentWorkflow.Next.ISSUE_QR ? issuePass(v, uploadMirror) : null;
 
                 try {
                     saveWithinCapacity(v);
                 } catch (SeatReservationService.CapacityFullException | org.springframework.dao.PessimisticLockingFailureException full) {
                     // 🔒 Another approval took the last seats after the check above: nothing was saved, the request stays pending
-                    Files.deleteIfExists(uploadPath.resolve(qrFileName));
-                    if (uploadMirror != null) uploadMirror.deleteUpload(qrFileName);
+                    if (qrFileName != null) {
+                        Files.deleteIfExists(Paths.get("uploads").resolve(qrFileName));
+                        if (uploadMirror != null) uploadMirror.deleteUpload(qrFileName);
+                    }
                     redirectAttributes.addFlashAttribute("error", full instanceof SeatReservationService.CapacityFullException
                             ? "Approval failed: Not enough seats remaining in this time slot."
                             : "Approval failed: this time slot is being updated by another approval right now. Please try again.");
@@ -502,36 +756,7 @@ public class GuardOperationController {
                 }
                 saved = true;
                 notifySlotFilling(v);
-                sendApprovalEmail(v, qrFileName);
-                redirectAttributes.addFlashAttribute("success", APPROVED_MESSAGE);
-                if (v.isMasterBooking()) {
-                    // 🔒 VIP buyout override: cancel standard visitors already APPROVED for that date and notify each one
-                    int cancelled = 0;
-                    try {
-                        List<Visitor> displaced = repo.findApprovedVisitorsToOverride(v.getVisitDate(), v.getId());
-                        for (Visitor d : displaced) {
-                            d.setStatus("CANCELLED_OVERRIDE");
-                            d.setQrCodeUrl(null);
-                        }
-                        repo.saveAll(displaced);
-                        cancelled = displaced.size();
-                        for (Visitor d : displaced) {
-                            String to = d.getEmail(), name = d.getName(), date = String.valueOf(d.getVisitDate()), ref = d.getReferenceId();
-                            com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "VIP-buyout cancellation email for visitor #" + d.getId(),
-                                    () -> emailService.sendOverrideCancellationEmail(to, name, date, ref), null);
-                        }
-                    } catch (Exception overrideError) {
-                        System.err.println("❌ Buyout override failed for " + v.getVisitDate() + ": " + overrideError);
-                    }
-
-                    // 🔒 VIP buyout: approval closes the date to public bookings; flag bookings already made for it
-                    long others = repo.findByVisitDate(v.getVisitDate()).stream()
-                            .filter(o -> !o.getId().equals(v.getId()) && !"REJECTED".equals(o.getStatus()) && !"CANCELLED_OVERRIDE".equals(o.getStatus()) && !"CANCELLED_BY_VISITOR".equals(o.getStatus()) && !"DENIED_ENTRY".equals(o.getStatus()))
-                            .count();
-                    redirectAttributes.addFlashAttribute("success", "🔒 VIP Buyout approved: " + v.getVisitDate() + " is now closed to public bookings."
-                            + (cancelled > 0 ? " 📭 " + cancelled + " approved visitor(s) were cancelled and are being notified by email." : "")
-                            + (others > 0 ? " ⚠️ " + others + " other booking(s) already exist for that date and need to be contacted or rescheduled." : ""));
-                }
+                redirectAttributes.addFlashAttribute("success", afterApproval(v, next, qrFileName, APPROVED_MESSAGE, now));
             } catch (Exception e) {
                 System.err.println("❌ Approval QR failed for visitor #" + v.getId() + ": " + e);
                 e.printStackTrace();
@@ -559,11 +784,6 @@ public class GuardOperationController {
             redirectAttributes.addFlashAttribute("error", "Force Approve only applies to a pending request (status: " + v.getStatus() + ").");
             return back;
         }
-        if (v.isMasterBooking()) {
-            // Master Bookings already skip the capacity check, and only the standard approval runs the VIP buyout rules
-            redirectAttributes.addFlashAttribute("error", "Master Bookings are exempt from the capacity check. Use the standard Approve button.");
-            return back;
-        }
         // The override skips the seat count only: a banned visitor or a slot that does not exist still blocks it
         if (isBanned(v)) {
             redirectAttributes.addFlashAttribute("error", BANNED_APPROVAL);
@@ -574,17 +794,22 @@ public class GuardOperationController {
             return back;
         }
 
-        String qrFileName = "QR_" + v.getId() + ".png";
+        // 💳 The override skips the capacity check only: the payment steps still apply
+        String receiptError = receiptBlocker(v);
+        if (receiptError != null) {
+            redirectAttributes.addFlashAttribute("error", receiptError);
+            return back;
+        }
+        LocalDateTime now = LocalDateTime.now(clock());
+        markReceiptPaid(v, now);
+        PaymentWorkflow.Next next = paymentStep(v, now);
+        if (next == null) {
+            redirectAttributes.addFlashAttribute("error", PAYMENT_UNAVAILABLE);
+            return back;
+        }
+        String qrFileName = null;
         try {
-            Path uploadPath = Paths.get("uploads");
-            if (!Files.exists(uploadPath)) { Files.createDirectories(uploadPath); }
-
-            String qrContent = v.getSecureToken() != null ? v.getSecureToken() : java.util.UUID.randomUUID().toString();
-            QRCodeGenerator.generateQRCode(qrContent, "uploads/" + qrFileName);
-            if (uploadMirror != null) uploadMirror.pushUpload(qrFileName);
-
-            v.setSecureToken(qrContent);
-            v.setQrCodeUrl(qrFileName);
+            if (next == PaymentWorkflow.Next.ISSUE_QR) qrFileName = issuePass(v, uploadMirror);
             v.setStatus("APPROVED");
             repo.save(v);
             notifySlotFilling(v);
@@ -595,22 +820,91 @@ public class GuardOperationController {
         }
         System.out.println("⚠️ CAPACITY OVERRIDE: visitor #" + v.getId() + " force-approved by " + (principal != null ? principal.getName() : "unknown"));
 
-        sendApprovalEmail(v, qrFileName);
-        redirectAttributes.addFlashAttribute("success", "⚠️ Force-approved over capacity: " + v.getName() + ". The approval email is on its way.");
+        redirectAttributes.addFlashAttribute("success", afterApproval(v, next, qrFileName,
+                "⚠️ Force-approved over capacity: " + v.getName() + ". The approval email is on its way.", now));
         return back;
+    }
+
+    static final String PAYMENT_UNAVAILABLE = "Approval failed: the payment service is unavailable, so no billing number could be issued. Please try again.";
+    static final String PAYMENT_REQUESTED_MESSAGE = "Visitor approved. Their seats are held and the payment request email (billing number and amount) is on its way.";
+    static final String AWAITING_VERIFICATION_MESSAGE = "Visitor approved. Their payment receipt is waiting in Pending Approval; the QR code is sent once you mark it as paid.";
+    static final String AWAITING_RECEIPT_APPROVAL = "Approval refused: this booking is still waiting for the visitor's payment receipt. It appears in Pending Approval once the receipt is uploaded.";
+    static final String RECEIPT_REJECTED_APPROVAL = "Approval refused: this booking's payment receipt was rejected. It returns to Pending Approval when the visitor uploads a new one (or use Mark as Paid with a note if you verified the payment another way).";
+
+    // 💳 Why a pending booking can't be approved yet because of its payment, or null. A rejected receipt waits for the
+    // visitor's new upload.
+    static String receiptBlocker(Visitor v) {
+        if (v.paymentRequired() && Visitor.PAY_REJECTED.equals(v.getPaymentStatus())) return RECEIPT_REJECTED_APPROVAL;
+        // ⌛ Waiting for the receipt (shown in Pending Approval for review only): never approvable, Force Approve included
+        if (v.waitingForReceipt()) return AWAITING_RECEIPT_APPROVAL;
+        return null;
+    }
+
+    // ✅ Pay first: approving a booking whose receipt is in also marks the payment as verified (by whom, when), so the QR
+    // goes out with the approval. Nothing else changes here; the caller saves.
+    private static void markReceiptPaid(Visitor v, LocalDateTime now) {
+        if (!v.paymentRequired() || !Visitor.PAY_PROOF_SUBMITTED.equals(v.getPaymentStatus())) return;
+        org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        PaymentWorkflow.recordPaid(v, auth == null ? "unknown" : auth.getName(), now, "Verified at approval");
+    }
+
+    // 💳 What approval does next (PaymentWorkflow.onApproval), or null when payment is needed but the payment service is
+    // missing (test slices only), so an unpaid booking never gets a QR by accident
+    private PaymentWorkflow.Next paymentStep(Visitor v, LocalDateTime now) {
+        if (paymentWorkflow == null) return v.paymentRequired() ? null : PaymentWorkflow.Next.ISSUE_QR;
+        try {
+            return paymentWorkflow.onApproval(v, now);
+        } catch (RuntimeException e) {
+            System.err.println("❌ Billing number could not be issued for visitor #" + v.getId() + ": " + e.getMessage());
+            return null;
+        }
+    }
+
+    // After a saved approval: the QR email, or the payment request email; returns the Director's success message
+    private String afterApproval(Visitor v, PaymentWorkflow.Next next, String qrFileName, String qrMessage, LocalDateTime now) {
+        if (next == PaymentWorkflow.Next.ISSUE_QR) {
+            sendApprovalEmail(mailOutbox, emailService, notificationService, v, qrFileName);
+            return qrMessage;
+        }
+        if (next == PaymentWorkflow.Next.AWAIT_VERIFICATION) return AWAITING_VERIFICATION_MESSAGE;
+        EmailService.PaymentNotice notice = EmailService.PaymentNotice.of(v);
+        com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "payment request email for visitor #" + v.getId(),
+                () -> emailService.sendPaymentRequest(notice),
+                () -> { if (notificationService != null) notificationService.approvalEmailFailed(v); });
+        String message = PAYMENT_REQUESTED_MESSAGE + " Billing number " + v.getBillingNumber() + ", " + v.amountDueText()
+                + ", due " + PaymentWorkflow.deadlineText(v.getPaymentDueAt()) + ".";
+        // ⏱️ A same-day booking may leave very little time to pay
+        long minutes = v.getPaymentDueAt() == null ? Long.MAX_VALUE : Math.max(0, Duration.between(now, v.getPaymentDueAt()).toMinutes());
+        if (minutes < 120) message += " Note: the visitor has only " + minutes + " minutes to pay.";
+        return message;
+    }
+
+    // 🎫 Creates the booking's entry pass: the QR (its unguessable secure token) saved under uploads/ and copied to S3.
+    // Shared by approval, Force Approve and "Mark as Paid" (PaymentAdminController). Returns the QR file name.
+    static String issuePass(Visitor v, UploadMirror uploadMirror) throws Exception {
+        Path uploadPath = Paths.get("uploads");
+        if (!Files.exists(uploadPath)) { Files.createDirectories(uploadPath); }
+        String qrContent = v.getSecureToken() != null ? v.getSecureToken() : java.util.UUID.randomUUID().toString();
+        v.setSecureToken(qrContent);
+        String qrFileName = "QR_" + v.getId() + ".png";
+        QRCodeGenerator.generateQRCode(qrContent, "uploads/" + qrFileName);
+        v.setQrCodeUrl(qrFileName);
+        if (uploadMirror != null) uploadMirror.pushUpload(qrFileName);
+        return qrFileName;
     }
 
     // 📮 The approval email (with the QR code) in the background; a failed send goes to the Director's bell, since the
     // page has already answered. The values are read now, so the email doesn't depend on the entity later.
-    private void sendApprovalEmail(Visitor v, String qrFileName) {
+    static void sendApprovalEmail(com.paf.aerovisit.service.MailOutbox mailOutbox, EmailService emailService,
+                                  com.paf.aerovisit.service.NotificationService notificationService, Visitor v, String qrFileName) {
         String to = v.getEmail(), name = v.getName(), date = String.valueOf(v.getVisitDate()), ref = v.getReferenceId(), window = bookedWindow(v);
         com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "approval email for visitor #" + v.getId(),
                 () -> emailService.sendApprovalEmailWithQR(to, name, date, qrFileName, ref, window),
                 () -> { if (notificationService != null) notificationService.approvalEmailFailed(v); });
     }
 
-    // True when the visitor's group still fits its date and time window, counting only seat-holding
-    // bookings (APPROVED / CHECKED-IN / CHECKED-OUT) and leaving out the visitor's own booking
+    // True when the visitor's group still fits its date and time window, counting seat-holding bookings
+    // (Visitor.SEAT_HOLDING_STATUSES) and leaving out the visitor's own booking
     private boolean hasSeatsForApproval(Visitor v) {
         int capacity = slotCapacity(v); // no slot = 0 seats (there is no default capacity any more)
         int approvedSeats = 0;
@@ -624,18 +918,17 @@ public class GuardOperationController {
         return approvedSeats + Math.max(1, v.getGroupSize()) <= capacity;
     }
 
-    // 🔒 RACE-SAFE SAVE: a standard approval is saved under a row lock on its slot with the seat count re-read inside the
-    // lock (SeatReservationService), so two approvals can't both take the last seats. Master Bookings are exempt (VIP
-    // buyout). Web-layer test slices without SeatReservationService save directly, as before.
+    // 🔒 RACE-SAFE SAVE: every approval is saved under a row lock on its slot with the seat count re-read inside the
+    // lock (SeatReservationService), so two approvals can't both take the last seats. Web-layer test slices without
+    // SeatReservationService save directly, as before.
     private void saveWithinCapacity(Visitor v) {
-        if (v.isMasterBooking() || seatReservation == null) repo.save(v);
+        if (seatReservation == null) repo.save(v);
         else seatReservation.saveIfSeatsRemain(v);
     }
 
-    // 🔔 After an approval: tells the bell when the visit's time slot is almost full (or full). Master Bookings close the
-    // whole date anyway, so they are skipped. Never fails the approval.
+    // 🔔 After an approval: tells the bell when the visit's time slot is almost full (or full). Never fails the approval.
     private void notifySlotFilling(Visitor v) {
-        if (notificationService == null || v.isMasterBooking() || v.getVisitDate() == null) return;
+        if (notificationService == null || v.getVisitDate() == null) return;
         try {
             int capacity = slotCapacity(v);
             if (capacity <= 0) return;
@@ -657,8 +950,7 @@ public class GuardOperationController {
                 .sum();
     }
 
-    // True when this booking matches an active ban: by its saved face (whatever email it uses), or by its email or phone
-    // number (IdentityBans, which also covers bookings made while AI features were off and so have no face data).
+    // True when this booking matches an active ban by its email or phone number (IdentityBans).
     // A name that only resembles a banned name is not blocked here: it was flagged for staff at booking time.
     private boolean isBanned(Visitor v) {
         if (faceBanRepo == null) return false;
@@ -666,9 +958,17 @@ public class GuardOperationController {
     }
 
     @PostMapping("/admin/reject/{id}")
-    public String rejectVisitor(@PathVariable Long id, RedirectAttributes redirectAttributes) {
+    public String rejectVisitor(@PathVariable Long id,
+                                @RequestParam(value = "confirmPaid", required = false) String confirmPaid,
+                                RedirectAttributes redirectAttributes) {
         if (id == null) return "redirect:/admin";
         Visitor v = repo.findById(id).orElse(null);
+        // 💳 A booking with a receipt on file (paid, in review, or rejected since) is only rejected after the
+        // non-refundable warning is confirmed
+        if (v != null && v.receiptOnFile() && !"true".equals(confirmPaid)) {
+            redirectAttributes.addFlashAttribute("error", Visitor.PAID_NON_REFUNDABLE + " Tick the confirmation to reject it.");
+            return "redirect:/admin";
+        }
         if (v != null && "DENIED_ENTRY".equals(v.getStatus())) {
             // 🛑 A gate denial is a final audit record and must not be overwritten
             redirectAttributes.addFlashAttribute("error", "This visitor was denied entry at the gate; that record cannot be changed.");
@@ -686,46 +986,10 @@ public class GuardOperationController {
         return "redirect:/admin";
     }
 
-    private String getActiveGuardName() {
-        LocalTime now = LocalTime.now(clock());
-        LocalDate today = LocalDate.now(clock());
-        List<StaffSchedule> allSchedules = staffRepo.findByArchivedFalseOrderByDutyDateAscStaffNameAsc();
-        List<String> activeGuards = new ArrayList<>();
-        for (StaffSchedule sched : allSchedules) {
-            if ("Gate Guard".equalsIgnoreCase(sched.getRole()) && today.equals(sched.getDutyDate())
-                    && shiftCoversNow(sched.getShiftTime(), now)) {
-                activeGuards.add(sched.getStaffName());
-            }
-        }
-        if (!activeGuards.isEmpty()) return String.join(" & ", activeGuards);
+    // 👤 Who did it: the signed-in staff account (e.g. "guard"), recorded on check-ins, ban and ID checks and denials.
+    // "System Default" only when nobody is signed in.
+    private String signedInStaffName() {
         org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-        return (auth != null) ? auth.getName() + " (Unscheduled)" : "System Default";
-    }
-
-    // Tour Guide(s) whose shift covers the current time, using the same shift windows as getActiveGuardName(); null if none
-    private String getActiveTourGuideName() {
-        LocalTime now = LocalTime.now(clock());
-        List<String> activeGuides = new ArrayList<>();
-        for (StaffSchedule sched : staffRepo.findTourGuidesOnDuty(LocalDate.now(clock()))) {
-            if (shiftCoversNow(sched.getShiftTime(), now)
-                    && sched.getStaffName() != null && !sched.getStaffName().isBlank()) {
-                activeGuides.add(sched.getStaffName());
-            }
-        }
-        return activeGuides.isEmpty() ? null : String.join(" & ", activeGuides);
-    }
-
-    // Whether a duty shift is running at 'now'. A shift stored as a time window label, e.g. "Midday (11:00 AM - 02:00 PM)",
-    // uses its own hours; the original roster strings ("Morning (0800H-1200H)" etc.) keep their Morning / Afternoon /
-    // Full Day rule exactly as before.
-    static boolean shiftCoversNow(String shift, LocalTime now) {
-        if (shift == null) return false;
-        LocalTime[] window = parseTimeWindow(shift);
-        if (window != null) {
-            return !now.isBefore(window[0]) && !now.isAfter(window[1].withSecond(59).withNano(999_999_999));
-        }
-        boolean isMorning = shift.contains("Morning") && now.isBefore(LocalTime.of(13, 0));
-        boolean isAfternoon = shift.contains("Afternoon") && !now.isBefore(LocalTime.of(12, 0));
-        return isMorning || isAfternoon || shift.contains("Full Day");
+        return (auth != null) ? auth.getName() : "System Default";
     }
 }

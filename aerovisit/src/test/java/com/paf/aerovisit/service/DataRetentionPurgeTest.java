@@ -57,15 +57,16 @@ class DataRetentionPurgeTest {
     }
 
     @Test
-    void asksOnlyForTheSevenFinishedStatusesOlderThan30Days() {
+    void asksOnlyForTheNineFinishedStatusesOlderThan30Days() {
         when(repo.findExpiredWithFiles(any(), any())).thenReturn(List.of());
         engine.purgeExpiredFiles(TODAY, uploads);
+        // 💳 PAYMENT_EXPIRED (released unpaid) and RESCHEDULE_REQUIRED (closure, never rescheduled) are finished too
         verify(repo).findExpiredWithFiles(eq(Set.of("CHECKED-OUT", "NO_SHOW", "CANCELLED", "REJECTED",
-                "CANCELLED_BY_VISITOR", "CANCELLED_OVERRIDE", "DENIED_ENTRY")), eq(CUTOFF));
+                "CANCELLED_BY_VISITOR", "CANCELLED_OVERRIDE", "DENIED_ENTRY", "PAYMENT_EXPIRED", "RESCHEDULE_REQUIRED")), eq(CUTOFF));
     }
 
     @Test
-    void visitorCancelledAndVipOverrideBookingsLoseTheirPhotosAndFaceVector() throws IOException {
+    void visitorCancelledAndMuseumCancelledBookingsLoseTheirPhotosAndFaceVector() throws IOException {
         Visitor byVisitor = visit(7, "CANCELLED_BY_VISITOR", CUTOFF.minusDays(3));
         Visitor override = visit(8, "CANCELLED_OVERRIDE", CUTOFF.minusDays(3));
         byVisitor.setFaceEncoding("[0.1,0.2]");
@@ -139,6 +140,43 @@ class DataRetentionPurgeTest {
         assertThat(v.getIdCardImageUrl()).isNull();
         assertThat(v.getFaceEncoding()).isNull();
         assertThat(uploads.resolve("card-5.jpg")).doesNotExist();
+        verify(repo).save(v);
+    }
+
+    // 🪪 The face cut from the ID photo (a ban's photo source) is purged with the ID photo on the same 30-day schedule
+    @Test
+    void theIdFaceCropGoesWithTheIdPhoto() throws IOException {
+        Visitor v = visit(12, "CHECKED-OUT", CUTOFF.minusDays(1));
+        v.setIdImageUrl(null); // a new booking: no selfie
+        v.setIdCardImageUrl("card-12.jpg");
+        v.setIdFaceCropUrl("faceid-12.png");
+        Files.writeString(uploads.resolve("card-12.jpg"), "id photo");
+        Files.writeString(uploads.resolve("faceid-12.png"), "face");
+        when(repo.findExpiredWithFiles(any(), any())).thenReturn(List.of(v));
+
+        assertThat(engine.purgeExpiredFiles(TODAY, uploads)).isEqualTo(1);
+
+        assertThat(v.getIdCardImageUrl()).isNull();
+        assertThat(v.getIdFaceCropUrl()).isNull();
+        assertThat(uploads.resolve("card-12.jpg")).doesNotExist();
+        assertThat(uploads.resolve("faceid-12.png")).doesNotExist();
+    }
+
+    @Test
+    void thePaymentReceiptGoesWithThePhotosButTheBillingRecordStays() throws IOException {
+        // 💳 A released unpaid booking still had a rejected receipt on file
+        Visitor v = visit(6, "PAYMENT_EXPIRED", CUTOFF.minusDays(1));
+        v.setReceiptImageUrl("receipt-6.png");
+        Files.writeString(uploads.resolve("receipt-6.png"), "receipt screenshot");
+        v.setBillingNumber("000006");
+        v.setPaymentStatus(Visitor.PAY_REJECTED);
+        when(repo.findExpiredWithFiles(any(), any())).thenReturn(List.of(v));
+
+        assertThat(engine.purgeExpiredFiles(TODAY, uploads)).isEqualTo(1);
+
+        assertThat(v.getReceiptImageUrl()).isNull();
+        assertThat(uploads.resolve("receipt-6.png")).doesNotExist();
+        assertThat(v.getBillingNumber()).isEqualTo("000006"); // the audit trail of the billing number is kept
         verify(repo).save(v);
     }
 
@@ -345,6 +383,64 @@ class DataRetentionPurgeTest {
         assertThat(engine.purgeExpiredFiles(TODAY, uploads)).isEqualTo(1);
         assertThat(v.getIdImageUrl()).isNull();
         assertThat(v.getName()).isEqualTo("REDACTED");
+    }
+
+    // 📅 A PAID request the museum never reviewed is not rejected: the visitor picks a new date (payment kept)
+    private static Visitor paidRequest(String paymentStatus, LocalDate date) {
+        Visitor v = new Visitor();
+        v.setId(77L);
+        v.setStatus("PENDING");
+        v.setVisitDate(date);
+        v.setAdmissionTotalCentavos(15_000L);
+        v.setBillingNumber("000777");
+        v.setPaymentStatus(paymentStatus);
+        v.setReminderSent(true);
+        return v;
+    }
+
+    @Test
+    void aPaidUnreviewedRequestNeedsANewDateInsteadOfBeingRejected() {
+        NotificationService bell = mock(NotificationService.class);
+        engine.notificationService = bell;
+        Visitor receipt = paidRequest(Visitor.PAY_PROOF_SUBMITTED, TODAY.minusDays(1));
+        Visitor unpaid = new Visitor();
+        unpaid.setStatus("PENDING");
+        unpaid.setVisitDate(TODAY.minusDays(1));
+        when(repo.findByStatusInAndVisitDateBefore(Visitor.APPROVABLE_STATUSES, TODAY)).thenReturn(List.of(receipt, unpaid));
+
+        assertThat(engine.expireUnreviewedBookings(TODAY)).isEqualTo(2);
+
+        assertThat(receipt.getStatus()).isEqualTo(Visitor.STATUS_RESCHEDULE_REQUIRED);
+        assertThat(receipt.getRejectionReason()).isEqualTo(Visitor.UNREVIEWED_NOTE);
+        assertThat(receipt.getPaymentStatus()).isEqualTo(Visitor.PAY_PROOF_SUBMITTED);
+        assertThat(receipt.isReminderSent()).isFalse();
+        assertThat(receipt.rescheduleDeadline()).isEqualTo(TODAY.minusDays(1).plusDays(Visitor.RESCHEDULE_DAYS));
+        verify(emailService).sendRescheduleNeeded(receipt, false);
+        verify(bell).unreviewedPaidRequest(receipt);
+        assertThat(unpaid.getStatus()).isEqualTo("REJECTED"); // unpaid: expires as before
+        verify(emailService, never()).sendRescheduleNeeded(eq(unpaid), any(Boolean.class));
+    }
+
+    @Test
+    void theRescheduleReminderGoesOutOnce7DaysBeforeTheDeadline() {
+        Visitor early = paidRequest(Visitor.PAY_PAID, TODAY.minusDays(20)); // deadline in 10 days: too early
+        Visitor due = paidRequest(Visitor.PAY_PAID, TODAY.minusDays(23));   // deadline in 7 days
+        Visitor sent = paidRequest(Visitor.PAY_PAID, TODAY.minusDays(25));  // already reminded
+        Visitor over = paidRequest(Visitor.PAY_PAID, TODAY.minusDays(31));  // deadline passed
+        for (Visitor v : List.of(early, due, sent, over)) v.setStatus(Visitor.STATUS_RESCHEDULE_REQUIRED);
+        early.setReminderSent(false);
+        due.setReminderSent(false);
+        over.setReminderSent(false);
+        when(repo.findByStatus(Visitor.STATUS_RESCHEDULE_REQUIRED)).thenReturn(List.of(early, due, sent, over));
+
+        assertThat(engine.remindToReschedule(TODAY)).isEqualTo(1);
+        verify(emailService).sendRescheduleNeeded(due, true);
+        assertThat(due.isReminderSent()).isTrue();
+        verify(emailService, never()).sendRescheduleNeeded(early, true);
+        verify(emailService, never()).sendRescheduleNeeded(sent, true);
+        verify(emailService, never()).sendRescheduleNeeded(over, true);
+
+        assertThat(engine.remindToReschedule(TODAY)).isZero(); // never twice
     }
 
     // --- GAP 2: expired temporary bans are lifted ---

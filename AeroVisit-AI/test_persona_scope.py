@@ -18,7 +18,7 @@ class PersonaScopeTest(unittest.TestCase):
 
     def test_it_lists_what_to_help_with_what_to_decline_and_how(self):
         prompt = main.persona_instruction
-        for allowed in ("PAF Aerospace Museum", "Aviation and aerospace", "AeroVisit booking process", "Master Booking"):
+        for allowed in ("PAF Aerospace Museum", "Aviation and aerospace", "AeroVisit booking process", "group bookings"):
             self.assertIn(allowed, prompt)
         for refused in ("programming or code", "general trivia", "unrelated news", "medical, legal or financial advice"):
             self.assertIn(refused, prompt)
@@ -80,7 +80,7 @@ class PersonaScopeTest(unittest.TestCase):
 
     def test_the_rest_of_the_persona_is_unchanged(self):
         prompt = main.persona_instruction
-        for kept in ("You are 'Sgt. Aero'", "LANGUAGE (STRICT, ENGLISH ONLY)", "Admission is currently FREE",
+        for kept in ("You are 'Sgt. Aero'", "LANGUAGE (STRICT, ENGLISH ONLY)", "Admission has three categories",
                      "DYNAMIC SCHEDULING RULE", "CONVERSATIONAL BOOKING INTENT"):
             self.assertIn(kept, prompt)
 
@@ -91,8 +91,12 @@ class PersonaScopeTest(unittest.TestCase):
         self.assertNotIn("left panel", prompt)
         self.assertNotIn("right panel", prompt)
         self.assertIn("Never claim that you have booked, drafted or reserved anything yourself.", prompt)
-        for step in ('1. "Arrival Date"', '2. "Visitor Profile"', '3. "Clearance"', '"Unlock Master Booking"'):
+        for step in ('1. "Arrival Date"', '2. "Visitor Profile"', '3. "Clearance"'):
             self.assertIn(step, prompt)
+        # Master Booking and guest lists were removed from the booking form
+        self.assertNotIn("Master Booking", prompt)
+        self.assertNotIn("every guest's name", prompt)
+        self.assertIn("who enters the group size and only their own details and ID", prompt)
         self.assertIn('step 1 of the booking form ("Arrival Date"): green = open, orange = 15 seats or fewer left, red = fully booked', prompt)
 
     def test_statuses_rule_reasons_feedback_and_the_new_limits(self):

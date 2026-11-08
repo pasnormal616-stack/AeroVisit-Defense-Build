@@ -38,8 +38,6 @@ import com.paf.aerovisit.model.Visitor;
 import com.paf.aerovisit.repository.BookingSlotRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
-import com.paf.aerovisit.service.KycService;
-import com.paf.aerovisit.service.OcrService;
 import com.paf.aerovisit.service.OtpService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
@@ -53,19 +51,16 @@ class RejectedCooldownTest {
     private static final String EMAIL = "juan@example.com";
     private static final String DUPLICATE = "Registration Denied: Duplicate booking detected for this date.";
     private static final String COOLDOWN = "Please wait 4 hours before reapplying for the same date.";
-    private static final byte[] SELFIE = {(byte) 0xFF, (byte) 0xD8, 9};
-    private static final byte[] ID_CARD = {(byte) 0xFF, (byte) 0xD8, 4, 4};
-    private static final String FACE = com.paf.aerovisit.service.FaceEncodings.format(new double[128]);
+    // Real JPEGs: /save checks the photos' bytes (signature + decode), not only their declared type
+    private static final byte[] ID_CARD = com.paf.aerovisit.TestImages.jpeg(44);
 
     @Autowired private MockMvc mvc;
 
     @MockitoBean private VisitorRepository repo;
     @MockitoBean private BookingSlotRepository bookingRepo;
     @MockitoBean private EmailService emailService;
-    @MockitoBean private OcrService ocrService;
     @MockitoBean private PredictiveAdvisorService aiService;
     @MockitoBean private OtpService otpService;
-    @MockitoBean private KycService kycService;
 
     private final List<Path> createdFiles = new ArrayList<>();
 
@@ -77,8 +72,6 @@ class RejectedCooldownTest {
         slot.setMaxCapacity(50);
         when(bookingRepo.findBySlotDateAndTimeWindow(DAY, WINDOW)).thenReturn(List.of(slot));
         when(otpService.isVerified(EMAIL)).thenReturn(true);
-        when(kycService.screen(eq(ID_CARD), eq(SELFIE), eq("Juan"), eq("Dela Cruz")))
-                .thenReturn(new KycService.KycResult("PENDING", "OK", null, FACE));
         when(repo.save(any(Visitor.class))).thenAnswer(inv -> {
             Visitor v = inv.getArgument(0);
             if (v.getIdImageUrl() != null) createdFiles.add(Paths.get("uploads").resolve(v.getIdImageUrl()));
@@ -96,10 +89,9 @@ class RejectedCooldownTest {
     private MockMultipartHttpServletRequestBuilder booking() {
         MockMultipartHttpServletRequestBuilder req = multipart("/save");
         req.with(csrf()).with(kycNonce());
-        req.file(new MockMultipartFile("livenessImage", "selfie-with-id.jpg", "image/jpeg", SELFIE));
         req.file(new MockMultipartFile("highResIdImage", "id-card.jpg", "image/jpeg", ID_CARD));
         req.param("fullName", "Dela Cruz, Juan P.").param("email", EMAIL)
-           .param("visitDate", DAY.toString()).param("timeWindow", WINDOW).param("groupSize", "1");
+           .param("visitDate", DAY.toString()).param("timeWindow", WINDOW).param("freeCount", "1").param("termsAccepted", "true");
         return req;
     }
 
@@ -120,7 +112,6 @@ class RejectedCooldownTest {
     private void assertRefusedWith(String message) throws Exception {
         mvc.perform(booking()).andExpect(redirectedUrl("/")).andExpect(flash().attribute("error", message));
         verify(repo, never()).save(any());
-        verify(kycService, never()).screen(any(), any(), anyString(), anyString());
         verify(otpService, never()).consume(anyString()); // the email code stays valid for the retry
     }
 
@@ -170,7 +161,7 @@ class RejectedCooldownTest {
     void anActiveBookingIsStillADuplicateWhateverTheRejectionsSay() throws Exception {
         for (String active : new String[] {"PENDING", "APPROVED", "VERIFIED", "PENDING_MANUAL_REVIEW",
                                            "CHECKED-IN", "CHECKED-OUT", "NO_SHOW", "DENIED_ENTRY"}) {
-            org.mockito.Mockito.clearInvocations(repo, kycService, otpService);
+            org.mockito.Mockito.clearInvocations(repo, otpService);
             // an old rejection next to it must not open the date, and the duplicate message wins over the cooldown one
             existing(earlier(1, "REJECTED", LocalDateTime.now().minusHours(1)), earlier(2, active, LocalDateTime.now().minusDays(1)));
             mvc.perform(booking()).andExpect(redirectedUrl("/")).andExpect(flash().attribute("error", DUPLICATE));

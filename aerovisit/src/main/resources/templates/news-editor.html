@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/shell :: head}"></th:block>
+    <title th:text="${post == null} ? 'AeroVisit - New News Post' : 'AeroVisit - Edit News Post'">AeroVisit - News Post</title>
+    <link rel="stylesheet" href="/styles/news.css">
+    <script src="/js/shell.js"></script>
+</head>
+<body class="av-app">
+
+<a href="#main" class="visually-hidden-focusable">Skip to content</a>
+<th:block th:replace="~{fragments/shell :: sidebar('content')}"></th:block>
+<th:block th:replace="~{fragments/shell :: header('Website Content')}"></th:block>
+
+<main class="av-main" id="main">
+<div class="av-workspace">
+
+    <div class="av-pagehead">
+        <div>
+            <span class="av-mono av-code">CMD-08</span>
+            <h1 class="av-pagehead-title" th:text="${post == null} ? 'New News Post' : 'Edit News Post'">News Post</h1>
+            <p class="av-pagehead-desc">Write the caption, add up to <span th:text="${maxPhotos}">10</span> photos and check the preview. Drafts are never shown to visitors.</p>
+        </div>
+        <div class="av-pagehead-actions">
+            <a href="/admin/content#news" class="btn btn-light"><i class="bi bi-arrow-left"></i> All News Posts</a>
+        </div>
+    </div>
+
+    <div class="av-toolbar">
+        <ul class="nav av-tabs" role="list">
+            <li class="nav-item"><a class="nav-link" href="/admin/content#news"><i class="bi bi-newspaper"></i>News</a></li>
+            <li class="nav-item"><span class="nav-link active" aria-current="page"><i class="bi bi-pencil-square"></i><span th:text="${post == null} ? 'New post' : 'Editor'">Editor</span></span></li>
+        </ul>
+        <div class="av-toolbar-meta av-mono">
+            <span th:if="${post == null}">Not saved yet</span>
+            <span th:if="${post != null}" th:text="${post.published()} ? 'Published' : 'Draft'">Draft</span>
+            <span th:if="${post != null and post.pinned()}">Pinned</span>
+            <span th:if="${post != null}" th:text="|${post.photoCount()} of ${maxPhotos} photos|">0 photos</span>
+        </div>
+    </div>
+
+    <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
+        <i class="bi bi-check-square-fill"></i> <span th:text="${success}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+        <i class="bi bi-exclamation-triangle-fill"></i> <span th:text="${error}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    <!-- Messages from the photo uploads (news-editor.js) -->
+    <div class="alert alert-success" role="status" id="newsFlash" hidden></div>
+    <div class="alert alert-danger" role="alert" id="newsErrors" hidden></div>
+
+    <div class="row g-4">
+        <div class="col-lg-7">
+            <form th:action="@{/admin/content/news/save}" method="post" id="newsEditorForm"
+                  th:attr="data-max-photos=${maxPhotos},data-max-mb=${maxPhotoMb},data-pinned=${post != null and post.pinned()}">
+                <input type="hidden" name="id" id="newsPostId" th:value="${post != null} ? ${post.id()} : ''">
+                <input type="hidden" name="photoOrder" id="newsPhotoOrder" value="">
+
+                <div class="av-panel">
+                    <div class="av-panel-head"><span><i class="bi bi-text-paragraph me-2"></i>Caption &amp; Date</span></div>
+                    <div class="av-panel-body">
+                        <div class="av-field">
+                            <label class="form-label-custom" for="newsCaption">Caption</label>
+                            <textarea id="newsCaption" name="caption" class="form-control-custom" rows="8" th:attr="maxlength=${maxCaption}"
+                                      aria-describedby="newsCaptionHelp newsCaptionCount"
+                                      th:text="${post != null} ? ${post.caption()} : ''"></textarea>
+                            <div class="d-flex justify-content-between gap-2 mt-1">
+                                <small class="av-hint" id="newsCaptionHelp">Plain text. Line breaks are kept; long captions show "…more" on the portal.</small>
+                                <small class="av-mono av-muted" id="newsCaptionCount" aria-live="polite">0 / 2,200</small>
+                            </div>
+                        </div>
+                        <div class="av-field mb-0">
+                            <label class="form-label-custom" for="newsDate">Date shown</label>
+                            <input type="date" id="newsDate" name="postDate" class="form-control-custom" required
+                                   th:value="${post != null} ? ${post.postDate()} : ${today}">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="av-panel">
+                    <div class="av-panel-head">
+                        <span><i class="bi bi-images me-2"></i>Photos</span>
+                        <span class="av-label" th:text="|JPG, PNG or WebP · ${maxPhotoMb} MB max each · up to ${maxPhotos}|">JPG, PNG or WebP</span>
+                    </div>
+                    <div class="av-panel-body">
+                        <ul class="av-news-photos" id="newsPhotoList" aria-label="Photos in this post, in order">
+                            <th:block th:if="${post != null}">
+                            <li class="av-news-photo" th:each="ph : ${post.photos()}" draggable="true" th:attr="data-photo-id=${ph.id()}">
+                                <span class="av-news-handle" aria-hidden="true" title="Drag to reorder"><i class="bi bi-grip-vertical"></i></span>
+                                <img th:src="${ph.url()}" th:alt="${ph.alt()}">
+                                <span class="av-news-photo-alt">
+                                    <label class="visually-hidden" th:for="|alt-${ph.id()}|">Photo description (alt text)</label>
+                                    <input type="text" class="form-control-custom" th:id="|alt-${ph.id()}|" th:name="|alt_${ph.id()}|"
+                                           th:value="${ph.altText()}" th:attr="maxlength=${maxAlt}" placeholder="Describe the photo (optional alt text)">
+                                </span>
+                                <span class="av-news-photo-tools">
+                                    <button type="button" class="btn btn-sm btn-light p-1" data-move="up" title="Move earlier" aria-label="Move photo earlier"><i class="bi bi-arrow-up"></i></button>
+                                    <button type="button" class="btn btn-sm btn-light p-1" data-move="down" title="Move later" aria-label="Move photo later"><i class="bi bi-arrow-down"></i></button>
+                                    <button type="button" class="btn btn-sm btn-light text-danger p-1" data-remove title="Remove photo" aria-label="Remove photo" aria-pressed="false"><i class="bi bi-trash"></i></button>
+                                </span>
+                            </li>
+                            </th:block>
+                        </ul>
+                        <p class="av-hint mt-2 mb-3" id="newsNoPhotos">No photos yet. A post needs at least one photo before it can be published.</p>
+                        <label class="form-label-custom" for="newsPhotoInput">Add photos</label>
+                        <input type="file" id="newsPhotoInput" class="form-control-custom" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple
+                               aria-describedby="newsPhotoHelp">
+                        <small class="av-hint mt-2" id="newsPhotoHelp"><i class="bi bi-info-circle me-1"></i>You can pick several at once. Drag the rows (or use the arrows) to change the order. Photos are resized to 1600 px on the longest side, and camera details such as location are removed. Removed photos are deleted when you save.</small>
+                        <noscript><p class="av-hint text-danger mt-2">Adding, removing and reordering photos needs JavaScript.</p></noscript>
+                    </div>
+                </div>
+
+                <p class="av-hint" id="newsProgress" role="status" aria-live="polite"></p>
+                <div class="d-flex flex-wrap justify-content-end gap-2">
+                    <th:block th:if="${post == null or !post.published()}">
+                        <button type="submit" class="btn btn-light" name="action" value="draft"><i class="bi bi-save"></i> Save draft</button>
+                        <button type="submit" class="btn-primary-custom" name="action" value="publish"><i class="bi bi-send"></i>Publish</button>
+                    </th:block>
+                    <th:block th:if="${post != null and post.published()}">
+                        <button type="submit" class="btn btn-light" name="action" value="draft"><i class="bi bi-eye-slash"></i> Move to drafts</button>
+                        <button type="submit" class="btn-primary-custom" name="action" value="keep"><i class="bi bi-check2"></i>Save changes</button>
+                    </th:block>
+                </div>
+            </form>
+        </div>
+
+        <div class="col-lg-5">
+            <div class="av-panel mb-0">
+                <div class="av-panel-head"><span><i class="bi bi-phone me-2"></i>Preview</span><span class="av-label">As visitors see it</span></div>
+                <div class="av-panel-body">
+                    <div class="av-news-preview" id="newsPreview" aria-label="Preview of the post"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+</main>
+
+<th:block th:replace="~{fragments/shell :: scripts}"></th:block>
+<script src="/js/news-editor.js"></script>
+</body>
+</html>

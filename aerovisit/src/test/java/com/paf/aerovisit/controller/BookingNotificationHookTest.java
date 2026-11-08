@@ -28,7 +28,6 @@ import com.paf.aerovisit.repository.BookingSlotRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
 import com.paf.aerovisit.service.NotificationService;
-import com.paf.aerovisit.service.OcrService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
 /** Manage Booking tells the Director's bell about online cancellations and changes that need approval again. No database. */
@@ -44,7 +43,6 @@ class BookingNotificationHookTest {
     @MockitoBean private VisitorRepository repo;
     @MockitoBean private BookingSlotRepository bookingRepo;
     @MockitoBean private EmailService emailService;
-    @MockitoBean private OcrService ocrService;
     @MockitoBean private PredictiveAdvisorService aiService;
     @MockitoBean private NotificationService notificationService;
 
@@ -70,15 +68,6 @@ class BookingNotificationHookTest {
     }
 
     @Test
-    void anOnlineCancellationIsReported() throws Exception {
-        Visitor v = upcoming("APPROVED");
-        mvc.perform(post("/manage-booking/cancel").with(csrf()).session(signedIn()).param("formToken", "tok-123"))
-            .andExpect(redirectedUrl("/manage-booking"));
-        assertThat(v.getStatus()).isEqualTo("CANCELLED_BY_VISITOR");
-        verify(notificationService).bookingCancelled(v);
-    }
-
-    @Test
     void aNewScheduleIsReportedAsNeedingApprovalAgain() throws Exception {
         Visitor v = upcoming("APPROVED");
         LocalDate newDate = LocalDate.now().plusDays(9);
@@ -88,21 +77,21 @@ class BookingNotificationHookTest {
         slot.setMaxCapacity(10);
         when(bookingRepo.findAll()).thenReturn(List.of(slot));
         when(repo.findByVisitDate(newDate)).thenReturn(List.of());
-        when(repo.findBuyoutDates()).thenReturn(List.of());
         when(repo.findByEmailAndVisitDate("juan@example.com", newDate)).thenReturn(new java.util.ArrayList<>());
 
-        mvc.perform(post("/manage-booking/update").with(csrf()).session(signedIn()).param("formToken", "tok-123")
-                .param("slot", newDate + "|" + WINDOW).param("groupSize", "2"))
+        mvc.perform(post("/manage-booking/reschedule").with(csrf()).session(signedIn()).param("formToken", "tok-123")
+                .param("visitDate", newDate.toString()).param("timeWindow", WINDOW))
             .andExpect(redirectedUrl("/manage-booking"));
         assertThat(v.getStatus()).isEqualTo("PENDING");
         verify(notificationService).bookingRescheduled(v);
     }
 
     @Test
-    void aContactNumberChangeIsNotReported() throws Exception {
+    void aRefusedRescheduleIsNotReported() throws Exception {
         upcoming("APPROVED");
-        mvc.perform(post("/manage-booking/update").with(csrf()).session(signedIn()).param("formToken", "tok-123")
-                .param("slot", "").param("groupSize", "2").param("contactNumber", "0918-111-1111"))
+        // No open slot on that date: nothing moves, so nothing is reported
+        mvc.perform(post("/manage-booking/reschedule").with(csrf()).session(signedIn()).param("formToken", "tok-123")
+                .param("visitDate", LocalDate.now().plusDays(9).toString()).param("timeWindow", WINDOW))
             .andExpect(redirectedUrl("/manage-booking"));
         verify(notificationService, never()).bookingRescheduled(any());
     }

@@ -16,8 +16,8 @@ import com.paf.aerovisit.repository.PortalSettingsRepository;
 
 /**
  * 🤖 AI features switch (Settings page, Director, confirmed with the emailed security code). When OFF, nothing calls
- * the Python AI service: bookings go to manual review at once, and the chatbot, forecast, feedback analysis and AI
- * roster are hidden. After switching ON, the features wait (STARTING) until the AI service answers again, so nobody
+ * the Python AI service: bookings go to manual review at once, and the chatbot, forecast and feedback analysis
+ * are hidden. After switching ON, the features wait (STARTING) until the AI service answers again, so nobody
  * sits through time-outs while its server boots. The choice is saved in PortalSettings and survives restarts.
  */
 @Service

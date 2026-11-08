@@ -7,15 +7,12 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-// 🧬 VISITOR BAN: a banned visitor's face vector (SFace, 128 numbers as a JSON array) when the booking had one, plus
-// their email and phone number. While the ban is active:
-//   - a booking whose face is the same person (cosine similarity >= FaceEncodings.SAME_PERSON_COSINE) is refused
-//     whatever email it uses (needs the AI service);
-//   - a booking with the same email or phone number is refused (IdentityBans; works with the AI service off);
-//   - a booking whose name resembles the banned name is only flagged for staff (IdentityBans.nameBan), never refused;
-// and approval / check-in refuse a face or email/phone match too. A ban is permanent (expiresAt null) or temporary
-// (e.g. a 30-day suspension for repeated no-shows); an expired ban is simply ignored and stays as a record.
-// Added from an existing booking by POST /admin/biometric-ban/{visitorId}.
+// 🪪 VISITOR BAN (the table keeps its old name): a banned visitor's email, phone number and name. While the ban is active:
+//   - a booking with the same email or phone number is refused (IdentityBans), at /save, approval and check-in;
+//   - a booking whose name resembles the banned name is only flagged for staff (IdentityBans.nameBan), never refused.
+// A ban is permanent (expiresAt null) or temporary (e.g. a 30-day suspension for repeated no-shows); an expired ban is
+// simply ignored and stays as a record. Added from an existing booking by POST /admin/biometric-ban/{visitorId}.
+// Face matching was removed in 2026-11: faceEncoding is legacy data, kept but never read or set.
 @Entity
 @Table(name = "blacklisted_faces")
 public class BlacklistedFace {
@@ -24,8 +21,8 @@ public class BlacklistedFace {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // Null for an identity ban made while the AI service was off (or for a booking with no face found). The column is
-    // made nullable on databases created before identity bans by BanTableUpgrade at start-up.
+    // LEGACY: the old SFace vector of an older ban; null on every ban made since 2026-11. The column is made nullable on
+    // databases created before identity bans by BanTableUpgrade at start-up.
     @Column(columnDefinition = "TEXT")
     private String faceEncoding;
 
@@ -48,8 +45,8 @@ public class BlacklistedFace {
     private java.time.LocalDate expiresAt;
 
     // The name on the banned booking (Banned Visitors page, and the fuzzy name flag on new bookings, which only warns
-    // staff) and a "mugshot", the file name in uploads/ of the ban's OWN copy of that booking's liveness selfie (the
-    // booking's photo is purged after 30 days). Null on bans made before these columns existed.
+    // staff), and the "mugshot" an older ban kept (its own copy of a selfie or ID face crop in uploads/). New bans store
+    // no photo (never a copy of the ID), so imageUrl stays null on them.
     private String name;
 
     private String imageUrl;

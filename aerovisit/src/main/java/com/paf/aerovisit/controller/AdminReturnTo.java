@@ -13,6 +13,8 @@ final class AdminReturnTo {
     private static final String VALUE = "=[A-Za-z0-9-]{1,10}";
     private static final Pattern ADMIN_VIEW = view("/admin", "filter|sort|dateFilter|capacityDate|range");
     private static final Pattern GUARD_VIEW = view("/guard/dashboard", "tab|date");
+    // 📷 A walk-in's Process panel opened by a gate scan returns the guard to the camera (exactly this path, no parameters)
+    static final String SCANNER = "/admin/scanner";
 
     private AdminReturnTo() {}
 
@@ -21,7 +23,7 @@ final class AdminReturnTo {
     }
 
     static boolean isOurs(String returnTo) {
-        return returnTo != null && (ADMIN_VIEW.matcher(returnTo).matches() || GUARD_VIEW.matcher(returnTo).matches());
+        return returnTo != null && (SCANNER.equals(returnTo) || ADMIN_VIEW.matcher(returnTo).matches() || GUARD_VIEW.matcher(returnTo).matches());
     }
 
     // path, optionally followed by ?name=value&name=value... with only the listed names

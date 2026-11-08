@@ -13,6 +13,11 @@ answer it can't trust into PENDING_MANUAL_REVIEW (human-in-the-loop).
 LEGACY: POST /kyc/extract-id (single selfie holding the ID, Haar face check) is the first version of this check. Java no
 longer calls it; it is kept, with its tests, only because the card-finding helpers below are shared with /kyc/verify.
 A Haar face check proves a face is in the photo, not that it is a live person.
+
+ID PHOTO ONLY (current): POST /kyc/verify-id takes just the photo of the visitor's ID (no selfie). It returns the card
+crop (Java reads the name on it), the face printed on the ID as a 128-number vector (Java compares it with the ban list
+and same-day bookings, and only ever FLAGS a match for a human) and a small crop of that face (the photo a ban keeps;
+the whole ID is never stored in a ban). /kyc/verify stays so an older Java version still works.
 """
 import base64
 import binascii
@@ -450,3 +455,86 @@ def verify(req: TwoStepRequest):
     except Exception as e:
         print(f"❌ Two-step KYC check failed: {e}")
         return _two_step_failure(INTERNAL_ERROR)
+
+
+# =====================================================================================================================
+# 🪪 ID PHOTO ONLY: POST /kyc/verify-id (no selfie)
+# =====================================================================================================================
+FULL_PHOTO = "FULL_PHOTO"          # no card edge found: the card fills the photo, so the whole photo is the crop
+FACE_CROP_MARGIN = 0.25            # share of the face box added on every side of the ban photo
+
+
+def _png_b64(image):
+    ok, png = cv2.imencode(".png", image)
+    return base64.b64encode(png.tobytes()).decode("ascii") if ok else None
+
+
+def _face_crop(image, row):
+    """The ID portrait only (with a small margin), from the image the face was found on."""
+    x, y, w, h = (float(v) for v in row[:4])
+    mx, my = w * FACE_CROP_MARGIN, h * FACE_CROP_MARGIN
+    height, width = image.shape[:2]
+    x0, y0 = max(0, int(x - mx)), max(0, int(y - my))
+    x1, y1 = min(width, int(x + w + mx)), min(height, int(y + h + my))
+    if x1 - x0 < 8 or y1 - y0 < 8:
+        return None
+    return image[y0:y1, x0:x1]
+
+
+def verify_id_only(id_image):
+    """A decoded BGR photo of the ID -> response dict (see /kyc/verify-id)."""
+    result = {"status": SUCCESS, "reason": OK, "id_detected": False, "id_crop_b64": None, "id_face_encoding": None,
+              "id_face_crop_b64": None, "id_face_score": None, "id_sharpness": None}
+
+    # 1. The card: cut and flattened when its outline is found; otherwise the card fills the photo, so the whole photo
+    # (at the crop width) is read instead of giving up
+    small, scale = _downscale(id_image)
+    quad = find_card_quad(small, faces=[])
+    if quad is not None:
+        card = warp_card(id_image, quad / scale)
+        result["id_detected"] = True
+    else:
+        height, width = id_image.shape[:2]
+        factor = CROP_WIDTH / width
+        card = cv2.resize(id_image, (CROP_WIDTH, max(1, round(height * factor))),
+                          interpolation=cv2.INTER_AREA if factor < 1 else cv2.INTER_CUBIC)
+        result["reason"] = FULL_PHOTO
+    result["id_crop_b64"] = _png_b64(card)
+
+    # 2. The face printed on the ID: its vector (for the ban list / duplicates, a match is only ever flagged) and a crop
+    # of the face alone (the photo a ban keeps)
+    face_image, row = find_id_face(card)
+    if row is None:
+        return {**result, "status": POOR_QUALITY, "reason": NO_ID_FACE}
+    result["id_face_score"] = round(float(row[14]), 3)
+    result["id_sharpness"] = round(face_sharpness(face_image, row), 1)
+    result["id_face_encoding"] = [round(float(v), 6) for v in _feature(face_image, row)]
+    crop = _face_crop(face_image, row)
+    result["id_face_crop_b64"] = None if crop is None else _png_b64(crop)
+    return result
+
+
+def _id_only_failure(reason):
+    return {"status": ERROR, "reason": reason, "id_detected": False, "id_crop_b64": None, "id_face_encoding": None,
+            "id_face_crop_b64": None, "id_face_score": None, "id_sharpness": None}
+
+
+class IdOnlyRequest(BaseModel):
+    id_image: str
+
+
+@router.post("/kyc/verify-id")
+def verify_id(req: IdOnlyRequest):
+    # Never a 500: any problem comes back as a reason code, and Java marks the booking "ID unverified, check manually"
+    if not CV_READY:
+        return _id_only_failure(OPENCV_UNAVAILABLE)
+    if not FACE_READY:
+        return _id_only_failure(FACE_MODELS_UNAVAILABLE)
+    try:
+        id_image = decode_image(req.id_image)
+        if id_image is None:
+            return _id_only_failure(BAD_IMAGE)
+        return verify_id_only(id_image)
+    except Exception as e:
+        print(f"❌ ID photo check failed: {e}")
+        return _id_only_failure(INTERNAL_ERROR)

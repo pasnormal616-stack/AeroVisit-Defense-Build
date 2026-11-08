@@ -43,9 +43,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
         perIp("status-lookup",  "GET",  20,  Duration.ofMinutes(1),  "/check-status"),
         perIp("manage-login",   "POST", 20,  Duration.ofMinutes(5),  "/manage-booking/login"),
         perIp("manage-actions", "POST", 30,  Duration.ofMinutes(5),  "/manage-booking/**"),
+        // 💳 Payment page and receipt upload (PaymentController): token guessing and upload floods
+        perIp("payment-page",   "GET",  60,  Duration.ofMinutes(5),  "/payment"),
+        perIp("payment-upload", "POST", 10,  Duration.ofMinutes(10), "/payment/proof"),
         perIp("feedback",       "*",    10,  Duration.ofMinutes(10), "/leave-feedback", "/submit-feedback"),
         perIp("booking-page",   "GET",  120, Duration.ofMinutes(1),  "/"),
         perIp("public-api",     "GET",  60,  Duration.ofMinutes(1),  "/api/zones"),
+        // 📰 News feed pages (5 posts each, read-only): generous enough for fast scrolling on shared venue Wi-Fi
+        perIp("news-feed",      "GET",  60,  Duration.ofMinutes(1),  "/news/**"),
         // Forgot Password: asking for a code mails the museum inbox, so it is tight; entering the code is looser (a typo
         // must not use up the budget, and OtpService burns a code after 5 wrong tries anyway)
         perIp("reset-request",  "POST", 3,   Duration.ofMinutes(15), "/forgot-password/request"),
@@ -53,9 +58,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
         // Staff (per username; a signed-out request is left to Spring Security)
         perUser("gate-actions",  "POST", 60, Duration.ofMinutes(1),  "/admin/api/scan", "/admin/manual-checkin",
                 "/admin/api/confirm-check-in", "/admin/api/deny-entry", "/admin/deny-entry"),
-        perUser("ocr",           "POST", 20, Duration.ofMinutes(1),  "/api/booking/verify-id"),
         perUser("bans",          "POST", 20, Duration.ofMinutes(1),  "/admin/biometric-ban/*", "/admin/bans/*/lift"),
         perUser("uploads",       "POST", 20, Duration.ofMinutes(10), "/admin/content/photos/upload"),
+        perUser("news-uploads",  "POST", 60, Duration.ofMinutes(10), "/admin/content/news/*/photos"),
         perUser("exports",       "GET",  10, Duration.ofMinutes(1),  "/admin/report", "/admin/export-excel"),
         perUser("password-form", "POST", 5,  Duration.ofMinutes(10), "/admin/api/staff-accounts/request",
                 "/admin/api/staff-accounts/confirm"),

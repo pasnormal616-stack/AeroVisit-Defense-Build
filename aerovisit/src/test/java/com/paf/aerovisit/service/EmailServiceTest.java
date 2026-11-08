@@ -155,7 +155,7 @@ class EmailServiceTest {
 
     @Test
     void pendingNotificationEscapesName() {
-        emailService.sendPendingNotification("v@example.com", ATTACK, "2026-10-01", false, "PAF-A7X92K");
+        emailService.sendPendingNotification("v@example.com", ATTACK, "2026-10-01", "PAF-A7X92K");
         assertEscaped(sentHtml());
     }
 
@@ -222,23 +222,11 @@ class EmailServiceTest {
     }
 
     @Test
-    void checkInGuidelinesIntroducesTourGuide() {
-        emailService.sendCheckInGuidelines("v@example.com", "Juan", "Lt. Santos");
-        assertThat(sentHtml()).contains("Your tour guide for today is <strong>Lt. Santos</strong>.");
-    }
-
-    @Test
     void checkInGuidelinesFallsBackWhenNoGuide() {
-        emailService.sendCheckInGuidelines("v@example.com", "Juan", null);
+        emailService.sendCheckInGuidelines("v@example.com", "Juan");
         assertThat(sentHtml())
             .doesNotContain("Your tour guide for today is")
             .contains("Please approach any of them for assistance.");
-    }
-
-    @Test
-    void checkInGuidelinesEscapesTourGuideName() {
-        emailService.sendCheckInGuidelines("v@example.com", "Juan", ATTACK);
-        assertEscaped(sentHtml());
     }
 
     @Test
@@ -317,7 +305,7 @@ class EmailServiceTest {
 
     @Test
     void approvalEmailWithoutATimeSlotOnlyAsksToArriveOnTime() throws Exception {
-        // Master Bookings take the whole day: no time line and no slot rule, just the reminder
+        // No readable time slot (e.g. an older booking's "Master Booking Bypass"): no time line and no slot rule, just the reminder
         String html = sentApprovalHtml("Juan");
         assertThat(html)
             .contains("<strong>Please arrive on time.</strong>")
@@ -351,46 +339,10 @@ class EmailServiceTest {
 
     @Test
     void checkInGuidelinesRequireAnExitScan() {
-        emailService.sendCheckInGuidelines("v@example.com", "Juan", "Lt. Santos");
+        emailService.sendCheckInGuidelines("v@example.com", "Juan");
         assertThat(sentHtml())
             .contains("<strong>Exit scan required:</strong> Please keep your Entry QR Code available.")
             .contains("You are required to scan it at the gate when you leave");
-    }
-
-    // --- Staff duty roster ---
-
-    private static com.paf.aerovisit.model.StaffSchedule dutyShift(java.time.LocalDate date, String shiftTime) {
-        com.paf.aerovisit.model.StaffSchedule s = new com.paf.aerovisit.model.StaffSchedule();
-        s.setDutyDate(date);
-        s.setShiftTime(shiftTime);
-        return s;
-    }
-
-    @Test
-    void staffScheduleEmailListsEachDateAndShift() {
-        emailService.sendStaffScheduleEmail("reyes@example.com", "Sgt. Reyes", java.util.List.of(
-            dutyShift(java.time.LocalDate.of(2026, 10, 5), "Morning (0800H-1200H)"),
-            dutyShift(java.time.LocalDate.of(2026, 10, 7), "Full Day (0800H-1700H)")));
-
-        String html = sentHtml();
-        assertThat(html)
-            .contains("Good day, <span>Sgt. Reyes</span>.")
-            .contains("Please find below your upcoming duty roster:")
-            .contains(">Date</th>").contains(">Shift Time</th>")
-            .contains(">Mon, Oct 5, 2026</td>").contains(">Morning (0800H-1200H)</td>")
-            .contains(">Wed, Oct 7, 2026</td>").contains(">Full Day (0800H-1700H)</td>");
-
-        assertThat(sentEmail().subject()).isEqualTo("PAF Aerospace Museum - Upcoming Duty Roster");
-        assertThat(sentEmail().to()).isEqualTo("reyes@example.com");
-    }
-
-    @Test
-    void staffScheduleEmailEscapesNameAndShift() {
-        emailService.sendStaffScheduleEmail("reyes@example.com", ATTACK,
-            java.util.List.of(dutyShift(java.time.LocalDate.of(2026, 10, 5), "<b>Morning</b>")));
-        String html = sentHtml();
-        assertEscaped(html);
-        assertThat(html).doesNotContain("<b>Morning</b>").contains("&lt;b&gt;Morning&lt;/b&gt;");
     }
 
     // --- One formal design for every email: header, signature, HTML, no emoji anywhere ---
@@ -406,16 +358,13 @@ class EmailServiceTest {
         closed.setName("Juan"); closed.setEmail("v@example.com"); closed.setVisitDate(java.time.LocalDate.of(2026, 10, 12));
         List<Runnable> visitorEmails = List.of(
             () -> emailService.sendOtpEmail("v@example.com", "482913", 5),
-            () -> emailService.sendPendingNotification("v@example.com", "Juan", "2026-10-01", false, "PAF-A7X92K"),
-            () -> emailService.sendPendingNotification("v@example.com", "Juan", "2026-10-01", true),
-            () -> emailService.sendCheckInGuidelines("v@example.com", "Juan", "Lt. Santos"),
+            () -> emailService.sendPendingNotification("v@example.com", "Juan", "2026-10-01", "PAF-A7X92K"),
+            () -> emailService.sendPendingNotification("v@example.com", "Juan", "2026-10-01"),
+            () -> emailService.sendCheckInGuidelines("v@example.com", "Juan"),
             () -> emailService.sendCheckOutFeedback("v@example.com", "Juan", "tok-1"),
             () -> emailService.sendRejectionEmail("v@example.com", "Juan", "Capacity Reached", null),
             () -> emailService.sendRejectionEmail("v@example.com", "Juan", "Expired ID presented", null),
-            () -> emailService.sendOverrideCancellationEmail("v@example.com", "Juan", "2026-10-01", "PAF-A7X92K"),
-            () -> emailService.sendEmergencyCancellation(closed, "Typhoon Signal No. 3"),
-            () -> emailService.sendStaffScheduleEmail("s@example.com", "Sgt. Reyes",
-                    List.of(dutyShift(java.time.LocalDate.of(2026, 10, 5), "Morning (0800H-1200H)"))));
+            () -> emailService.sendEmergencyCancellation(closed, "Typhoon Signal No. 3"));
         for (Runnable send : visitorEmails) send.run();
         List<SentEmail> formal = new ArrayList<>(sent);
         sent.clear();
@@ -427,7 +376,7 @@ class EmailServiceTest {
         emailService.sendCriticalFeedbackAlert("d@example.com", "Juan", "Closed exhibit", -0.9);
         List<SentEmail> internal = new ArrayList<>(sent);
 
-        assertThat(formal).hasSize(12);
+        assertThat(formal).hasSize(10);
         assertThat(internal).hasSize(2);
         for (SentEmail email : concat(formal, internal)) {
             String subject = email.subject();
@@ -470,7 +419,8 @@ class EmailServiceTest {
             .contains(">12 bookings, 47 guests</td>")
             .contains(">10 bookings, 41 guests (83%)</td>")
             .contains(">2 bookings, 6 guests</td>")
-            .contains(">Walk-ins</td>").contains(">Not recorded</td>")
+            .contains(">Walk-ins</td>").contains(">0 bookings, 0 guests</td>")
+            .contains(">No walk-in payments today.</p>")
             .contains(">Pending approvals for 2026-10-02</td>").contains(">3</td>")
             .contains(">No-shows to date (all time)</td>").contains(">148</td>")
             .doesNotContain("Still open")    // only shown when a booking is still APPROVED at midnight
@@ -478,6 +428,23 @@ class EmailServiceTest {
             .contains(">1 h 25 min (8 guard check-outs)</td>")
             .contains(">Active Military Personnel: 4</div>").contains(">Male: 6</div>")
             .contains(">4.3 / 5 (12 ratings)</td>");
+    }
+
+    @Test
+    void theDailySummaryListsTheWalkInPaymentsToCheckAgainstLandbank() {
+        emailService.sendDirectorDailyReport("d@example.com", new EmailService.DailyReport("2026-10-01", 3, 6, 2, 5, 1, 1, 0, 0,
+                "2026-10-02", 0, EmailService.Insights.NONE,
+                new EmailService.WalkInPayments(3, 6, 2, "PHP 750.00", List.of(
+                        new EmailService.WalkInPayment("000123", "PHP 300.00", "guard1", "9:05 AM"),
+                        new EmailService.WalkInPayment("000124", "PHP 450.00", "guard2", "10:42 AM")))));
+        assertThat(sentHtml())
+            .contains(">Walk-ins</td>").contains(">3 bookings, 6 guests</td>")
+            .contains(">Walk-in payments</p>")
+            .contains(">000123</td>").contains(">PHP 300.00</td>").contains(">guard1 9:05 AM</td>")
+            .contains(">000124</td>").contains(">guard2 10:42 AM</td>")
+            .contains(">2 payment(s)</td>").contains(">PHP 750.00</td>")
+            .contains("check these billing numbers and amounts against LANDBANK")
+            .doesNotContain("No walk-in payments today.");
     }
 
     @Test
@@ -506,9 +473,46 @@ class EmailServiceTest {
         service.mailPassword = PASSWORD;
 
         assertThat(service.sendOtpEmail("v@example.com", "1", 5)).isFalse();         // same as an SMTP failure
-        service.sendPendingNotification("v@example.com", "Juan", "2026-10-01", false); // caught and logged, never thrown
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.sendStaffScheduleEmail("s@example.com", "Reyes", List.of()))
+        service.sendPendingNotification("v@example.com", "Juan", "2026-10-01"); // caught and logged, never thrown
+        com.paf.aerovisit.model.Visitor closed = new com.paf.aerovisit.model.Visitor();
+        closed.setName("Juan"); closed.setEmail("v@example.com"); closed.setVisitDate(java.time.LocalDate.of(2026, 10, 12));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.sendEmergencyCancellation(closed, "Typhoon Signal No. 3"))
             .isInstanceOf(EmailService.MailDeliveryException.class);              // batch senders still count it as a failure
         assertThat(sent).isEmpty();
+    }
+
+    // --- ♻️ "Booking Released" (payment expired): who to contact when the visitor already paid ---
+
+    private static EmailService.PaymentNotice expiredNotice(String contactEmail) {
+        return new EmailService.PaymentNotice("v@example.com", "Juan", "PAF-A7X92K", "000123", "₱650.00", "2 Regular",
+                "Mon, Nov 2, 2026 at 9:00 AM", "tok", null, false, false, contactEmail);
+    }
+
+    @Test
+    void expiredEmailNamesTheMuseumContactAndBillingNumberAndRepliesGoToTheMuseum() {
+        emailService.sendPaymentExpired(expiredNotice("museum.contact@example.com"));
+
+        SentEmail email = sentEmail();
+        assertThat(email.subject()).isEqualTo("PAF Aerospace Museum - Booking Released: Payment Not Received");
+        assertThat(email.html()).contains("Already paid at Landbank?")
+                .contains("mailto:museum.contact@example.com").contains(">museum.contact@example.com</a>")
+                .contains("billing number <strong>000123</strong>, and we will help you.");
+        assertThat(email.replyTo()).isEqualTo("museum.contact@example.com");
+        assertThat(email.fromAddress()).isEqualTo("PAFMuseumOfficial@gmail.com"); // the sender may be a no-reply address
+    }
+
+    @Test
+    void expiredEmailWithoutAContactEmailInSettingsShowsTheSenderAndSetsNoReplyTo() {
+        emailService.sendPaymentExpired(expiredNotice(null));
+
+        SentEmail email = sentEmail();
+        assertThat(email.html()).contains(">PAFMuseumOfficial@gmail.com</a>").contains("<strong>000123</strong>");
+        assertThat(email.replyTo()).isNull();
+    }
+
+    @Test
+    void onlyTheExpiredEmailCarriesAReplyTo() {
+        emailService.sendPaymentRequest(expiredNotice("museum.contact@example.com"));
+        assertThat(sentEmail().replyTo()).isNull();
     }
 }

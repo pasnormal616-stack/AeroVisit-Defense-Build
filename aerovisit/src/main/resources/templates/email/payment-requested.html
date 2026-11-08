@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Payment Required</title></head>
+<!--/* Variables: name, referenceId (may be null), billingNumber, amount, breakdown, deadline, payUrl, walkIn,
+       walkInQr (true = show the walk-in gate QR, embedded as cid:entryQr). No QR yet:
+       it is sent after the museum verifies the payment (EmailService.sendPaymentRequest). A walk-in (booked at the museum
+       for today) needs no QR: the guard checks the receipt and the ID at the gate. */-->
+<body th:replace="~{email/layout :: layout(${walkIn} ? 'Walk-in: Payment Required' : (${approved} ? 'Visit Approved: Payment Required' : 'Booking Received: Payment Required'), ~{::content})}">
+<div th:fragment="content">
+  <p style="margin:0 0 14px;">Dear <span th:text="${name}">Juan Dela Cruz</span>,</p>
+  <p th:if="${!walkIn and approved}" style="margin:0 0 14px;">Your visit request has been approved and your seats are reserved. To confirm your booking, please pay the admission fee through LANDBANK and upload a screenshot of your receipt before the deadline below.</p>
+  <p th:if="${!walkIn and !approved}" style="margin:0 0 14px;">Thank you for booking. Your seats are reserved while you pay. Please pay the admission fee through LANDBANK and upload a screenshot of your receipt before the deadline below. The museum then reviews your booking and payment together.</p>
+  <p th:if="${walkIn}" style="margin:0 0 14px;">Your walk-in seats for today are reserved. Please pay the admission fee through LANDBANK now and upload a screenshot of your receipt before the deadline below, then show the LANDBANK confirmation on your phone to the guard at the gate.</p>
+  <!--/* 🚶 The walk-in gate QR (embedded by EmailService.sendPaymentRequest as cid:entryQr) */-->
+  <th:block th:if="${walkInQr}"><div th:replace="~{fragments/walkin-qr :: pass('cid:entryQr', ${referenceId}, 'email')}"></div></th:block>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px; border:1px solid #d1d5db; background-color:#f9fafb;">
+    <tr>
+      <td style="padding:14px 16px; font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:1.6; color:#374151;">
+        Billing Number<br>
+        <strong th:text="${billingNumber}" style="font-size:20px; letter-spacing:2px; color:#111827;">000123</strong><br>
+        Amount to Pay: <strong th:text="${amount}" style="color:#111827;">PHP 650.00</strong><br>
+        <span th:if="${breakdown != null and breakdown != ''}" th:text="${breakdown}" style="font-size:13px; color:#6b7280;">2 Discounted · 3 Regular · 1 Free</span><br th:if="${breakdown != null and breakdown != ''}">
+        <span style="font-size:13px; color:#6b7280;">Keep your billing number for reference.</span>
+      </td>
+    </tr>
+  </table>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px; border:1px solid #d1d5db; border-left:4px solid #C41F1E; background-color:#f9fafb;">
+    <tr>
+      <td style="padding:14px 16px; font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:1.6; color:#1f2937;">
+        <strong>Payment deadline:</strong> <span th:text="${deadline}">Mon, Nov 2, 2026 at 9:00 AM</span><br>
+        If no receipt is uploaded by then, your reservation is released and your seats are offered to other visitors.
+      </td>
+    </tr>
+  </table>
+  <p th:if="${referenceId != null}" style="margin:0 0 14px;">Booking Reference ID: <strong th:text="${referenceId}">PAF-A7X92K</strong></p>
+  <!--/* 💳 The one copy of the LANDBANK steps, shared with the payment page and the receipt-not-accepted email */-->
+  <div th:replace="~{fragments/payment-steps :: steps(${billingNumber}, ${amount}, null, 'email')}"></div>
+  <p th:if="${!walkIn and approved}" style="margin:0 0 20px;">Your Entry QR Code is sent by email once the museum has verified your payment. Reservation payments are non-refundable.</p>
+  <p th:if="${!walkIn and !approved}" style="margin:0 0 20px;">Your Entry QR Code is sent by email once the museum has approved your booking and verified your payment. Reservation payments are non-refundable.</p>
+  <p th:if="${walkIn}" style="margin:0 0 20px;">The guard checks your receipt and your ID at the gate; no QR code is needed. Reservation payments are non-refundable.</p>
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 4px;">
+    <tr>
+      <td style="background-color:#002B80;">
+        <a th:href="${payUrl}" href="#" style="display:inline-block; padding:12px 24px; font-family:Arial, Helvetica, sans-serif; font-size:15px; font-weight:bold; color:#ffffff; text-decoration:none;">Pay and Upload Receipt</a>
+      </td>
+    </tr>
+  </table>
+  <!--/* Backup for phones where Gmail disables the button: the visitor can still copy the address */-->
+  <p style="margin:12px 0 0; font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:1.5; color:#6b7280;">
+    Button not working? Copy this link into your browser:<br>
+    <a th:href="${payUrl}" th:text="${payUrl}" href="#" style="color:#002B80; word-break:break-all;">link</a>
+  </p>
+</div>
+</body>
+</html>

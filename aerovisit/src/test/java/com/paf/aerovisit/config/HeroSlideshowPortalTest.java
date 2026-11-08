@@ -28,7 +28,6 @@ import com.paf.aerovisit.repository.HeroSlideRepository;
 import com.paf.aerovisit.repository.PortalSettingsRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
-import com.paf.aerovisit.service.OcrService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
 /** The hero slideshow on the public booking page: the photos from Website Content become the backdrop's slides. */
@@ -42,7 +41,6 @@ class HeroSlideshowPortalTest {
     @MockitoBean private VisitorRepository repo;
     @MockitoBean private BookingSlotRepository bookingRepo;
     @MockitoBean private EmailService emailService;
-    @MockitoBean private OcrService ocrService;
     @MockitoBean private PredictiveAdvisorService aiService;
     @MockitoBean private AnnouncementRepository announcementRepo;
     @MockitoBean private GuidelineRepository guidelineRepo;

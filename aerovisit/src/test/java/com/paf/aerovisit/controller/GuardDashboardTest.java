@@ -113,7 +113,7 @@ class GuardDashboardTest {
     @Test
     void theTabsCountEachGroup() throws Exception {
         String html = page("expected");
-        assertThat(html).contains("Expected Arrivals <span class=\"count\">(2)</span>", "Inside Now <span class=\"count\">(1)</span>",
+        assertThat(html).contains("Advance Bookings <span class=\"count\">(2)</span>", "Inside Now <span class=\"count\">(1)</span>",
                 "Left Today <span class=\"count\">(1)</span>");
         assertThat(html).contains("Inside <b class=\"text-dark\">3</b>"); // headcount, the group of 3
     }
@@ -131,9 +131,9 @@ class GuardDashboardTest {
     }
 
     @Test
-    void anUnknownTabFallsBackToExpectedArrivals() throws Exception {
+    void anUnknownTabFallsBackToWalkInsToday() throws Exception {
         stubToday();
-        mvc.perform(get("/guard/dashboard").param("tab", "all")).andExpect(model().attribute("tab", "expected"));
+        mvc.perform(get("/guard/dashboard").param("tab", "all")).andExpect(model().attribute("tab", "walkins"));
     }
 
     // --- Restrictions: no approvals, no KYC, no contact details ---
@@ -175,14 +175,14 @@ class GuardDashboardTest {
     }
 
     @Test
-    void withoutFaceDataTheBanButtonStillWorksByEmailAndPhone() throws Exception {
-        // 🪪 A booking made while AI features were off has no face data: the ban uses its email + phone (IdentityBans)
+    void theBanButtonWorksByEmailAndPhoneWithNoFaceData() throws Exception {
+        // 🪪 Bans go by email + phone (IdentityBans); no face data is read or sent
         Visitor noFace = v(9, "No Face", "APPROVED", MORNING);
         noFace.setFaceEncoding(null);
         when(repo.findByVisitDate(TODAY)).thenReturn(new ArrayList<>(List.of(noFace)));
 
-        String rows = tbody(mvc.perform(get("/guard/dashboard")).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
-        assertThat(rows).contains("data-ban-url=\"/admin/biometric-ban/9\"", "data-ban-face=\"false\"").doesNotContain("No face data on file");
+        String rows = tbody(mvc.perform(get("/guard/dashboard").param("tab", "advance")).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertThat(rows).contains("data-ban-url=\"/admin/biometric-ban/9\"").doesNotContain("data-ban-face", "No face data on file");
     }
 
     @Test
@@ -190,7 +190,7 @@ class GuardDashboardTest {
         Visitor tricky = v(10, "Eve <script>x</script>", "APPROVED", MORNING);
         when(repo.findByVisitDate(TODAY)).thenReturn(new ArrayList<>(List.of(tricky)));
 
-        String rows = tbody(mvc.perform(get("/guard/dashboard")).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        String rows = tbody(mvc.perform(get("/guard/dashboard").param("tab", "advance")).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
         assertThat(rows).doesNotContain("<script>x</script>").contains("Eve &lt;script&gt;x&lt;/script&gt;");
     }
 
@@ -251,8 +251,8 @@ class GuardDashboardTest {
     @Test
     void withoutADateThePickerShowsToday() throws Exception {
         String html = page("expected");
-        assertThat(html).contains("type=\"date\" id=\"arrivalsDate\" name=\"date\"", "value=\"" + TODAY + "\"", "Approved Arrivals for Today")
-                .contains("window.location.href = '?tab=expected&date=' + this.value");
+        assertThat(html).contains("type=\"date\" id=\"arrivalsDate\" name=\"date\"", "value=\"" + TODAY + "\"", "Advance Bookings for Today")
+                .contains("window.location.href = '?tab=advance&date=' + this.value");
         assertThat(tbody(html)).contains("data-deny-id=\"4\"");
     }
 
@@ -260,8 +260,8 @@ class GuardDashboardTest {
     void anotherDateListsThatDaysApprovedPassesOnly() throws Exception {
         String html = expectedOn(LATER);
         assertThat(tbody(html)).contains("Later Arrival").doesNotContain("Later Pending", "Morning Arrival", "Afternoon Arrival");
-        assertThat(html).contains("value=\"" + LATER + "\"", "Expected Arrivals <span class=\"count\">(1)</span>")
-                .contains("href=\"/guard/dashboard?tab=expected\" class=\"btn btn-sm btn-outline-secondary\">Today</a>");
+        assertThat(html).contains("value=\"" + LATER + "\"", "Advance Bookings <span class=\"count\">(1)</span>")
+                .contains("href=\"/guard/dashboard?tab=advance\" class=\"btn btn-sm btn-outline-secondary\">Today</a>");
     }
 
     @Test
@@ -283,9 +283,9 @@ class GuardDashboardTest {
     @Test
     void anEmptyOtherDaySaysWhichDay() throws Exception {
         when(repo.findByVisitDate(any())).thenReturn(new ArrayList<>());
-        String html = mvc.perform(get("/guard/dashboard").param("date", LATER.toString()))
+        String html = mvc.perform(get("/guard/dashboard").param("tab", "advance").param("date", LATER.toString()))
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        assertThat(html).contains("No approved arrivals for " + LATER.format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d, yyyy")) + ".");
+        assertThat(html).contains("No advance bookings for " + LATER.format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d, yyyy")) + ".");
     }
 
     @Test

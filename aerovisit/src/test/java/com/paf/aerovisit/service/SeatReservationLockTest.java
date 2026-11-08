@@ -161,6 +161,38 @@ class SeatReservationLockTest {
         assertThat(seatsHeld()).isEqualTo(100);
     }
 
+    // 🚶 Walk-ins hold their seats the moment they are saved (APPROVED, no Director step): two groups booking the last
+    // two seats at the same moment can't both get them
+    @Test
+    void twoWalkInsRacingForTheLastTwoSeatsCannotBothSucceed() throws Exception {
+        repo.deleteAll();
+        repo.save(booking("Big Group", "APPROVED", 98));
+        CountDownLatch go = new CountDownLatch(1);
+        List<Future<Boolean>> attempts = new ArrayList<>();
+        for (int i = 0; i < 2; i++) {
+            Visitor walkIn = booking("Walk-in Family " + i, "APPROVED", 2);
+            walkIn.setBookingCategory(Visitor.CATEGORY_WALK_IN);
+            attempts.add(pool.submit(() -> {
+                go.await();
+                try {
+                    seats.saveIfSeatsRemain(walkIn);
+                    return true;
+                } catch (SeatReservationService.CapacityFullException full) {
+                    return false;
+                }
+            }));
+        }
+        go.countDown();
+
+        int booked = 0;
+        for (Future<Boolean> attempt : attempts) {
+            if (attempt.get(30, TimeUnit.SECONDS)) booked++;
+        }
+        assertThat(booked).isEqualTo(1);
+        assertThat(seatsHeld()).isEqualTo(100);
+        assertThat(repo.findByBookingCategory(Visitor.CATEGORY_WALK_IN)).hasSize(1);
+    }
+
     @Test
     void approvingAPendingBookingDoesNotCountItsOwnRow() {
         Visitor pending = repo.save(booking("Pending One", "PENDING", 1));
@@ -174,7 +206,7 @@ class SeatReservationLockTest {
 
     @Test
     void onlySeatHoldingStatusesInTheSameWindowCount() {
-        repo.save(booking("Waitlisted", "PENDING", 50));
+        repo.save(booking("Unpaid In Time", Visitor.STATUS_PAYMENT_EXPIRED, 50));
         repo.save(booking("Rejected", "REJECTED", 50));
         repo.save(booking("Cancelled", "CANCELLED_BY_VISITOR", 50));
         Visitor otherWindow = booking("Afternoon Group", "APPROVED", 50);
@@ -182,6 +214,21 @@ class SeatReservationLockTest {
         repo.save(otherWindow);
 
         seats.saveIfSeatsRemain(booking("Last Seat", "APPROVED", 1));
+        assertThat(seatsHeld()).isEqualTo(100);
+    }
+
+    @Test
+    void aPendingRequestAndABookingAwaitingItsReceiptHoldSeats() {
+        // 💳 Pay first: 99 approved + this one = the 100 seats; a paid booking holds its seats from submission
+        Visitor awaiting = booking("Pays First", Visitor.STATUS_AWAITING_RECEIPT, 1);
+        seats.saveIfSeatsRemain(awaiting);
+        assertThat(seatsHeld()).isEqualTo(100);
+        assertThatThrownBy(() -> seats.saveIfSeatsRemain(booking("Free Request", "PENDING", 1)))
+            .isInstanceOf(SeatReservationService.CapacityFullException.class);
+
+        // the receipt upload (AWAITING_RECEIPT -> PENDING) needs no new seat: it is the same booking
+        awaiting.setStatus("PENDING");
+        repo.save(awaiting);
         assertThat(seatsHeld()).isEqualTo(100);
     }
 

@@ -79,7 +79,7 @@ class RateLimitFilterTest {
         record Case(String method, String path, int limit) {}
         int n = 10;
         for (Case c : List.of(new Case("POST", "/save", 20), new Case("GET", "/check-status", 20),
-                              new Case("POST", "/manage-booking/login", 20), new Case("POST", "/manage-booking/cancel", 30),
+                              new Case("POST", "/manage-booking/login", 20), new Case("POST", "/manage-booking/reschedule", 30),
                               new Case("GET", "/leave-feedback", 10), new Case("GET", "/", 120),
                               new Case("GET", "/api/zones", 60))) {
             String ip = "198.51.100." + n++;
@@ -130,7 +130,7 @@ class RateLimitFilterTest {
     void theFirstMatchingRuleWinsSoManageLoginDoesNotUseUpTheOtherActions() throws Exception {
         for (int i = 0; i < 20; i++) send("POST", "/manage-booking/login", "203.0.113.40");
         assertThat(send("POST", "/manage-booking/login", "203.0.113.40").getStatus()).isEqualTo(429);
-        send("POST", "/manage-booking/update", "203.0.113.40");
+        send("POST", "/manage-booking/reschedule", "203.0.113.40");
         assertThat(reachedApp).isTrue();
     }
 
@@ -198,7 +198,7 @@ class RateLimitFilterTest {
     void theOtherStaffRulesHaveTheirLimits() throws Exception {
         record Case(String method, String path, int limit) {}
         int n = 0;
-        for (Case c : List.of(new Case("POST", "/api/booking/verify-id", 20), new Case("POST", "/admin/biometric-ban/7", 20),
+        for (Case c : List.of(new Case("POST", "/admin/biometric-ban/7", 20),
                               new Case("POST", "/admin/content/photos/upload", 20), new Case("GET", "/admin/report", 10),
                               new Case("POST", "/admin/api/staff-accounts/request", 5), new Case("GET", "/admin/inject-mock-data", 2))) {
             signIn("director-" + n++);

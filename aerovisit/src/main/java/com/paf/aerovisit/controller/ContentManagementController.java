@@ -41,6 +41,10 @@ public class ContentManagementController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     com.paf.aerovisit.repository.HeroSlideRepository heroRepo;
 
+    // 📰 News tab (posts are edited by NewsAdminController). Optional, so test slices without it still start.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.paf.aerovisit.service.NewsService newsService;
+
     public ContentManagementController(AnnouncementRepository announcementRepo,
                                        GuidelineRepository guidelineRepo,
                                        ExhibitPhotoRepository photoRepo,
@@ -61,6 +65,7 @@ public class ContentManagementController {
         model.addAttribute("photos", photoRepo.findAllByOrderByUploadDateAscIdAsc());
         model.addAttribute("heroSlides", heroRepo == null ? List.of() : heroRepo.findAllByOrderByDisplayOrderAscIdAsc());
         model.addAttribute("heroMax", com.paf.aerovisit.model.HeroSlide.MAX_SLIDES);
+        model.addAttribute("newsPosts", newsService == null ? List.of() : newsService.adminList());
         model.addAttribute("today", LocalDate.now());
         PortalSettings settings = settingsRepo.findById(PortalSettings.SINGLETON_ID).orElseGet(PortalSettings::new);
         model.addAttribute("promoVideoUrl", settings.getPromoVideoUrl());

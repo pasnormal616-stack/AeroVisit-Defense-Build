@@ -26,7 +26,6 @@ import com.paf.aerovisit.repository.BookingSlotRepository;
 import com.paf.aerovisit.repository.StaffScheduleRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
-import com.paf.aerovisit.service.OcrService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
 /**
@@ -45,7 +44,6 @@ class RateLimitWiringTest {
     @MockitoBean private BookingSlotRepository bookingRepo;
     @MockitoBean private StaffScheduleRepository staffRepo;
     @MockitoBean private EmailService emailService;
-    @MockitoBean private OcrService ocrService;
     @MockitoBean private PredictiveAdvisorService aiService;
 
     private static RequestPostProcessor from(String ip) {
@@ -74,9 +72,9 @@ class RateLimitWiringTest {
 
     @Test
     void aRefusedBookingUploadNeverReachesTheController() throws Exception {
-        // An empty upload reaches the controller, which rejects the missing photo parts with 400...
+        // An empty upload reaches the controller, which refuses it (no booking-page nonce) and sends the visitor back...
         for (int i = 0; i < 20; i++) {
-            mvc.perform(multipart("/save").with(from("203.0.113.103"))).andExpect(status().isBadRequest());
+            mvc.perform(multipart("/save").with(from("203.0.113.103"))).andExpect(status().is3xxRedirection());
         }
         // ...the 21st is refused by the limiter before that
         mvc.perform(multipart("/save").with(from("203.0.113.103")))

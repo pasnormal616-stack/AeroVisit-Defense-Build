@@ -18,18 +18,20 @@
         <div>
             <span class="av-mono av-code">GATE-01</span>
             <h1 class="av-pagehead-title">Gate Dashboard</h1>
-            <p class="av-pagehead-desc">Today's gate: expected arrivals, visitors inside and visitors who have left. Booking approvals and ID reviews are handled by the Director.</p>
+            <p class="av-pagehead-desc">Today's gate: walk-ins, advance bookings, visitors inside and visitors who have left. Booking approvals and ID reviews are handled by the Director.</p>
         </div>
         <div class="av-pagehead-actions">
             <a th:if="${isGuard}" href="/admin/scanner" class="btn btn-primary"><i class="bi bi-qr-code-scan"></i> Open Scanner</a>
         </div>
     </div>
 
-    <!-- TOOLBAR: the only three groups a guard can see -->
+    <!-- TOOLBAR: the four groups a guard can see; Walk-ins Today first (the guard's main work, and the default tab) -->
     <div class="av-toolbar">
         <nav class="av-tabs" aria-label="Gate view" id="gateTabs">
-            <a href="/guard/dashboard?tab=expected" class="av-tab" th:classappend="${tab == 'expected'} ? 'is-active'" th:attr="aria-current=${tab == 'expected'} ? 'page'">
-                <i class="bi bi-box-arrow-in-right"></i> Expected Arrivals <span class="count" th:text="'(' + ${expectedCount} + ')'">(0)</span></a>
+            <a href="/guard/dashboard?tab=walkins" class="av-tab" th:classappend="${tab == 'walkins'} ? 'is-active'" th:attr="aria-current=${tab == 'walkins'} ? 'page'">
+                <i class="bi bi-person-walking"></i> Walk-ins Today <span class="count" th:text="'(' + ${walkInCount} + ')'">(0)</span></a>
+            <a href="/guard/dashboard?tab=advance" class="av-tab" th:classappend="${tab == 'advance'} ? 'is-active'" th:attr="aria-current=${tab == 'advance'} ? 'page'">
+                <i class="bi bi-box-arrow-in-right"></i> Advance Bookings <span class="count" th:text="'(' + ${advanceCount} + ')'">(0)</span></a>
             <a href="/guard/dashboard?tab=inside" class="av-tab" th:classappend="${tab == 'inside'} ? 'is-active'" th:attr="aria-current=${tab == 'inside'} ? 'page'">
                 <i class="bi bi-door-open"></i> Inside Now <span class="count" th:text="'(' + ${insideCount} + ')'">(0)</span></a>
             <a href="/guard/dashboard?tab=left" class="av-tab" th:classappend="${tab == 'left'} ? 'is-active'" th:attr="aria-current=${tab == 'left'} ? 'page'">
@@ -40,7 +42,7 @@
         </div>
     </div>
 
-    <!-- Alerts (also the result of a check-out, denial or ban made from this page) -->
+    <!-- Alerts (also the result of a check-in, check-out, denial or ban made from this page) -->
     <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
         <i class="bi bi-check-square-fill"></i> <span th:text="${success}"></span>
         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
@@ -50,27 +52,28 @@
         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     </div>
 
-    <!-- Least privilege: names, reference IDs, group size and times only; no contact details, no ID photos, no approvals -->
+    <!-- Least privilege: names, reference IDs, group size and times only; no contact details, no approvals -->
     <div class="av-panel overflow-hidden">
         <div class="av-panel-head av-panel-head--wrap">
             <span th:switch="${tab}">
                 <th:block th:case="'inside'"><i class="bi bi-door-open me-2"></i>Visitors Inside the Facility</th:block>
                 <th:block th:case="'left'"><i class="bi bi-box-arrow-right me-2"></i>Checked Out Today</th:block>
-                <th:block th:case="*"><i class="bi bi-box-arrow-in-right me-2"></i><span th:text="'Approved Arrivals for ' + (${arrivalsToday} ? 'Today' : ${#temporals.format(selectedDate, 'EEE, MMM d, yyyy')})">Approved Arrivals for Today</span></th:block>
+                <th:block th:case="'walkins'"><i class="bi bi-person-walking me-2"></i>Walk-ins Today</th:block>
+                <th:block th:case="*"><i class="bi bi-box-arrow-in-right me-2"></i><span th:text="'Advance Bookings for ' + (${arrivalsToday} ? 'Today' : ${#temporals.format(selectedDate, 'EEE, MMM d, yyyy')})">Advance Bookings for Today</span></th:block>
             </span>
-            <!-- Arrivals for any day. Picking a date reloads with ?date= (years under 1000 are a half-typed year, skipped);
+            <!-- Advance bookings for any day. Picking a date reloads with ?date= (years under 1000 are a half-typed year, skipped);
                  Enter submits the same GET form, so it also works without JavaScript -->
-            <form th:if="${tab == 'expected'}" method="get" action="/guard/dashboard" class="av-manifest-filters">
-                <input type="hidden" name="tab" value="expected">
+            <form th:if="${tab == 'advance'}" method="get" action="/guard/dashboard" class="av-manifest-filters">
+                <input type="hidden" name="tab" value="advance">
                 <div class="av-filter-group">
                     <label class="av-label mb-0" for="arrivalsDate">Arrival date</label>
                     <input type="date" id="arrivalsDate" name="date" class="form-control form-control-sm av-mono w-auto" required
                            th:value="${selectedDate}"
-                           onchange="if (this.value.length === 10 && this.value.charAt(0) !== '0') window.location.href = '?tab=expected&date=' + this.value;">
+                           onchange="if (this.value.length === 10 && this.value.charAt(0) !== '0') window.location.href = '?tab=advance&date=' + this.value;">
                 </div>
-                <a th:unless="${arrivalsToday}" href="/guard/dashboard?tab=expected" class="btn btn-sm btn-outline-secondary">Today</a>
+                <a th:unless="${arrivalsToday}" href="/guard/dashboard?tab=advance" class="btn btn-sm btn-outline-secondary">Today</a>
             </form>
-            <span th:unless="${tab == 'expected'}" class="av-label">Gate operations</span>
+            <span th:unless="${tab == 'advance'}" class="av-label">Gate operations</span>
         </div>
         <div class="table-responsive">
             <table class="table table-custom mb-0 av-gate-table" id="gateTable">
@@ -83,12 +86,12 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr th:each="visitor : ${visitors}" th:attr="data-visitor-id=${visitor.id}">
+                    <tr th:each="visitor : ${visitors}" th:if="${tab != 'walkins'}" th:attr="data-visitor-id=${visitor.id}">
                         <td>
                             <div class="av-person-name" th:text="${visitor.name}"></div>
                             <div class="av-person-meta av-mono" th:text="${visitor.referenceId != null ? visitor.referenceId : 'No reference ID'}"></div>
-                            <span th:if="${visitor.masterBooking}" class="av-badge av-badge--verified mt-1">Master Booking</span>
                             <span th:if="${visitor.groupSize > 1}" class="av-badge av-badge--info mt-1" th:text="'Group of ' + ${visitor.groupSize}"></span>
+                            <span th:if="${visitor.walkIn()}" class="av-badge av-badge--walkin mt-1"><i class="bi bi-person-walking"></i> Walk-in</span>
                         </td>
 
                         <td>
@@ -123,12 +126,113 @@
                                         <i class="bi bi-box-arrow-right"></i> Check Out / Evict</button>
                                 </form>
 
-                                <!-- All three groups: ban by face when the booking has face data, and always by email +
-                                     phone number (IdentityBans), so bookings made while AI features were off can be banned too -->
+                                <!-- All groups: ban by email + phone number (refused) and name (flagged), IdentityBans -->
                                 <button type="button" class="btn btn-sm btn-outline-danger"
                                         data-bs-toggle="modal" data-bs-target="#banModal"
-                                        th:attr="data-ban-url=@{/admin/biometric-ban/{id}(id=${visitor.id})},data-ban-name=${visitor.name},data-ban-face=${visitor.faceEncoding != null}">
+                                        th:attr="data-ban-url=@{/admin/biometric-ban/{id}(id=${visitor.id})},data-ban-name=${visitor.name}">
                                     <i class="bi bi-person-x"></i> Ban</button>
+                            </div>
+                        </td>
+                    </tr>
+
+                    <!-- 🚶 WALK-INS TODAY: one Process button per row opens the Process panel (below, outside the table). The
+                         button carries everything the panel shows, so the 30-second refresh always brings fresh data. -->
+                    <tr th:each="visitor : ${visitors}" th:if="${tab == 'walkins'}" th:attr="data-visitor-id=${visitor.id}"
+                        th:with="ban=${walkInBans[visitor.id]},
+                                 pxState=${visitor.status == 'CHECKED-IN'} ? 'inside' : (${visitor.status != 'APPROVED'} ? 'closed'
+                                        : (${visitor.paymentCleared()} ? 'cleared' : (${visitor.paymentStatus == 'PROOF_SUBMITTED'} ? 'proof' : 'waiting')))">
+                        <td>
+                            <div class="av-person-name" th:text="${visitor.name}"></div>
+                            <div class="av-person-meta av-mono" th:text="${visitor.referenceId}"></div>
+                            <div class="av-person-meta" th:if="${visitor.admissionCounted()}" th:text="${visitor.admissionSummary()}"></div>
+                            <span class="av-badge av-badge--info mt-1" th:text="${visitor.groupSize} + ' pax'"></span>
+                            <!-- 🪪 The visitor's uploaded ID photo; the guard compares it with the physical ID (no automated check) -->
+                            <div class="av-walkin-id mt-2">
+                                <a th:if="${visitor.gatePhoto() != null}" th:href="@{'/uploads/' + ${visitor.gatePhoto()}}" target="_blank" rel="noopener"
+                                   th:title="'Open the ' + ${visitor.gatePhotoLabel()} + ' full size'">
+                                    <img th:src="@{'/uploads/' + ${visitor.gatePhoto()}}" th:alt="${visitor.gatePhotoLabel()}" class="av-walkin-id-photo" loading="lazy">
+                                </a>
+                            </div>
+                            <!-- Name resembles a ban: the Process panel shows the ban next to the ID and asks for the tick -->
+                            <div th:if="${visitor.possibleBanMatch != null}" class="av-walkin-ban mt-2">
+                                <img th:if="${ban != null and ban.imageUrl != null}" th:src="@{'/uploads/' + ${ban.imageUrl}}" alt="Photo of the banned person" class="av-walkin-ban-photo" loading="lazy">
+                                <div>
+                                    <strong class="text-danger"><i class="bi bi-exclamation-octagon"></i> Name matches a ban</strong>
+                                    <div class="av-small" th:text="${ban != null ? 'Ban #' + ban.id + ': ' + ban.name : visitor.possibleBanMatch}"></div>
+                                    <div class="av-small av-muted" th:if="${visitor.banCheckedBy != null}"
+                                         th:text="'ID checked by ' + ${visitor.banCheckedBy} + ' at ' + ${#temporals.format(visitor.banCheckedAt, 'hh:mm a')}"></div>
+                                </div>
+                            </div>
+                        </td>
+
+                        <td>
+                            <div class="av-cell-strong" th:text="${visitor.timeWindow}"></div>
+                            <div class="av-cell-sub av-mono" th:if="${visitor.status == 'APPROVED' and visitor.checkInDueAt != null}">
+                                <i class="bi bi-hourglass-split"></i> <span th:text="'Check in by ' + ${#temporals.format(visitor.checkInDueAt, 'hh:mm a')}"></span>
+                            </div>
+                            <div class="av-cell-sub av-mono" th:if="${visitor.checkInTime != null}">
+                                <i class="bi bi-clock"></i> <span th:text="'In ' + ${#temporals.format(visitor.checkInTime, 'hh:mm a')}"></span>
+                                <span th:if="${visitor.checkOutTime != null}" th:text="' · Out ' + ${#temporals.format(visitor.checkOutTime, 'hh:mm a')}"></span>
+                            </div>
+                        </td>
+
+                        <td>
+                            <span th:if="${visitor.status == 'APPROVED'}" class="badge-soft badge-approved">Expected</span>
+                            <span th:if="${visitor.status == 'CHECKED-IN'}" class="badge-soft badge-checked-in">Inside</span>
+                            <span th:if="${visitor.status == 'CHECKED-OUT'}" class="badge-soft badge-checked-out">Left</span>
+                            <span th:unless="${visitor.status == 'APPROVED' or visitor.status == 'CHECKED-IN' or visitor.status == 'CHECKED-OUT'}"
+                                  class="badge-soft badge-checked-out" th:text="${visitor.status == 'NO_SHOW'} ? 'Released' : (${visitor.status == 'PAYMENT_EXPIRED'} ? 'Not paid in time' : ${visitor.status})"></span>
+                            <div class="av-cell-sub av-mono mt-1" th:text="${visitor.amountDueText()}"></div>
+                            <div class="av-cell-sub" th:if="${visitor.billingNumber != null}">
+                                <span class="av-mono" th:text="'Billing ' + ${visitor.billingNumber}"></span> ·
+                                <strong th:text="${visitor.paymentStatusLabel()}"></strong>
+                            </div>
+                            <div class="av-cell-sub" th:if="${!visitor.paymentRequired()}">No payment needed</div>
+                            <a th:if="${visitor.receiptImageUrl != null}" th:href="@{/admin/payments/{id}/receipt(id=${visitor.id})}" target="_blank" rel="noopener" class="av-receipt-link">
+                                <img th:src="@{/admin/payments/{id}/receipt(id=${visitor.id})}" alt="Receipt screenshot" class="av-receipt-thumb" loading="lazy">
+                            </a>
+                        </td>
+
+                        <td class="text-end">
+                            <div class="av-actions av-walkin-actions">
+                                <button th:if="${pxState != 'closed'}" type="button" class="btn btn-primary av-process-open"
+                                        data-bs-toggle="modal" data-bs-target="#processModal"
+                                        th:data-px-state="${pxState}"
+                                        th:data-px-name="${visitor.name}"
+                                        th:data-px-ref="${visitor.referenceId}"
+                                        th:data-px-window="${visitor.timeWindow}"
+                                        th:data-px-group="${visitor.admissionCounted() ? visitor.admissionSummary() : visitor.groupSize + ' pax'}"
+                                        th:data-px-total="${visitor.amountDueText()}"
+                                        th:data-px-billing="${visitor.billingNumber}"
+                                        th:data-px-payment="${visitor.paymentRequired() ? visitor.paymentStatusLabel() : 'Free: no payment needed'}"
+                                        th:data-px-verified="${visitor.paymentNote()}"
+                                        th:data-px-due="${visitor.paymentDueAt}"
+                                        th:data-px-due-text="${visitor.paymentDueAt != null ? #temporals.format(visitor.paymentDueAt, 'hh:mm a') : ''}"
+                                        th:data-px-inside="${visitor.checkInTime != null ? #temporals.format(visitor.checkInTime, 'hh:mm a') : ''}"
+                                        th:data-px-receipt="${visitor.receiptImageUrl != null} ? @{/admin/payments/{id}/receipt(id=${visitor.id})} : ''"
+                                        th:data-px-photo="${visitor.gatePhoto() != null} ? @{'/uploads/' + ${visitor.gatePhoto()}} : ''"
+                                        th:data-px-photo-label="${visitor.gatePhotoLabel()}"
+                                        th:data-px-ban="${visitor.possibleBanMatch == null} ? '' : (${ban != null} ? 'Ban #' + ${ban.id} + ': ' + ${ban.name} : ${visitor.possibleBanMatch})"
+                                        th:data-px-ban-photo="${ban != null and ban.imageUrl != null} ? @{'/uploads/' + ${ban.imageUrl}} : ''"
+                                        th:data-px-needs-match="${pxState == 'proof'}"
+                                        th:data-px-needs-ban="${visitor.banCheckPending()}"
+                                        th:data-px-ids-text="${visitor.eligibilityCheckText()}"
+                                        th:data-px-process-url="@{/admin/walk-ins/{id}/process(id=${visitor.id})}"
+                                        th:data-px-reject-url="@{/admin/payments/{id}/reject(id=${visitor.id})}"
+                                        th:data-px-ban-url="@{/admin/biometric-ban/{id}(id=${visitor.id})}"
+                                        th:data-px-id="${visitor.id}">
+                                    <i class="bi bi-clipboard-check"></i> Process</button>
+                                <span class="av-small av-muted" th:switch="${pxState}">
+                                    <th:block th:case="'waiting'">Waiting for payment</th:block>
+                                    <th:block th:case="'proof'">Receipt uploaded</th:block>
+                                    <th:block th:case="'cleared'" th:text="${visitor.paymentRequired()} ? 'Paid: ready to check in' : 'Free: ready to check in'">Ready</th:block>
+                                    <th:block th:case="*"></th:block>
+                                </span>
+                                <form th:if="${visitor.status == 'CHECKED-IN'}" th:action="@{/admin/manual-checkin}" method="post" class="m-0"
+                                      th:attr="data-confirm-name=${visitor.name}" onsubmit="return confirm('Check out ' + this.getAttribute('data-confirm-name') + ' now? This ends the visit immediately.');">
+                                    <input type="hidden" name="referenceId" th:value="${visitor.referenceId}">
+                                    <button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-box-arrow-right"></i> Check Out</button>
+                                </form>
                             </div>
                         </td>
                     </tr>
@@ -136,10 +240,11 @@
                     <tr th:if="${visitors.isEmpty()}">
                         <td colspan="4" class="av-empty av-empty--ok" th:switch="${tab}">
                             <i class="bi bi-check2-square"></i>
+                            <th:block th:case="'walkins'"><span class="fw-semibold text-dark d-block">No walk-ins yet today.</span></th:block>
                             <th:block th:case="'inside'"><span class="fw-semibold text-dark d-block">Nobody is inside right now.</span></th:block>
                             <th:block th:case="'left'"><span class="fw-semibold text-dark d-block">Nobody has checked out yet today.</span></th:block>
                             <th:block th:case="*"><span class="fw-semibold text-dark d-block"
-                                  th:text="${arrivalsToday} ? 'No more approved arrivals today.' : 'No approved arrivals for ' + ${#temporals.format(selectedDate, 'EEE, MMM d, yyyy')} + '.'">No more approved arrivals today.</span></th:block>
+                                  th:text="${arrivalsToday} ? 'No more advance bookings today.' : 'No advance bookings for ' + ${#temporals.format(selectedDate, 'EEE, MMM d, yyyy')} + '.'">No more advance bookings today.</span></th:block>
                         </td>
                     </tr>
                 </tbody>
@@ -149,7 +254,10 @@
 </div>
 </main>
 
-<!-- 🛑 DENY ENTRY: one dialog for every expected arrival, filled by the script below from the clicked button -->
+<!-- 🚶 PROCESS WALK-IN: the shared panel (also opened by the gate scanner over its camera); filled by /js/process-panel.js -->
+<th:block th:replace="~{fragments/process-panel :: panel}"></th:block>
+
+<!-- 🛑 DENY ENTRY: one dialog for every booking, filled by the script below from the clicked button -->
 <div class="modal fade" id="denyModal" tabindex="-1" aria-labelledby="denyModalTitle" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -168,6 +276,7 @@
                             <option value="" disabled selected>Select an official reason...</option>
                             <option value="ID does not match lead booker">ID does not match lead booker</option>
                             <option value="Expired or invalid ID presented">Expired or invalid ID presented</option>
+                            <option value="Not eligible for the discounted/free rate">Not eligible for the discounted/free rate</option>
                             <option value="Group does not match manifest">Group does not match manifest</option>
                             <option value="Unregistered person in group">Unregistered person in group</option>
                             <option value="Security concern">Security concern</option>
@@ -192,12 +301,13 @@
 
 <th:block th:replace="~{fragments/shell :: scripts}"></th:block>
 <th:block th:replace="~{fragments/ban :: banDialogScript}"></th:block>
+<script src="/js/process-panel.js"></script>
 <script>
 // 🔄 LIVE LIST: two gates can share the Guard account, so every 30 s this page quietly re-reads itself and swaps in the
 // fresh visitor rows, tab counts and headcount; a pass accepted at the other gate moves to Inside Now without a reload.
-// It waits while a dialog is open, the guard is typing or picking a date, or the tab is hidden, and never touches the
-// page if the answer isn't the Guard Dashboard (signed out, server restarting). Rows keep data-visitor-id, and the
-// buttons keep working because shell.js and the dialogs listen on the document, not on each row.
+// It waits while a dialog is open (the Process panel too), the guard is typing or picking a date, or the tab is hidden,
+// and never touches the page if the answer isn't the Guard Dashboard (signed out, server restarting). Rows keep
+// data-visitor-id, and the buttons keep working because shell.js and the dialogs listen on the document, not on each row.
 (function () {
     var EVERY_MS = 30000;
     var table = document.getElementById('gateTable');

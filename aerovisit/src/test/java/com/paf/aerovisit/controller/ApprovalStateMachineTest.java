@@ -35,10 +35,9 @@ import com.paf.aerovisit.repository.BookingSlotRepository;
 import com.paf.aerovisit.repository.StaffScheduleRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
-import com.paf.aerovisit.service.OcrService;
 
-/** Visitor state machine: only PENDING / PENDING_MANUAL_REVIEW / VERIFIED may become APPROVED (or be re-verified). No database. */
-@WebMvcTest({GuardOperationController.class, IdVerificationController.class})
+/** Visitor state machine: only PENDING / PENDING_MANUAL_REVIEW / VERIFIED may become APPROVED ; a paid booking still waiting for its receipt cannot. No database. */
+@WebMvcTest(GuardOperationController.class)
 @Import(SecurityConfig.class)
 @WithMockUser(roles = "DIRECTOR")
 class ApprovalStateMachineTest {
@@ -53,7 +52,6 @@ class ApprovalStateMachineTest {
     @MockitoBean private StaffScheduleRepository staffRepo;
     @MockitoBean private EmailService emailService;
     @MockitoBean private BookingSlotRepository bookingRepo;
-    @MockitoBean private OcrService ocrService;
 
     private Visitor visitor(long id, String status) {
         Visitor v = new Visitor();
@@ -131,47 +129,13 @@ class ApprovalStateMachineTest {
         }
     }
 
-    // --- /api/booking/verify-id: VERIFIED leads to the Approve button, so it must not reopen a finished booking ---
-
-    private static MockMultipartFile idImage() {
-        return new MockMultipartFile("idImage", "id.png", "image/png", new byte[] {1, 2, 3});
-    }
-
     @Test
-    void finishedBookingsCannotBeReVerified() throws Exception {
-        for (String status : new String[] {"CHECKED-OUT", "CHECKED-IN", "APPROVED", "REJECTED", "CANCELLED_BY_VISITOR", "DENIED_ENTRY"}) {
-            Visitor v = visitor(5L, status);
-
-            mvc.perform(multipart("/api/booking/verify-id").file(idImage()).param("visitorId", "5").with(csrf()))
-                .andExpect(status().isConflict());
-
-            assertThat(v.getStatus()).as(status).isEqualTo(status);
-        }
-        verify(ocrService, never()).extractTextFromId(any());
-        verify(repo, never()).save(any());
-    }
-
-    @Test
-    void pendingBookingIsStillVerifiedByOcr() throws Exception {
-        Visitor v = visitor(5L, "PENDING");
-        when(ocrService.extractTextFromId(any())).thenReturn("REPUBLIC OF THE PHILIPPINES JUAN DELA CRUZ");
-
-        mvc.perform(multipart("/api/booking/verify-id").file(idImage()).param("visitorId", "5").with(csrf()))
-            .andExpect(status().isOk());
-
-        assertThat(v.getStatus()).isEqualTo("VERIFIED");
-    }
-
-    @Test
-    void theTwoStepBypassIsClosed() throws Exception {
-        // CHECKED-OUT -> (verify-id) VERIFIED -> (approve) APPROVED would revive the QR; both steps now refuse
-        Visitor v = visitor(5L, "CHECKED-OUT");
-        when(ocrService.extractTextFromId(any())).thenReturn("JUAN DELA CRUZ");
-
-        mvc.perform(multipart("/api/booking/verify-id").file(idImage()).param("visitorId", "5").with(csrf())).andExpect(status().isConflict());
-        mvc.perform(post("/admin/approve/5").with(csrf())).andExpect(flash().attributeExists("error"));
-
-        assertThat(v.getStatus()).isEqualTo("CHECKED-OUT");
+    void aPaidBookingWaitingForItsReceiptCannotBeApproved() throws Exception {
+        Visitor v = visitor(5L, Visitor.STATUS_AWAITING_RECEIPT);
+        v.setPaymentStatus(Visitor.PAY_AWAITING);
+        mvc.perform(post("/admin/approve/5").with(csrf()))
+            .andExpect(flash().attribute("error", GuardOperationController.AWAITING_RECEIPT_APPROVAL));
+        assertThat(v.getStatus()).isEqualTo(Visitor.STATUS_AWAITING_RECEIPT);
         verify(repo, never()).save(any());
     }
 }

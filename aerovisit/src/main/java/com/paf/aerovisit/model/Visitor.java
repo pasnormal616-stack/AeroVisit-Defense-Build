@@ -58,29 +58,51 @@ public class Visitor {
     // --- ID Verification ---
     private String idImageUrl;
 
-    // Two-step capture: the close-up photo of the ID alone (idImageUrl keeps the liveness selfie holding the ID)
+    // The photo of the visitor's valid ID (taken or uploaded). idImageUrl is the liveness selfie that bookings made before
+    // 2026-11 have; new bookings have no selfie.
     private String idCardImageUrl;
 
-    // The live face's SFace vector (128 numbers, JSON array) from the AI service, kept so staff can add this face to
-    // the biometric blacklist (BlacklistedFace). Never bound from the form; cleared by the 30-day retention purge.
+    // 🗄️ LEGACY KYC DATA (KYC was removed in 2026-11): the four fields below are no longer set by anything. The columns and
+    // the values older bookings have are kept (never drop data); the 30-day retention purge still clears them.
+    // The face printed on the ID, cut out by the old AI check (faceid-<uuid>.png).
+    private String idFaceCropUrl;
+
+    // The old SFace vector (128 numbers, JSON array) of the face on the ID or selfie. Never read any more.
     @Column(columnDefinition = "TEXT")
     private String faceEncoding;
 
-    // True only when Tesseract read both the first and last name on the ID (KycService or the ID re-check); drives the
-    // admin table's "ID Name Verified" badge. Never bound from the form. Existing rows default to false.
+    // The old OCR result (both names read on the ID). Never read any more. Existing rows default to false.
     @Column(nullable = false, columnDefinition = "boolean default false")
     private boolean ocrNameMatch = false;
 
-    // 🧬 Reference ID of another booking on the same date whose face is close to this one (a look-alike or the same
-    // person under another email): the Director compares the photos. Set by /save only, never bound from the form.
+    // The old same-face duplicate flag (another booking's Reference ID). Never read any more.
     @Column(length = 30)
     private String possibleDuplicateOf;
 
-    // 🪪 Set when the lead booker's or a companion's name resembles an active ban's name (IdentityBans.nameBan), e.g.
-    // "Ban #12: Juan Dela Cruz". Only a warning: the booking goes to manual review and staff compare it with the ban's
-    // photo. Set by /save only, never bound from the form; cleared by the 30-day retention purge.
+    // 🪪 Set when the lead booker's name (or a companion's, on older bookings) resembles an active ban's name (IdentityBans.nameBan), e.g.
+    // "Ban #12: Juan Dela Cruz". Only a warning: the Director (Pending Approval) or the guard (walk-in) compares the
+    // visitor's ID with the ban. Set by /save only, never bound from the form; cleared by the 30-day retention purge.
     @Column(length = 300)
     private String possibleBanMatch;
+    // 🚶 The id of the ban that possibleBanMatch names (the Walk-ins tab shows that ban's name and photo to the guard)
+    private Long possibleBanId;
+    // 🚶 A flagged walk-in is checked in only after the guard ticks "ID checked against the ban": who ticked it, and when
+    @Column(length = 120)
+    private String banCheckedBy;
+    private java.time.LocalDateTime banCheckedAt;
+    // 🪪 A group with Free or Discounted visitors is checked in only after the guard ticks "Checked the IDs of the Free
+    // and Discounted visitors" (walk-in Process panel, QR Accept, manual check-in): who ticked it, and when
+    @Column(length = 120)
+    private String eligibilityCheckedBy;
+    private java.time.LocalDateTime eligibilityCheckedAt;
+
+    // 🚶 BOOKING CATEGORY: null = Advance Booking (every booking made before walk-ins existed), WALK_IN = booked at the
+    // museum for today (no selfie, no Director approval: seats held at once). Set by the server only, never bound.
+    public static final String CATEGORY_WALK_IN = "WALK_IN";
+    @Column(length = 20)
+    private String bookingCategory;
+    // 🚶 A walk-in not checked in by this time is released by the 15-minute sweep (NO_SHOW), so it stops holding seats
+    private java.time.LocalDateTime checkInDueAt;
 
     // --- QR Code Storage ---
     private String qrCodeUrl;  
@@ -99,7 +121,13 @@ public class Visitor {
     private String entryDenialReason;
 
     // --- Automated Reminder Tracking ---
-    private boolean reminderSent = false; 
+    private boolean reminderSent = false;
+
+    // 📝 When the feedback email went out (exactly once per booking, FeedbackEmails). Written ONLY by the claim UPDATE
+    // (VisitorRepository.claimFeedbackEmail), never by saving the entity, so a guard's save of a copy loaded a moment
+    // earlier can't reset it to null and let a second email through.
+    @Column(updatable = false)
+    private java.time.LocalDateTime feedbackEmailSentAt; 
 
     // --- Feedback System ---
     private Integer rating; // 1 to 5 Stars
@@ -119,29 +147,96 @@ public class Visitor {
     // --- Group / Educational Tour Tracking ---
     private int groupSize = 1; // Defaults to 1 person
 
-    // Approved headcount for a Master Booking, kept when groupSize is overwritten with the guard's actual count at the gate
+    // 💱 ADMISSION (set by the server at /save; null on bookings made before categories existed). groupSize is always
+    // discounted + regular + free. The two unit prices and the total are the ones in force when the booking was made,
+    // so a later price change never alters it. Whole centavos, never floating point.
+    private Integer discountedCount;
+    private Integer regularCount;
+    private Integer freeCount;
+    private Long discountedPriceCentavos;
+    private Long regularPriceCentavos;
+    private Long admissionTotalCentavos;
+
+    // 💳 PAYMENT (Landbank Link.BizPortal, outside AeroVisit). Null on bookings from before payment existed. Set by the
+    // server only (never bound from a form): see PaymentWorkflow. A booking whose total is 0 never needs payment.
+    public static final String PAY_NOT_REQUIRED = "NOT_REQUIRED";
+    public static final String PAY_AWAITING = "AWAITING_PAYMENT";
+    public static final String PAY_PROOF_SUBMITTED = "PROOF_SUBMITTED";
+    public static final String PAY_REJECTED = "PAYMENT_REJECTED";
+    public static final String PAY_PAID = "PAID";
+    @Column(length = 20)
+    private String paymentStatus;
+    // 6-digit running number from BillingNumberService, assigned once; never grants access to anything
+    @Column(length = 12, unique = true)
+    private String billingNumber;
+    // Unguessable key of the emailed payment link (never the QR's secureToken, never logged)
+    @Column(length = 36, unique = true)
+    private String paymentToken;
+    private java.time.LocalDateTime paymentRequestedAt;
+    private java.time.LocalDateTime paymentDueAt;
+    // Newest receipt screenshot (receipt-<uuid>.<ext> under uploads/), served only through PaymentAdminController
+    private String receiptImageUrl;
+    private java.time.LocalDateTime receiptUploadedAt;
+    // 🧾 Receipts this booking uploaded before the newest one, one file name per line, oldest first. A receipt is proof of
+    // payment, so a re-upload never deletes the earlier file; only the retention purge removes them, with the newest one.
+    @Column(columnDefinition = "TEXT")
+    private String earlierReceiptUrls;
+    @Column(length = 120)
+    private String paymentVerifiedBy;
+    private java.time.LocalDateTime paymentVerifiedAt;
+    @Column(length = 300)
+    private String paymentVerificationNote;
+    @Column(length = 500)
+    private String paymentRejectionReason;
+
+    // 📝 The Terms and Conditions the visitor agreed to before booking: when (server time at /save) and which version
+    private java.time.LocalDateTime termsAcceptedAt;
+    @Column(length = 20)
+    private String termsVersion;
+
+    // Older bookings only: the approved headcount of a group whose groupSize the guard replaced with the count that arrived.
+    // Nothing sets it any more; the column is kept for the records that have it.
     private Integer bookedGroupSize;
 
-    // Purpose the server stamps on Master Booking (VIP buyout) requests; also used to recognise them later
-    public static final String MASTER_BOOKING_PURPOSE = "Educational Tour (Master Booking Request)";
+    // 💳 PAY FIRST: a paid advance booking waiting for its receipt. It holds its seats from submission, is not in the
+    // Pending Approval tab and can't be approved; the receipt upload moves it to PENDING, the payment deadline sweep to
+    // PAYMENT_EXPIRED (which frees the seats).
+    public static final String STATUS_AWAITING_RECEIPT = "AWAITING_RECEIPT";
 
-    // Statuses whose seats count against a time slot's capacity; PENDING requests wait for approval without holding seats
-    public static final java.util.Set<String> SEAT_HOLDING_STATUSES = java.util.Set.of("APPROVED", "CHECKED-IN", "CHECKED-OUT");
+    // Statuses whose seats count against a time slot's capacity (seat counting only: reports and analytics use their own
+    // lists). Pay first: a booking holds its seats from submission (awaiting its receipt, then pending approval).
+    public static final java.util.Set<String> SEAT_HOLDING_STATUSES = java.util.Set.of(
+            STATUS_AWAITING_RECEIPT, "PENDING", "PENDING_MANUAL_REVIEW", "VERIFIED", "APPROVED", "CHECKED-IN", "CHECKED-OUT");
+
+    // 💳 Booking statuses from the payment flow; neither holds seats. PAYMENT_EXPIRED: the payment deadline passed and the
+    // seats were released (final). RESCHEDULE_REQUIRED: a paid booking on a date the museum closed; the visitor picks a
+    // new date in Manage Booking and keeps the payment.
+    public static final String STATUS_PAYMENT_EXPIRED = "PAYMENT_EXPIRED";
+    public static final String STATUS_RESCHEDULE_REQUIRED = "RESCHEDULE_REQUIRED";
+    // 📅 A RESCHEDULE_REQUIRED booking may pick its new date until this many days after its old date (the retention
+    // period: the purge anonymizes it after that). Also set when a paid request was never reviewed before its date.
+    public static final int RESCHEDULE_DAYS = 30;
+    public static final String UNREVIEWED_NOTE = "Not reviewed before the visit date; the visitor picks a new date.";
+
+    // The last day a RESCHEDULE_REQUIRED booking may pick a new date, or null for any other booking
+    public java.time.LocalDate rescheduleDeadline() {
+        return STATUS_RESCHEDULE_REQUIRED.equals(status) && visitDate != null ? visitDate.plusDays(RESCHEDULE_DAYS) : null;
+    }
+    // Shown (and confirmed) before staff reject or a visitor cancels a booking that is paid or whose receipt is in review
+    public static final String PAID_NON_REFUNDABLE = "This visitor has paid; payments are non-refundable.";
 
     // 🔒 STATE MACHINE: the only statuses a booking may be approved (or ID-verified) from. Anything later in the
     // lifecycle (APPROVED, CHECKED-IN, CHECKED-OUT, REJECTED, CANCELLED*, DENIED_ENTRY) can never be moved back.
     public static final java.util.Set<String> APPROVABLE_STATUSES = java.util.Set.of("PENDING", "PENDING_MANUAL_REVIEW", "VERIFIED");
 
-    // Official justification a Master Booking (VIP buyout) requester must give for reserving the whole facility
+    // Older bookings only: the event justification a group request once had to give. Never bound from the form any more.
     @Column(length = 1000)
     private String eventJustification;
 
-    // Group Manifest: full names of everyone in the party besides the lead booker, one per line (null for solo visits)
+    // Older bookings only: names of the party besides the lead booker, one per line. New bookings store null (the
+    // representative gives only the group size); stored names are still shown read-only and checked against bans.
     @Column(columnDefinition = "TEXT")
     private String companionNames;
-
-    // Longest single companion name accepted from the public forms
-    public static final int MAX_COMPANION_NAME_LENGTH = 100;
 
     // --- Booking Reference ID (used by the 'Manage Booking' tab) ---
     @Column(unique = true, length = 20)
@@ -151,6 +246,32 @@ public class Visitor {
     @CreationTimestamp
     @Column(updatable = false)
     private LocalDateTime createdAt;
+
+    // ♻️ REINSTATED (Director): a PAYMENT_EXPIRED booking the visitor had paid for, brought back as PAID + APPROVED.
+    // Who, when, the Director's note, and the original "date · window" when the booking was moved to another slot.
+    private String reinstatedBy;
+    private LocalDateTime reinstatedAt;
+    @Column(length = 300)
+    private String reinstatementNote;
+    @Column(length = 200)
+    private String reinstatedFrom;
+
+    public String getReinstatedBy() { return reinstatedBy; }
+    public void setReinstatedBy(String reinstatedBy) { this.reinstatedBy = reinstatedBy; }
+    public LocalDateTime getReinstatedAt() { return reinstatedAt; }
+    public void setReinstatedAt(LocalDateTime reinstatedAt) { this.reinstatedAt = reinstatedAt; }
+    public String getReinstatementNote() { return reinstatementNote; }
+    public void setReinstatementNote(String reinstatementNote) { this.reinstatementNote = reinstatementNote; }
+    public String getReinstatedFrom() { return reinstatedFrom; }
+    public void setReinstatedFrom(String reinstatedFrom) { this.reinstatedFrom = reinstatedFrom; }
+
+    // "Reinstated by director on Nov 5, 2026 02:10 PM: <note>", or null (named without "get": never a bound property)
+    public String reinstatedText() {
+        if (reinstatedAt == null) return null;
+        return "Reinstated by " + reinstatedBy + " on "
+                + reinstatedAt.format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy hh:mm a", java.util.Locale.US))
+                + (reinstatementNote == null || reinstatementNote.isBlank() ? "" : ": " + reinstatementNote);
+    }
 
     public Visitor() {}
 
@@ -326,6 +447,251 @@ public class Visitor {
     public String getEventJustification() { return eventJustification; }
     public void setEventJustification(String eventJustification) { this.eventJustification = eventJustification; }
 
+    public Integer getDiscountedCount() { return discountedCount; }
+    public void setDiscountedCount(Integer discountedCount) { this.discountedCount = discountedCount; }
+    public Integer getRegularCount() { return regularCount; }
+    public void setRegularCount(Integer regularCount) { this.regularCount = regularCount; }
+    public Integer getFreeCount() { return freeCount; }
+    public void setFreeCount(Integer freeCount) { this.freeCount = freeCount; }
+    public Long getDiscountedPriceCentavos() { return discountedPriceCentavos; }
+    public void setDiscountedPriceCentavos(Long discountedPriceCentavos) { this.discountedPriceCentavos = discountedPriceCentavos; }
+    public Long getRegularPriceCentavos() { return regularPriceCentavos; }
+    public void setRegularPriceCentavos(Long regularPriceCentavos) { this.regularPriceCentavos = regularPriceCentavos; }
+    public Long getAdmissionTotalCentavos() { return admissionTotalCentavos; }
+    public void setAdmissionTotalCentavos(Long admissionTotalCentavos) { this.admissionTotalCentavos = admissionTotalCentavos; }
+
+    public String getPaymentStatus() { return paymentStatus; }
+    public void setPaymentStatus(String paymentStatus) { this.paymentStatus = paymentStatus; }
+    public String getBillingNumber() { return billingNumber; }
+    public void setBillingNumber(String billingNumber) { this.billingNumber = billingNumber; }
+    public String getPaymentToken() { return paymentToken; }
+    public void setPaymentToken(String paymentToken) { this.paymentToken = paymentToken; }
+    public java.time.LocalDateTime getPaymentRequestedAt() { return paymentRequestedAt; }
+    public void setPaymentRequestedAt(java.time.LocalDateTime paymentRequestedAt) { this.paymentRequestedAt = paymentRequestedAt; }
+    public java.time.LocalDateTime getPaymentDueAt() { return paymentDueAt; }
+    public void setPaymentDueAt(java.time.LocalDateTime paymentDueAt) { this.paymentDueAt = paymentDueAt; }
+    public String getReceiptImageUrl() { return receiptImageUrl; }
+    public void setReceiptImageUrl(String receiptImageUrl) { this.receiptImageUrl = receiptImageUrl; }
+    public java.time.LocalDateTime getReceiptUploadedAt() { return receiptUploadedAt; }
+    public void setReceiptUploadedAt(java.time.LocalDateTime receiptUploadedAt) { this.receiptUploadedAt = receiptUploadedAt; }
+    public String getEarlierReceiptUrls() { return earlierReceiptUrls; }
+    public void setEarlierReceiptUrls(String earlierReceiptUrls) { this.earlierReceiptUrls = earlierReceiptUrls; }
+
+    // 🧾 Keeps the current receipt's file name in earlierReceiptUrls before a new receipt replaces it
+    public void keepEarlierReceipt() {
+        if (receiptImageUrl == null || receiptImageUrl.isBlank()) return;
+        earlierReceiptUrls = (earlierReceiptUrls == null || earlierReceiptUrls.isBlank() ? "" : earlierReceiptUrls + "\n") + receiptImageUrl;
+    }
+
+    // The earlier receipts' file names (named without "get" so it never becomes a bound property)
+    public java.util.List<String> earlierReceiptList() {
+        if (earlierReceiptUrls == null) return java.util.List.of();
+        return earlierReceiptUrls.lines().map(String::trim).filter(s -> !s.isEmpty()).toList();
+    }
+    public String getPaymentVerifiedBy() { return paymentVerifiedBy; }
+    public void setPaymentVerifiedBy(String paymentVerifiedBy) { this.paymentVerifiedBy = paymentVerifiedBy; }
+    public java.time.LocalDateTime getPaymentVerifiedAt() { return paymentVerifiedAt; }
+    public void setPaymentVerifiedAt(java.time.LocalDateTime paymentVerifiedAt) { this.paymentVerifiedAt = paymentVerifiedAt; }
+    public String getPaymentVerificationNote() { return paymentVerificationNote; }
+    public void setPaymentVerificationNote(String paymentVerificationNote) { this.paymentVerificationNote = paymentVerificationNote; }
+    public String getPaymentRejectionReason() { return paymentRejectionReason; }
+    public void setPaymentRejectionReason(String paymentRejectionReason) { this.paymentRejectionReason = paymentRejectionReason; }
+
+    public String getIdFaceCropUrl() { return idFaceCropUrl; }
+    public void setIdFaceCropUrl(String idFaceCropUrl) { this.idFaceCropUrl = idFaceCropUrl; }
+
+    // The photo to show staff for this booking: an older booking's selfie, else the ID photo (named without "get")
+    public String gatePhoto() { return idImageUrl != null ? idImageUrl : idCardImageUrl; }
+    public String gatePhotoLabel() { return idImageUrl != null ? "Selfie" : "ID photo"; }
+
+    public java.time.LocalDateTime getFeedbackEmailSentAt() { return feedbackEmailSentAt; }
+    public void setFeedbackEmailSentAt(java.time.LocalDateTime feedbackEmailSentAt) { this.feedbackEmailSentAt = feedbackEmailSentAt; }
+
+    public String getBookingCategory() { return bookingCategory; }
+    public void setBookingCategory(String bookingCategory) { this.bookingCategory = bookingCategory; }
+    public java.time.LocalDateTime getCheckInDueAt() { return checkInDueAt; }
+    public void setCheckInDueAt(java.time.LocalDateTime checkInDueAt) { this.checkInDueAt = checkInDueAt; }
+    public Long getPossibleBanId() { return possibleBanId; }
+    public void setPossibleBanId(Long possibleBanId) { this.possibleBanId = possibleBanId; }
+    public String getBanCheckedBy() { return banCheckedBy; }
+    public void setBanCheckedBy(String banCheckedBy) { this.banCheckedBy = banCheckedBy; }
+    public java.time.LocalDateTime getBanCheckedAt() { return banCheckedAt; }
+    public void setBanCheckedAt(java.time.LocalDateTime banCheckedAt) { this.banCheckedAt = banCheckedAt; }
+
+    // 🚶 Category helpers, named without "get"/"is" so they never show up as properties
+    public boolean walkIn() { return CATEGORY_WALK_IN.equals(bookingCategory); }
+
+    // "Walk-in" or "Advance" (staff screens, Excel)
+    public String categoryLabel() { return walkIn() ? "Walk-in" : "Advance"; }
+
+    // True when the representative's name resembles a ban and no guard has yet ticked "ID checked against the ban"
+    public boolean banCheckPending() { return possibleBanMatch != null && banCheckedBy == null; }
+
+    public String getEligibilityCheckedBy() { return eligibilityCheckedBy; }
+    public void setEligibilityCheckedBy(String eligibilityCheckedBy) { this.eligibilityCheckedBy = eligibilityCheckedBy; }
+    public java.time.LocalDateTime getEligibilityCheckedAt() { return eligibilityCheckedAt; }
+    public void setEligibilityCheckedAt(java.time.LocalDateTime eligibilityCheckedAt) { this.eligibilityCheckedAt = eligibilityCheckedAt; }
+
+    // 🪪 Free + Discounted visitors in the group (0 for older bookings without counts)
+    public int freeOrDiscounted() {
+        return (freeCount == null ? 0 : freeCount) + (discountedCount == null ? 0 : discountedCount);
+    }
+
+    // True while the group has Free or Discounted visitors whose IDs no guard has yet confirmed
+    public boolean eligibilityCheckNeeded() { return freeOrDiscounted() > 0 && eligibilityCheckedBy == null; }
+
+    // The guard's tick, e.g. "Checked the IDs of the 1 Free and 2 Discounted visitors (AFP ID, ...)"; empty when not needed
+    public String eligibilityCheckText() {
+        if (!eligibilityCheckNeeded()) return "";
+        int free = freeCount == null ? 0 : freeCount, discounted = discountedCount == null ? 0 : discountedCount;
+        String who = free > 0 && discounted > 0 ? free + " Free and " + discounted + " Discounted"
+                : free > 0 ? free + " Free" : discounted + " Discounted";
+        return "Checked the IDs of the " + who + " visitor" + (free + discounted == 1 ? "" : "s")
+                + " (AFP ID, dependent's ID, student ID, reservist or retiree ID)";
+    }
+
+    // Payment helpers, named without "get"/"is" so they never show up as properties.
+    // The amount to pay: the total stored when the booking was made (0 for older bookings without one)
+    public long amountDueCentavos() { return admissionTotalCentavos == null ? 0L : admissionTotalCentavos; }
+
+    // True when this booking must be paid before the visit (its stored total is above 0)
+    public boolean paymentRequired() { return amountDueCentavos() > 0; }
+
+    // True when nothing stops entry on payment grounds: no payment needed, or the Director verified it
+    public boolean paymentCleared() { return !paymentRequired() || PAY_PAID.equals(paymentStatus); }
+
+    // 🚶 The walk-in gate QR (its secure token) is shown only while it can still open the Process panel: a walk-in for
+    // today that is booked and not yet inside (gone once inside, left, released, cancelled or denied)
+    public boolean walkInPassUsable(java.time.LocalDate today) {
+        return walkIn() && secureToken != null && today != null && today.equals(visitDate) && "APPROVED".equals(status);
+    }
+
+    // 💳 One line for the guard, next to the amount (scanner card and Process panel): who verified the payment and when,
+    // "Free, no payment" when nothing is due, "" while a payment is still open
+    public String paymentNote() {
+        if (!paymentRequired()) return "Free, no payment";
+        if (!PAY_PAID.equals(paymentStatus)) return "";
+        String by = paymentVerifiedBy == null || paymentVerifiedBy.isBlank() ? "the museum" : paymentVerifiedBy;
+        return "Verified by " + by + (paymentVerifiedAt == null ? ""
+                : " on " + paymentVerifiedAt.format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy", java.util.Locale.US)));
+    }
+
+    // True when the visitor has paid or a receipt is being checked: non-refundable warnings apply
+    public boolean paymentInHand() { return PAY_PAID.equals(paymentStatus) || PAY_PROOF_SUBMITTED.equals(paymentStatus); }
+
+    // 💳 Staff rejecting this booking see (and confirm) the non-refundable warning: paid, or a receipt was uploaded at all
+    // (even one rejected since: the visitor may well have paid)
+    public boolean receiptOnFile() {
+        return paymentInHand() || (receiptImageUrl != null && !receiptImageUrl.isBlank()) || !earlierReceiptList().isEmpty();
+    }
+
+    // "Awaiting Payment", "Proof Submitted", ... for staff and visitor screens; empty when no payment is involved
+    public String paymentStatusLabel() {
+        if (paymentStatus == null) return "";
+        return switch (paymentStatus) {
+            case PAY_AWAITING -> "Awaiting Payment";
+            case PAY_PROOF_SUBMITTED -> "Proof Submitted";
+            case PAY_REJECTED -> "Receipt Rejected";
+            case PAY_PAID -> "Paid";
+            case PAY_NOT_REQUIRED -> "No Payment Needed";
+            default -> paymentStatus;
+        };
+    }
+
+    // e.g. "PHP 650.00" (the stored total, also for older bookings: PHP 0.00)
+    public String amountDueText() { return com.paf.aerovisit.util.Peso.format(amountDueCentavos()); }
+
+    // "1250.00": what the payment page's Copy button puts on the clipboard for Landbank's amount box
+    public String amountDuePlain() { return com.paf.aerovisit.util.Peso.plain(amountDueCentavos()); }
+
+    // 🗂️ Compact admin booking cell helpers (named without "get"/"is" so they never become bound properties)
+    // "1 visitor" / "4 visitors"
+    public String visitorsText() {
+        int n = Math.max(1, groupSize);
+        return n + (n == 1 ? " visitor" : " visitors");
+    }
+
+    // "₱650.00", "Free" for a counted booking with a total of 0, empty for older bookings without counts or a total
+    public String totalShort() {
+        if (admissionTotalCentavos == null) return admissionCounted() ? "Free" : "";
+        if (admissionTotalCentavos == 0) return "Free";
+        return com.paf.aerovisit.util.Peso.format(admissionTotalCentavos).replace("PHP ", "₱");
+    }
+
+    // The one payment/status chip on the admin booking cell; empty when there is nothing to say (older bookings)
+    public String paymentChipLabel() {
+        if (STATUS_PAYMENT_EXPIRED.equals(status)) return "Payment expired";
+        if (STATUS_RESCHEDULE_REQUIRED.equals(status)) return "Reschedule needed";
+        if (!paymentRequired()) return admissionCounted() ? "Free" : "";
+        if (paymentStatus == null) return "";
+        return switch (paymentStatus) {
+            case PAY_PAID -> "Paid";
+            case PAY_PROOF_SUBMITTED -> "Proof submitted";
+            case PAY_REJECTED -> "Receipt rejected";
+            case PAY_AWAITING -> "Awaiting receipt";
+            default -> "";
+        };
+    }
+
+    // The chip's colour by meaning: ok / info / warn / danger
+    public String paymentChipTone() {
+        if (STATUS_PAYMENT_EXPIRED.equals(status)) return "danger";
+        if (STATUS_RESCHEDULE_REQUIRED.equals(status)) return "warn";
+        if (!paymentRequired()) return "ok";
+        if (paymentStatus == null) return "info";
+        return switch (paymentStatus) {
+            case PAY_PAID -> "ok";
+            case PAY_REJECTED -> "danger";
+            case PAY_AWAITING -> "warn";
+            default -> "info";
+        };
+    }
+
+    // ⏰ "Pay by <deadline>" still matters: a receipt is still awaited (none yet, or a rejected one to replace) and the
+    // booking still waits on it (pay-first advance, a pending booking with a rejected receipt, or an unpaid walk-in that
+    // is released at the deadline). Hidden for Proof submitted, Paid, Free and approved advance bookings.
+    public boolean payByApplies() {
+        if (paymentDueAt == null || !paymentRequired()) return false;
+        if (!PAY_AWAITING.equals(paymentStatus) && !PAY_REJECTED.equals(paymentStatus)) return false;
+        return awaitsReceipt() || awaitsApproval() || (walkIn() && "APPROVED".equals(status));
+    }
+
+    // Red: the deadline applies and is within 24 hours or already past
+    public boolean payByUrgent(java.time.LocalDateTime now) {
+        return payByApplies() && now != null && !paymentDueAt.isAfter(now.plusHours(24));
+    }
+
+    public java.time.LocalDateTime getTermsAcceptedAt() { return termsAcceptedAt; }
+    public void setTermsAcceptedAt(java.time.LocalDateTime termsAcceptedAt) { this.termsAcceptedAt = termsAcceptedAt; }
+    public String getTermsVersion() { return termsVersion; }
+    public void setTermsVersion(String termsVersion) { this.termsVersion = termsVersion; }
+
+    // Admission helpers, named without "get"/"is" so they never show up as properties (Jackson, Thymeleaf field binding).
+    // True when the booking has admission counts (made after categories existed)
+    public boolean admissionCounted() {
+        return discountedCount != null && regularCount != null && freeCount != null;
+    }
+
+    // e.g. "2 Discounted · 3 Regular · 1 Free"; empty for older bookings
+    public String admissionSummary() {
+        if (!admissionCounted()) return "";
+        return discountedCount + " Discounted · " + regularCount + " Regular · " + freeCount + " Free";
+    }
+
+    // The unit prices this booking was made at, e.g. "PHP 100.00"; empty when not recorded
+    public String discountedPriceText() {
+        return discountedPriceCentavos == null ? "" : com.paf.aerovisit.util.Peso.format(discountedPriceCentavos);
+    }
+
+    public String regularPriceText() {
+        return regularPriceCentavos == null ? "" : com.paf.aerovisit.util.Peso.format(regularPriceCentavos);
+    }
+
+    // e.g. "PHP 650.00"; empty when the booking has no recorded total
+    public String admissionTotalText() {
+        return admissionTotalCentavos == null ? "" : com.paf.aerovisit.util.Peso.format(admissionTotalCentavos);
+    }
+
     public String getCompanionNames() { return companionNames; }
     public void setCompanionNames(String companionNames) { this.companionNames = companionNames; }
 
@@ -338,13 +704,69 @@ public class Visitor {
     // Named without "get"/"is" so it never shows up as a property (Jackson, Thymeleaf field binding)
     public java.util.List<String> companionList() { return parseCompanionNames(companionNames); }
 
-    public boolean isMasterBooking() { return MASTER_BOOKING_PURPOSE.equals(purpose); }
-
     // Named without "get"/"is" so it never shows up as a property (Jackson, Thymeleaf field binding)
     public boolean holdsSeat() { return status != null && SEAT_HOLDING_STATUSES.contains(status); }
 
     // Null-safe (Set.of(...).contains(null) throws), named like holdsSeat so it never becomes a bound property
     public boolean awaitsApproval() { return status != null && APPROVABLE_STATUSES.contains(status); }
+
+    // 💳 Pay first: a paid advance booking whose receipt hasn't been uploaded yet
+    public boolean awaitsReceipt() { return STATUS_AWAITING_RECEIPT.equals(status); }
+
+    // 🗂️ In the Director's Pending Approval tab: waiting for approval and not waiting on the visitor (no receipt still to
+    // come, none rejected); plus older approve-then-pay bookings whose receipt is in.
+    public boolean inPendingQueue() {
+        if (awaitsApproval()) return !PAY_AWAITING.equals(paymentStatus) && !PAY_REJECTED.equals(paymentStatus);
+        return "APPROVED".equals(status) && PAY_PROOF_SUBMITTED.equals(paymentStatus);
+    }
+
+    // ⌛ Still waiting for the visitor's payment receipt (none yet, or a new one after a rejection): shown in Pending
+    // Approval for review only, never approvable. Exactly the requests inPendingQueue() leaves out.
+    public boolean waitingForReceipt() {
+        return awaitsReceipt() || (awaitsApproval() && (PAY_AWAITING.equals(paymentStatus) || PAY_REJECTED.equals(paymentStatus)));
+    }
+
+    // An older approve-then-pay booking still waiting for its payment (or its receipt was rejected)
+    public boolean approvedAwaitingPayment() {
+        return "APPROVED".equals(status) && paymentRequired()
+                && (PAY_AWAITING.equals(paymentStatus) || PAY_REJECTED.equals(paymentStatus));
+    }
+
+    // 💳 "Mark as Paid" applies (Director, with a note): a payment checked in the Landbank report while no accepted receipt
+    // is in, or an older approved booking's receipt
+    public boolean markPaidApplies() {
+        return paymentRequired()
+                && ((PAY_PROOF_SUBMITTED.equals(paymentStatus) && "APPROVED".equals(status))
+                    || PAY_AWAITING.equals(paymentStatus) || PAY_REJECTED.equals(paymentStatus))
+                && ("APPROVED".equals(status) || awaitsApproval() || awaitsReceipt());
+    }
+
+    // 🗂️ The admin row's collapsed "Details" panel has something to show (admin.html, booking cell)
+    public boolean hasBookingDetails() {
+        boolean payBy = payByApplies();
+        return admissionCounted() || billingNumber != null || (paymentDueAt != null && !payBy)
+                || paymentVerifiedAt != null || (PAY_REJECTED.equals(paymentStatus) && paymentRejectionReason != null)
+                || eligibilityCheckedAt != null || banCheckedAt != null || termsAcceptedAt != null
+                || feedbackEmailSentAt != null || (eventJustification != null && !eventJustification.isEmpty())
+                || reinstatedAt != null;
+    }
+
+    // 🔘 The one main button of an admin row (admin.html), by state:
+    // approve | markPaid | waiting | reinstate | deny | none
+    public String mainAction(java.time.LocalDate today) {
+        if (waitingForReceipt()) return "waiting";
+        if (awaitsApproval() && inPendingQueue()) return "approve";
+        if ("APPROVED".equals(status) && paymentRequired() && PAY_PROOF_SUBMITTED.equals(paymentStatus)) return "markPaid";
+        if (approvedAwaitingPayment()) return "markPaid";
+        if (STATUS_PAYMENT_EXPIRED.equals(status)) return "reinstate";
+        if ("CHECKED-IN".equals(status) && today != null && today.equals(visitDate)) return "deny";
+        return "none";
+    }
+
+    // ✉️ When the Director last re-sent the payment link (Resend payment link: at most once every 10 minutes)
+    private java.time.LocalDateTime paymentLinkResentAt;
+    public java.time.LocalDateTime getPaymentLinkResentAt() { return paymentLinkResentAt; }
+    public void setPaymentLinkResentAt(java.time.LocalDateTime paymentLinkResentAt) { this.paymentLinkResentAt = paymentLinkResentAt; }
 
     // 🛑 Inside the base, visit completed, or missed: the record is history, so it can no longer be rejected
     public static final java.util.Set<String> VISIT_UNDERWAY_OR_OVER_STATUSES = java.util.Set.of("CHECKED-IN", "CHECKED-OUT", "NO_SHOW");

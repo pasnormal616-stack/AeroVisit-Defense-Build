@@ -64,7 +64,7 @@ public class NotificationApiController {
         body.put("unreadCount", notificationRepo.countByTypeInAndIsReadFalse(types));
         // Booking review is Director-only, so a Guard's bell never counts (or links to) pending requests
         body.put("pendingCount", com.paf.aerovisit.config.SecurityConfig.isDirector()
-                ? visitorRepo.countByStatusIn(AdminDashboardController.AWAITING_REVIEW_STATUSES) : 0L);
+                ? visitorRepo.countPendingQueue() : 0L);
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(body);
     }
 
@@ -112,10 +112,11 @@ public class NotificationApiController {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).cacheControl(CacheControl.noStore()).body(Map.of("ok", false));
     }
 
-    // Booking requests whose booking has left the approval queue (approved, rejected, cancelled, expired) or is gone
-    // are resolved, read and seen, so they stop counting without anyone having to click them
+    // Booking requests whose booking has left the approval queue (approved, rejected, cancelled, expired) or is gone,
+    // and receipts that were verified or rejected, are resolved, read and seen, so they stop counting without anyone
+    // having to click them
     void resolveHandledRequests() {
-        List<AdminNotification> open = notificationRepo.findByTypeInAndResolvedFalseAndVisitorIdIsNotNull(AdminNotification.REQUEST_TYPES);
+        List<AdminNotification> open = notificationRepo.findByTypeInAndResolvedFalseAndVisitorIdIsNotNull(AdminNotification.SELF_RESOLVING_TYPES);
         if (open.isEmpty()) return;
         Map<Long, Visitor> bookings = new HashMap<>();
         for (Visitor v : visitorRepo.findAllById(open.stream().map(AdminNotification::getVisitorId).distinct().toList())) {
@@ -124,7 +125,10 @@ public class NotificationApiController {
         List<AdminNotification> done = new ArrayList<>();
         for (AdminNotification n : open) {
             Visitor v = bookings.get(n.getVisitorId());
-            if (v == null || !v.awaitsApproval()) {
+            boolean handled = AdminNotification.TYPE_PAYMENT_PROOF.equals(n.getType()) || AdminNotification.TYPE_WALK_IN_PAYMENT_PROOF.equals(n.getType())
+                    ? v == null || !Visitor.PAY_PROOF_SUBMITTED.equals(v.getPaymentStatus())
+                    : v == null || !v.awaitsApproval() || !v.inPendingQueue(); // e.g. its receipt was rejected
+            if (handled) {
                 n.setResolved(true);
                 n.setRead(true);
                 n.setSeen(true);

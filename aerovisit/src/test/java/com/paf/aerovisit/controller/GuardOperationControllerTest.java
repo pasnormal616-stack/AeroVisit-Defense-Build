@@ -26,7 +26,6 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.paf.aerovisit.config.SecurityConfig;
 import com.paf.aerovisit.model.BookingSlot;
-import com.paf.aerovisit.model.StaffSchedule;
 import com.paf.aerovisit.model.Visitor;
 import com.paf.aerovisit.repository.BookingSlotRepository;
 import com.paf.aerovisit.repository.StaffScheduleRepository;
@@ -121,14 +120,14 @@ class GuardOperationControllerTest {
         mvc.perform(post("/admin/api/scan").with(csrf()).param("qrData", TOKEN))
             .andExpect(jsonPath("$.status").value("ready"))
             .andExpect(jsonPath("$.visitorId").value("5"))
-            .andExpect(jsonPath("$.masterBooking").value("false"))
+            .andExpect(jsonPath("$.masterBooking").doesNotExist())
             .andExpect(jsonPath("$.message").value("🔎 VERIFY: Juan Dela Cruz"));
 
         assertThat(v.getStatus()).isEqualTo("APPROVED");
         assertThat(v.getCheckInTime()).isNull();
         assertThat(v.getCheckedInBy()).isNull();
         verify(repo, never()).save(any());
-        verify(emailService, never()).sendCheckInGuidelines(anyString(), anyString(), any());
+        verify(emailService, never()).sendCheckInGuidelines(anyString(), anyString());
     }
 
     @Test
@@ -144,7 +143,7 @@ class GuardOperationControllerTest {
         assertThat(v.getCheckInTime()).isNotNull();
         assertThat(v.getCheckedInBy()).isNotBlank();
         verify(repo).save(v);
-        verify(emailService, timeout(2000)).sendCheckInGuidelines("juan@example.com", "Juan Dela Cruz", null);
+        verify(emailService, timeout(2000)).sendCheckInGuidelines("juan@example.com", "Juan Dela Cruz");
     }
 
     @Test
@@ -181,8 +180,24 @@ class GuardOperationControllerTest {
         verify(repo, never()).save(any());
     }
 
+    // 🪪 The scanner shows the booking's ID photo (labelled), or an older booking's selfie
     @Test
-    void groupScanReturnsLeadHeadcountAndManifest() throws Exception {
+    void theScanShowsTheIdPhotoForANewBookingAndTheSelfieForAnOlderOne() throws Exception {
+        Visitor v = booking("APPROVED", LocalDate.now());
+        v.setIdCardImageUrl("id-5.jpg");
+        mvc.perform(post("/admin/api/scan").with(csrf()).param("qrData", TOKEN))
+            .andExpect(jsonPath("$.imageUrl").value("/uploads/id-5.jpg"))
+            .andExpect(jsonPath("$.imageLabel").value("ID photo"));
+
+        v.setIdImageUrl("selfie-5.jpg"); // a booking made before the ID-photo-only change
+        mvc.perform(post("/admin/api/scan").with(csrf()).param("qrData", TOKEN))
+            .andExpect(jsonPath("$.imageUrl").value("/uploads/selfie-5.jpg"))
+            .andExpect(jsonPath("$.imageLabel").value("Selfie"));
+    }
+
+    @Test
+    void anOlderBookingWithCompanionNamesStillShowsThemToTheGuard() throws Exception {
+        // Companion names are no longer collected, but a booking that has them on file still lists them at the gate
         Visitor v = booking("APPROVED", LocalDate.now());
         v.setFullName("Dela Cruz, Juan P.");
         v.setGroupSize(3);
@@ -197,12 +212,110 @@ class GuardOperationControllerTest {
     }
 
     @Test
+    void theScanShowsTheGuardTheAdmissionBreakdownAndTotal() throws Exception {
+        Visitor v = booking("APPROVED", LocalDate.now());
+        v.setDiscountedCount(2);
+        v.setRegularCount(3);
+        v.setFreeCount(1);
+        v.setGroupSize(6);
+        v.setAdmissionTotalCentavos(65_000L);
+
+        mvc.perform(post("/admin/api/scan").with(csrf()).param("qrData", TOKEN))
+            .andExpect(jsonPath("$.headcount").value("6"))
+            .andExpect(jsonPath("$.admission").value("2 Discounted · 3 Regular · 1 Free · PHP 650.00"));
+    }
+
+    // --- 💳 Payment at the gate: a booking with an admission total enters only once the Director verified payment ---
+
+    private Visitor unpaid() {
+        Visitor v = booking("APPROVED", LocalDate.now());
+        v.setAdmissionTotalCentavos(65_000L);
+        v.setBillingNumber("000123");
+        v.setPaymentStatus(Visitor.PAY_AWAITING);
+        when(repo.findById(5L)).thenReturn(Optional.of(v));
+        when(repo.findByReferenceId("PAF-A7X92K")).thenReturn(Optional.of(v));
+        return v;
+    }
+
+    @Test
+    void anUnpaidBookingIsRefusedOnScanAcceptAndManualCheckIn() throws Exception {
+        Visitor v = unpaid();
+
+        mvc.perform(post("/admin/api/scan").with(csrf()).param("qrData", TOKEN))
+            .andExpect(jsonPath("$.status").value("error"))
+            .andExpect(jsonPath("$.message").value("ACCESS DENIED: Payment not verified."))
+            .andExpect(jsonPath("$.billingNumber").value("000123"))
+            .andExpect(jsonPath("$.amountDue").value("PHP 650.00"))
+            .andExpect(jsonPath("$.paymentStatus").value("Awaiting Payment"))
+            .andExpect(jsonPath("$.paymentNote").value(""));
+        mvc.perform(post("/admin/api/confirm-check-in").with(csrf()).param("visitorId", "5"))
+            .andExpect(jsonPath("$.status").value("error"))
+            .andExpect(jsonPath("$.message").value("ACCESS DENIED: Payment not verified."));
+        mvc.perform(post("/admin/manual-checkin").with(csrf()).param("referenceId", "PAF-A7X92K"))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash()
+                .attribute("error", "ACCESS DENIED: Payment not verified."));
+
+        v.setPaymentStatus(Visitor.PAY_PROOF_SUBMITTED); // a receipt under review is not verified either
+        mvc.perform(post("/admin/api/confirm-check-in").with(csrf()).param("visitorId", "5"))
+            .andExpect(jsonPath("$.message").value("ACCESS DENIED: Payment not verified."));
+
+        assertThat(v.getStatus()).isEqualTo("APPROVED");
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    @WithMockUser(roles = "DIRECTOR")
+    void evenTheDirectorCannotManuallyAdmitAnUnpaidBooking() throws Exception {
+        Visitor v = unpaid();
+        mvc.perform(post("/admin/manual-checkin").with(csrf()).param("referenceId", "PAF-A7X92K"))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash()
+                .attribute("error", "ACCESS DENIED: Payment not verified."));
+        assertThat(v.getStatus()).isEqualTo("APPROVED");
+    }
+
+    @Test
+    void aPaidBookingAndAFreeBookingEnter() throws Exception {
+        Visitor v = unpaid();
+        v.setPaymentStatus(Visitor.PAY_PAID);
+        mvc.perform(post("/admin/api/scan").with(csrf()).param("qrData", TOKEN))
+            .andExpect(jsonPath("$.status").value("ready"))
+            .andExpect(jsonPath("$.billingNumber").value("000123"))
+            .andExpect(jsonPath("$.amountDue").value("PHP 650.00"))
+            .andExpect(jsonPath("$.paymentStatus").value("Paid"))
+            .andExpect(jsonPath("$.paymentNote").value(org.hamcrest.Matchers.startsWith("Verified by ")));
+        mvc.perform(post("/admin/api/confirm-check-in").with(csrf()).param("visitorId", "5"))
+            .andExpect(jsonPath("$.status").value("success"));
+        assertThat(v.getStatus()).isEqualTo("CHECKED-IN");
+
+        Visitor free = booking("APPROVED", LocalDate.now());
+        free.setAdmissionTotalCentavos(0L);
+        free.setPaymentStatus(Visitor.PAY_NOT_REQUIRED);
+        when(repo.findByReferenceId("PAF-A7X92K")).thenReturn(Optional.of(free));
+        mvc.perform(post("/admin/manual-checkin").with(csrf()).param("referenceId", "PAF-A7X92K"))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash()
+                .attribute("success", "🟢 Checked-In via Manual Override: Juan Dela Cruz"));
+        assertThat(free.getStatus()).isEqualTo("CHECKED-IN");
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"PAYMENT_EXPIRED", "RESCHEDULE_REQUIRED"})
+    void releasedOrRescheduleBookingsCannotBeManuallyCheckedIn(String status) throws Exception {
+        Visitor v = booking(status, LocalDate.now());
+        when(repo.findByReferenceId("PAF-A7X92K")).thenReturn(Optional.of(v));
+        mvc.perform(post("/admin/manual-checkin").with(csrf()).param("referenceId", "PAF-A7X92K"))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash().attributeExists("error"));
+        assertThat(v.getStatus()).isEqualTo(status);
+        verify(repo, never()).save(any());
+    }
+
+    @Test
     void soloScanHasEmptyManifestAndDeniedScanStillIdentifiesTheLead() throws Exception {
         booking("APPROVED", LocalDate.now());
         mvc.perform(post("/admin/api/scan").with(csrf()).param("qrData", TOKEN))
             .andExpect(jsonPath("$.leadName").value("Juan Dela Cruz"))
             .andExpect(jsonPath("$.headcount").value("1"))
-            .andExpect(jsonPath("$.companions").value(""));
+            .andExpect(jsonPath("$.companions").value(""))
+            .andExpect(jsonPath("$.admission").value("")); // an older booking without admission counts shows no price
 
         booking("PENDING", LocalDate.now());
         mvc.perform(post("/admin/api/scan").with(csrf()).param("qrData", TOKEN))
@@ -212,89 +325,36 @@ class GuardOperationControllerTest {
     }
 
     @Test
-    void checkInEmailNamesTheTourGuideOnDuty() throws Exception {
+    void anOlderMasterBookingScansLikeAnyOtherGroup() throws Exception {
         Visitor v = booking("APPROVED", LocalDate.now());
-        when(repo.findById(5L)).thenReturn(Optional.of(v));
-        StaffSchedule guide = new StaffSchedule();
-        guide.setStaffName("Lt. Santos");
-        guide.setRole("Tour Guide");
-        guide.setDutyDate(LocalDate.now());
-        guide.setShiftTime("Full Day (0800H-1700H)");
-        when(staffRepo.findTourGuidesOnDuty(LocalDate.now())).thenReturn(List.of(guide));
-
-        mvc.perform(post("/admin/api/confirm-check-in").with(csrf()).param("visitorId", "5"))
-            .andExpect(jsonPath("$.status").value("success"));
-
-        verify(emailService, timeout(2000)).sendCheckInGuidelines("juan@example.com", "Juan Dela Cruz", "Lt. Santos");
-    }
-
-    @Test
-    void masterBookingScanShowsBookedHeadcountAndChangesNothing() throws Exception {
-        Visitor v = booking("APPROVED", LocalDate.now());
-        v.setPurpose(Visitor.MASTER_BOOKING_PURPOSE);
+        v.setPurpose("Educational Tour (Master Booking Request)");
         v.setGroupSize(50);
 
         mvc.perform(post("/admin/api/scan").with(csrf()).param("qrData", TOKEN))
             .andExpect(jsonPath("$.status").value("ready"))
-            .andExpect(jsonPath("$.masterBooking").value("true"))
+            .andExpect(jsonPath("$.masterBooking").doesNotExist())
             .andExpect(jsonPath("$.headcount").value("50"))
-            .andExpect(jsonPath("$.message").value("🚌 MASTER BOOKING: Juan Dela Cruz"));
+            .andExpect(jsonPath("$.message").value("🔎 VERIFY: Juan Dela Cruz"));
 
         assertThat(v.getStatus()).isEqualTo("APPROVED");
         verify(repo, never()).save(any());
     }
 
     @Test
-    void masterBookingAcceptRecordsActualHeadcount() throws Exception {
+    void acceptChecksInTheWholeGroupWithoutAHeadcountPrompt() throws Exception {
         Visitor v = booking("APPROVED", LocalDate.now());
-        v.setPurpose(Visitor.MASTER_BOOKING_PURPOSE);
+        v.setPurpose("Educational Tour (Master Booking Request)");
         v.setGroupSize(50);
         when(repo.findById(5L)).thenReturn(Optional.of(v));
 
+        // A stale scanner page that still sends a headcount is ignored
         mvc.perform(post("/admin/api/confirm-check-in").with(csrf()).param("visitorId", "5").param("headcount", "47"))
             .andExpect(jsonPath("$.status").value("success"))
-            .andExpect(jsonPath("$.message").value("🟢 CHECKED-IN: Juan Dela Cruz (47 of 50 arrived)"));
+            .andExpect(jsonPath("$.message").value("🟢 CHECKED-IN: Juan Dela Cruz (Group of 50)"));
 
         assertThat(v.getStatus()).isEqualTo("CHECKED-IN");
-        assertThat(v.getGroupSize()).isEqualTo(47);
-        assertThat(v.getBookedGroupSize()).isEqualTo(50);
-    }
-
-    @Test
-    void masterBookingAcceptNeedsAHeadcountWithinTheApprovedSize() throws Exception {
-        Visitor v = booking("APPROVED", LocalDate.now());
-        v.setPurpose(Visitor.MASTER_BOOKING_PURPOSE);
-        v.setGroupSize(50);
-        when(repo.findById(5L)).thenReturn(Optional.of(v));
-
-        for (String headcount : new String[] { "60", "0" }) {
-            mvc.perform(post("/admin/api/confirm-check-in").with(csrf()).param("visitorId", "5").param("headcount", headcount))
-                .andExpect(jsonPath("$.status").value("error"))
-                .andExpect(jsonPath("$.message").value("Headcount must be between 1 and 50 (the approved group size)."));
-        }
-        mvc.perform(post("/admin/api/confirm-check-in").with(csrf()).param("visitorId", "5"))
-            .andExpect(jsonPath("$.status").value("error"));
-
-        assertThat(v.getStatus()).isEqualTo("APPROVED");
-        verify(repo, never()).save(any());
-    }
-
-    @Test
-    void manualCheckInEmailAlsoNamesTheTourGuideOnDuty() throws Exception {
-        Visitor v = booking("APPROVED", LocalDate.now());
-        when(repo.findByReferenceId("PAF-A7X92K")).thenReturn(Optional.of(v));
-        StaffSchedule guide = new StaffSchedule();
-        guide.setStaffName("Lt. Santos");
-        guide.setRole("Tour Guide");
-        guide.setDutyDate(LocalDate.now());
-        guide.setShiftTime("Full Day (0800H-1700H)");
-        when(staffRepo.findTourGuidesOnDuty(LocalDate.now())).thenReturn(List.of(guide));
-
-        mvc.perform(post("/admin/manual-checkin").with(csrf()).param("referenceId", "PAF-A7X92K"))
-            .andExpect(status().is3xxRedirection());
-
-        assertThat(v.getStatus()).isEqualTo("CHECKED-IN");
-        verify(emailService).sendCheckInGuidelines("juan@example.com", "Juan Dela Cruz", "Lt. Santos");
+        assertThat(v.getGroupSize()).isEqualTo(50);
+        assertThat(v.getBookedGroupSize()).isNull();
     }
 
     // --- Least privilege: admitting a booking nobody approved is the Director's override, never a Guard's ---
@@ -361,6 +421,30 @@ class GuardOperationControllerTest {
 
         assertThat(v.getStatus()).isEqualTo("CHECKED-OUT");
         verify(emailService, timeout(2000)).sendCheckOutFeedback("juan@example.com", "Juan Dela Cruz", TOKEN);
+        assertThat(v.getFeedbackEmailSentAt()).isNotNull();
+    }
+
+    // 📝 The window-end sweep already sent the feedback email: a check-out afterwards (scan or manual) sends nothing again
+    @Test
+    void aCheckOutAfterTheFeedbackEmailWentOutSendsNothingAgain() throws Exception {
+        Visitor v = booking("CHECKED-IN", LocalDate.now());
+        v.setCheckInTime(java.time.LocalDateTime.now().minusMinutes(45));
+        v.setFeedbackEmailSentAt(java.time.LocalDateTime.now().minusMinutes(5));
+        mvc.perform(post("/admin/api/scan").with(csrf()).param("qrData", TOKEN))
+            .andExpect(jsonPath("$.status").value("success"));
+        assertThat(v.getStatus()).isEqualTo("CHECKED-OUT");
+
+        Visitor manual = booking("CHECKED-IN", LocalDate.now());
+        manual.setCheckInTime(java.time.LocalDateTime.now().minusMinutes(45));
+        manual.setFeedbackEmailSentAt(java.time.LocalDateTime.now().minusMinutes(5));
+        when(repo.findByReferenceId("PAF-A7X92K")).thenReturn(Optional.of(manual));
+        mvc.perform(post("/admin/manual-checkin").with(csrf()).param("referenceId", "PAF-A7X92K"))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash()
+                .attribute("success", "👋 CHECKED-OUT via Manual Override: Juan Dela Cruz"));
+        assertThat(manual.getStatus()).isEqualTo("CHECKED-OUT");
+
+        Thread.sleep(300); // the scan's email would go out on a background thread
+        verify(emailService, never()).sendCheckOutFeedback(anyString(), anyString(), any());
     }
 
     // --- Check-out cooldown (accidental double-scan) ---
@@ -455,17 +539,17 @@ class GuardOperationControllerTest {
 
     @Test
     @WithMockUser(roles = "DIRECTOR")
-    void otherPendingRequestsDoNotBlockApproval() throws Exception {
+    void aPendingRequestsOwnHeldSeatsAreNotCountedTwiceAtApproval() throws Exception {
         LocalDate date = LocalDate.now().plusDays(3);
         // An ID no real visitor has: approval writes uploads/QR_<id>.png, which is deleted afterwards
         Long testId = 990001L;
+        // 💳 Pay first: the request already holds its 3 seats; with 7 approved the 10-seat slot is exactly full
         Visitor pending = waitlisted(testId, "PENDING", date, 3);
         Visitor approved = waitlisted(21L, "APPROVED", date, 7);
-        Visitor otherPending = waitlisted(22L, "PENDING", date, 50);  // waitlisted: holds no seats
-        Visitor cancelled = waitlisted(23L, "CANCELLED_BY_VISITOR", date, 50);
+        Visitor cancelled = waitlisted(23L, "CANCELLED_BY_VISITOR", date, 50); // cancelled: holds no seats
         slotWithCapacity(date, 10);
         when(repo.findById(testId)).thenReturn(Optional.of(pending));
-        when(repo.findByVisitDate(date)).thenReturn(List.of(pending, approved, otherPending, cancelled));
+        when(repo.findByVisitDate(date)).thenReturn(List.of(pending, approved, cancelled));
 
         try {
             mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/admin/approve/" + testId).with(csrf()))
@@ -530,16 +614,31 @@ class GuardOperationControllerTest {
 
     @Test
     @WithMockUser(username = "director", roles = "DIRECTOR")
-    void forceApproveSendsMasterBookingsToTheStandardApproval() throws Exception {
-        Visitor master = waitlisted(20L, "PENDING", LocalDate.now().plusDays(3), 80);
-        master.setPurpose(Visitor.MASTER_BOOKING_PURPOSE);
-        when(repo.findById(20L)).thenReturn(Optional.of(master));
+    void anOlderMasterBookingInAFullSlotIsRefusedByApproveButCanBeForceApproved() throws Exception {
+        // No exemption any more: the normal capacity check refuses it, and the Director's override still works
+        LocalDate date = LocalDate.now().plusDays(3);
+        Long testId = 990003L; // an ID no real visitor has: the QR file is deleted afterwards
+        Visitor old = waitlisted(testId, "PENDING", date, 80);
+        old.setPurpose("Educational Tour (Master Booking Request)");
+        Visitor approved = waitlisted(21L, "APPROVED", date, 5);
+        slotWithCapacity(date, 50);
+        when(repo.findById(testId)).thenReturn(Optional.of(old));
+        when(repo.findByVisitDate(date)).thenReturn(List.of(old, approved));
 
-        mvc.perform(post("/admin/approve-override/20").with(csrf()))
+        mvc.perform(post("/admin/approve/" + testId).with(csrf()))
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash()
-                .attribute("error", "Master Bookings are exempt from the capacity check. Use the standard Approve button."));
-        assertThat(master.getStatus()).isEqualTo("PENDING");
+                .attribute("error", "Approval failed: Not enough seats remaining in this time slot."));
+        assertThat(old.getStatus()).isEqualTo("PENDING");
         verify(repo, never()).save(any());
+
+        try {
+            mvc.perform(post("/admin/approve-override/" + testId).with(csrf()))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash().attributeExists("success"));
+        } finally {
+            java.nio.file.Files.deleteIfExists(java.nio.file.Paths.get("uploads", "QR_" + testId + ".png"));
+        }
+        assertThat(old.getStatus()).isEqualTo("APPROVED");
+        verify(repo).save(old);
     }
 
     @Test
@@ -730,7 +829,7 @@ class GuardOperationControllerTest {
     @Test
     void failedEmailDoesNotBreakTheScanOrConfirm() throws Exception {
         org.mockito.Mockito.doThrow(new EmailService.MailDeliveryException("SMTP down"))
-            .when(emailService).sendCheckInGuidelines(anyString(), anyString(), any());
+            .when(emailService).sendCheckInGuidelines(anyString(), anyString());
         org.mockito.Mockito.doThrow(new EmailService.MailDeliveryException("SMTP down"))
             .when(emailService).sendCheckOutFeedback(anyString(), anyString(), anyString());
         Visitor v = booking("APPROVED", LocalDate.now());

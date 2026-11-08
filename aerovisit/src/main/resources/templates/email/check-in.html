@@ -1,13 +1,12 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org" lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Entry Confirmed</title></head>
-<!--/* Variables: name, tourGuideName (may be null or blank) */-->
+<!--/* Variables: name */-->
 <body th:replace="~{email/layout :: layout('Entry Confirmed', ~{::content})}">
 <div th:fragment="content">
   <p style="margin:0 0 14px;">Dear <span th:text="${name}">Juan Dela Cruz</span>,</p>
   <p style="margin:0 0 14px;">Welcome to the Philippine Air Force Aerospace Museum. Your QR code has been scanned and your entry has been officially recorded.</p>
-  <p th:if="${tourGuideName != null and !#strings.isEmpty(#strings.trim(tourGuideName))}" style="margin:0 0 14px;">Your tour guide for today is <strong th:text="${tourGuideName}">Lt. Santos</strong>. Please approach them for any assistance.</p>
-  <p th:unless="${tourGuideName != null and !#strings.isEmpty(#strings.trim(tourGuideName))}" style="margin:0 0 14px;">Our tour guides and museum personnel are stationed throughout the gallery. Please approach any of them for assistance.</p>
+  <p style="margin:0 0 14px;">Our tour guides and museum personnel are stationed throughout the gallery. Please approach any of them for assistance.</p>
   <p style="margin:0 0 10px;">For your safety and the preservation of Philippine military heritage, we respectfully ask that you observe the following:</p>
   <p style="margin:0 0 4px; font-weight:bold; color:#111827;">Permitted</p>
   <ul style="margin:0 0 14px; padding-left:20px;">

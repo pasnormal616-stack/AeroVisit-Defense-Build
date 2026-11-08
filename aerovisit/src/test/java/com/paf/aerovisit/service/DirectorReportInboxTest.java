@@ -86,7 +86,7 @@ class DirectorReportInboxTest {
             booking("CHECKED-OUT", 3), booking("CHECKED-OUT", 1),  // swept out at 11:59 PM: still a check-in, never a no-show
             booking("CHECKED-IN", 0),                              // groupSize 0 counts as one guest
             booking("NO_SHOW", 4),
-            booking("APPROVED", 40),                               // Master Booking: unreadable label, swept next night
+            booking("APPROVED", 40),                               // older Master Booking: unreadable label, swept next night
             booking("REJECTED", 2), booking("CANCELLED_BY_VISITOR", 2), booking("DENIED_ENTRY", 1),
             booking("PENDING", 1), booking(null, 1)));             // none of these were expected
         when(repo.countTotalNoShows()).thenReturn(148L);
@@ -119,6 +119,43 @@ class DirectorReportInboxTest {
 
         assertThat(report.expected()).isZero();
         assertThat(report.checkInRate()).isNull();
+    }
+
+    // --- 🚶 Walk-ins: the day's walk-in bookings and the payments the guards verified, to check against LANDBANK ---
+
+    private static Visitor walkIn(String status, int groupSize, String billing, String paymentStatus, long centavos, String verifiedBy, LocalTime at) {
+        Visitor v = booking(status, groupSize);
+        v.setBookingCategory(Visitor.CATEGORY_WALK_IN);
+        v.setBillingNumber(billing);
+        v.setPaymentStatus(paymentStatus);
+        v.setAdmissionTotalCentavos(centavos);
+        v.setPaymentVerifiedBy(verifiedBy);
+        if (at != null) v.setPaymentVerifiedAt(LocalDateTime.of(DAY, at));
+        return v;
+    }
+
+    @Test
+    void theReportListsTheDaysWalkInPaymentsWithTheirVerifyingGuard() {
+        when(repo.findByBookingCategoryAndVisitDate(Visitor.CATEGORY_WALK_IN, DAY)).thenReturn(List.of(
+            walkIn("CHECKED-OUT", 3, "000124", Visitor.PAY_PAID, 45_000L, "guard2", LocalTime.of(10, 42)),
+            walkIn("CHECKED-IN", 2, "000123", Visitor.PAY_PAID, 30_000L, "guard1", LocalTime.of(9, 5)),
+            walkIn("NO_SHOW", 1, null, Visitor.PAY_NOT_REQUIRED, 0L, null, null),           // free, never came
+            walkIn(Visitor.STATUS_PAYMENT_EXPIRED, 4, "000125", Visitor.PAY_AWAITING, 60_000L, null, null))); // never paid
+
+        EmailService.WalkInPayments walkIns = reportFor(DAY).walkIns();
+
+        assertThat(walkIns.bookings()).isEqualTo(3);  // the released unpaid one never held seats
+        assertThat(walkIns.guests()).isEqualTo(6);
+        assertThat(walkIns.count()).isEqualTo(2);
+        assertThat(walkIns.total()).isEqualTo("PHP 750.00");
+        assertThat(walkIns.payments()).containsExactly(
+            new EmailService.WalkInPayment("000123", "PHP 300.00", "guard1", "9:05 AM"),
+            new EmailService.WalkInPayment("000124", "PHP 450.00", "guard2", "10:42 AM"));
+    }
+
+    @Test
+    void aDayWithoutWalkInsSaysSo() {
+        assertThat(reportFor(DAY).walkIns()).isEqualTo(EmailService.WalkInPayments.NONE);
     }
 
     // --- Visit insights: only data the Visitor row already holds ---
@@ -160,7 +197,7 @@ class DirectorReportInboxTest {
 
     @Test
     void demographicsCountLeadVisitorsLargestFirstBlankAsNotStated() {
-        Visitor master = visit(40, LocalTime.of(9, 0), null, "Guard");    // a 40-guest Master Booking is one lead visitor
+        Visitor master = visit(40, LocalTime.of(9, 0), null, "Guard");    // a 40-guest group is one lead visitor
         master.setVisitorType("Other Government Agencies");
         master.setSex("Female");
         Visitor a = visit(1, LocalTime.of(9, 0), null, "Guard");

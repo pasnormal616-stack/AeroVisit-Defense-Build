@@ -50,7 +50,7 @@ class NoShowSweepTest {
         Visitor eveningEnded = approved(4, TODAY, "Evening (04:00 PM - 08:00 PM)");             // after 5:30 PM, over by 11:59 PM
         Visitor nightEnded = approved(5, TODAY, "Night (08:00 PM - 11:58 PM)");                 // end minute 23:58 is over
         Visitor endsThisMinute = approved(6, TODAY, "Late Night (09:00 PM - 11:59 PM)");        // 23:59 itself is still open
-        Visitor masterToday = approved(7, TODAY, "Master Booking Bypass");                      // unreadable: waits a day
+        Visitor masterToday = approved(7, TODAY, "Master Booking Bypass");                      // older booking, unreadable: waits a day
         Visitor tomorrow = approved(8, TODAY.plusDays(1), "Morning (08:00 AM - 12:00 PM)");
         Visitor noDate = approved(9, null, "Morning (08:00 AM - 12:00 PM)");
         when(repo.findByStatus("APPROVED")).thenReturn(List.of(yesterday, lastMonth, morningEnded, eveningEnded,
@@ -72,7 +72,7 @@ class NoShowSweepTest {
     }
 
     @Test
-    void aMasterBookingIsMarkedTheDayAfter() {
+    void anOlderMasterBookingWithAnUnreadableWindowIsMarkedTheDayAfter() {
         Visitor master = approved(7, TODAY.minusDays(1), "Master Booking Bypass");
         when(repo.findByStatus("APPROVED")).thenReturn(List.of(master));
 

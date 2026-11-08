@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<body>
+
+<!--/* 📰 News feed fragments (Website Content > News). Captions are plain text: th:text only, never th:utext, so any
+       HTML a caption contains is shown as text. Line breaks are kept by CSS (white-space: pre-line in news.css).
+       Behaviour (carousel, full screen, "…more", Share, infinite scroll) lives in /js/news.js. */-->
+
+<!--/* One page of the feed (GET /news/feed?page=N): up to 5 posts, then where the next page starts.
+       data-next-page is left out on the last page (Thymeleaf drops an attribute whose value is null). */-->
+<div th:fragment="feed" class="vp-news-page" th:attr="data-next-page=${feed.nextPage()}">
+    <th:block th:each="p : ${feed.posts()}">
+        <article th:replace="~{fragments/news :: post(${p})}"></article>
+    </th:block>
+</div>
+
+<!--/* One post. Its photos form a swipeable carousel (scroll-snap), with dots and, on a mouse, arrows. */-->
+<article th:fragment="post(p)" class="vp-news-post" th:id="|news-${p.id()}|" th:attr="data-post-id=${p.id()}" tabindex="-1">
+    <header class="vp-news-head">
+        <span class="vp-news-avatar" aria-hidden="true"><img src="/images/paflogo.png" alt="" class="paf-logo"></span>
+        <span class="vp-news-by">
+            <span class="vp-news-name">PAF Aerospace Museum</span>
+            <time class="vp-news-date" th:attr="datetime=${p.isoDate()}" th:text="${p.dateLabel()}">November 6, 2026</time>
+        </span>
+        <span class="vp-news-pin" th:if="${p.pinned()}"><i class="bi bi-pin-angle-fill" aria-hidden="true"></i>Pinned</span>
+    </header>
+
+    <div class="vp-news-carousel" th:if="${p.photoCount() > 0}" role="region" aria-roledescription="carousel" tabindex="0"
+         th:attr="aria-label=${p.photoCount() > 1} ? |Photos, ${p.photoCount()} in all. Use the arrow keys to move between them.| : 'Photo'">
+        <div class="vp-news-track">
+            <figure class="vp-news-slide" th:each="ph, s : ${p.photos()}" role="group" aria-roledescription="slide"
+                    th:attr="aria-label=|${s.count} of ${s.size}|">
+                <!--/* The button's name is the photo's alt text (read first), then what the tap does */-->
+                <button type="button" class="vp-news-zoom" data-news-zoom th:attr="data-index=${s.index}">
+                    <img th:src="${ph.url()}" th:alt="${ph.alt()}" loading="lazy" decoding="async"
+                         th:attr="width=${ph.width()},height=${ph.height()}">
+                    <span class="visually-hidden">(view full screen)</span>
+                </button>
+            </figure>
+        </div>
+        <th:block th:if="${p.photoCount() > 1}">
+            <button type="button" class="vp-news-arrow vp-news-arrow--prev" data-news-prev aria-label="Previous photo" tabindex="-1">
+                <i class="bi bi-chevron-left" aria-hidden="true"></i>
+            </button>
+            <button type="button" class="vp-news-arrow vp-news-arrow--next" data-news-next aria-label="Next photo" tabindex="-1">
+                <i class="bi bi-chevron-right" aria-hidden="true"></i>
+            </button>
+            <span class="vp-news-count" aria-hidden="true" th:text="|1/${p.photoCount()}|">1/3</span>
+        </th:block>
+    </div>
+    <div class="vp-news-dots" th:if="${p.photoCount() > 1}">
+        <button type="button" class="vp-news-dot" th:each="ph, s : ${p.photos()}" data-news-dot
+                th:attr="data-index=${s.index},aria-label=|Photo ${s.count} of ${s.size}|,aria-current=${s.first} ? 'true'"></button>
+    </div>
+
+    <div class="vp-news-body">
+        <p class="vp-news-caption is-clamped" th:if="${p.hasCaption()}" th:id="|news-caption-${p.id()}|" th:text="${p.caption()}">Caption</p>
+        <button type="button" class="vp-news-more" data-news-more hidden aria-expanded="false"
+                th:if="${p.hasCaption()}" th:attr="aria-controls=|news-caption-${p.id()}|">…more</button>
+    </div>
+</article>
+
+</body>
+</html>

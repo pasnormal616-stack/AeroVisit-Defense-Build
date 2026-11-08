@@ -129,17 +129,17 @@ class ApprovalCapacityRaceTest {
     }
 
     @Test
-    void masterBookingsSkipTheSeatLock() throws Exception {
+    void anOlderMasterBookingGoesThroughTheSeatLockLikeAnyOtherBooking() throws Exception {
+        // Master Booking was removed: a booking that still has its old purpose has no exemption any more
         long id = 990504L;
-        Visitor master = pendingWithOneSeatLeft(id);
-        master.setPurpose(Visitor.MASTER_BOOKING_PURPOSE);
-        master.setTimeWindow("Master Booking Bypass");
+        Visitor old = pendingWithOneSeatLeft(id);
+        old.setPurpose("Educational Tour (Master Booking Request)");
         try {
             mvc.perform(post("/admin/approve/" + id).with(csrf())).andExpect(flash().attributeExists("success"));
         } finally {
             Files.deleteIfExists(Paths.get("uploads", "QR_" + id + ".png"));
         }
-        verify(seatReservation, never()).saveIfSeatsRemain(any());
-        verify(repo).save(master);
+        verify(seatReservation).saveIfSeatsRemain(old);
+        verify(repo, never()).save(any());
     }
 }

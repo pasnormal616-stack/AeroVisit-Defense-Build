@@ -44,7 +44,11 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.ignoringRequestMatchers("/save"))
             .authorizeHttpRequests(auth -> auth
                 // 1. PUBLIC SECTOR: Permitting pages, uploads, static resources, and Chatbot/AI API endpoints
-                .requestMatchers("/", "/home", "/save", "/success-page", "/check-status", "/manage-booking", "/manage-booking/**", "/error", "/login", "/css/**", "/js/**", "/styles/**", "/images/**", "/downloads/**", "/leave-feedback", "/submit-feedback", "/api/chatbot/**", "/chat").permitAll()
+                .requestMatchers("/", "/home", "/save", "/success-page", "/check-status", "/manage-booking", "/manage-booking/**", "/error", "/login", "/css/**", "/js/**", "/styles/**", "/images/**", "/leave-feedback", "/submit-feedback", "/api/chatbot/**", "/chat").permitAll()
+
+                // 💳 Visitor payment page and receipt upload (PaymentController): public paths, but they open a booking only
+                // through its unguessable emailed token or the visitor's own Manage Booking session. CSRF applies.
+                .requestMatchers("/payment", "/payment/**").permitAll()
 
                 // 📧 Booking-form email verification codes (OtpController): public, POST only
                 .requestMatchers(HttpMethod.POST, "/otp/send", "/otp/verify").permitAll()
@@ -59,17 +63,34 @@ public class SecurityConfig {
                 // 🖼️ Exhibits slideshow photos (Website Content) are public; they live apart from /uploads/**
                 .requestMatchers("/exhibit-photos/**").permitAll()
 
+                // 📰 News feed (Website Content > News): read-only pages of published posts; editing is /admin/content/**
+                .requestMatchers(HttpMethod.GET, "/news/feed").permitAll()
+
                 // 🗺️ Museum zones: the feedback form reads the active list; adding/disabling zones is Director-only
                 .requestMatchers(HttpMethod.GET, "/api/zones").permitAll()
                 .requestMatchers("/api/zones", "/api/zones/**").hasRole("DIRECTOR")
 
+                // 💳 Payment receipts are never served from /uploads, for anyone: only through
+                // /admin/payments/{id}/receipt, which checks the role AND the booking (PaymentAdminController.canViewReceipt)
+                .requestMatchers("/uploads/receipt-*").denyAll()
+
                 // 🔒 Visitor ID photos and entry QR codes: staff only (file names are guessable, e.g. QR_5.png)
                 .requestMatchers("/uploads/**").hasAnyRole("GUARD", "DIRECTOR")
 
+                // 💳 PAYMENT VERIFICATION: a receipt, Mark as Paid and Reject Receipt are open to Guards here because
+                // PaymentAdminController.canVerify lets a Guard act on today's WALK-IN bookings only (403 otherwise)
+                .requestMatchers("/admin/payments/*/receipt", "/admin/payments/*/verify", "/admin/payments/*/reject").hasAnyRole("GUARD", "DIRECTOR")
+                // ...anything else under payments, and the payment and walk-in settings: DIRECTOR ONLY
+                .requestMatchers("/admin/payments/**", "/admin/settings/payment", "/admin/settings/walk-in").hasRole("DIRECTOR")
+
+                // 📝 FEEDBACK EMAIL DELAY (DIRECTOR ONLY): minutes after the time window ends
+                .requestMatchers("/admin/settings/feedback").hasRole("DIRECTOR")
+                // 📅 ADVANCE BOOKINGS (DIRECTOR ONLY): minimum days ahead (today is Walk-in only)
+                .requestMatchers("/admin/settings/advance-booking").hasRole("DIRECTOR")
+
                 // 3. HIGH COMMAND (DIRECTOR ONLY): Restrict sensitive operations
                 .requestMatchers("/admin/staff/**", "/admin/slots/**", "/admin/report", "/admin/export-excel", "/admin/visitor-tally.csv", "/admin/inject-mock-data",
-                                 "/admin/delete/**", "/admin/bans/**", "/admin/employee/add", "/admin/employee/edit/**", "/admin/employee/delete/**",
-                                 "/admin/employee/deactivate/**", "/admin/employee/reactivate/**").hasRole("DIRECTOR")
+                                 "/admin/delete/**", "/admin/bans/**", "/admin/employee/add", "/admin/employee/edit/**", "/admin/employee/delete/**").hasRole("DIRECTOR")
 
                 // 3a. 👤 STAFF ACCOUNTS (DIRECTOR ONLY): Director password and Guard credentials, each confirmed by an emailed code
                 .requestMatchers("/admin/api/staff-accounts", "/admin/api/staff-accounts/**").hasRole("DIRECTOR")
@@ -77,13 +98,18 @@ public class SecurityConfig {
                 // 3b. WEBSITE CONTENT (DIRECTOR ONLY): announcements, visitor guidelines and exhibit photos
                 .requestMatchers("/admin/content", "/admin/content/**").hasRole("DIRECTOR")
 
+                // 3b2. 💱 ADMISSION PRICES (DIRECTOR ONLY): Regular and Discounted prices on the Settings page
+                .requestMatchers("/admin/settings/admission-prices").hasRole("DIRECTOR")
+
                 // 3c. CAPACITY OVERRIDE (DIRECTOR ONLY): Force Approve skips the seat check, so a Guard must not reach it
                 .requestMatchers("/admin/approve-override/**").hasRole("DIRECTOR")
 
-                // 3d. 🛂 BOOKING REVIEW (DIRECTOR ONLY, least privilege): guards work the gate, they never approve, reject or
-                // KYC-review a booking. The full manifest (/admin) sends a guard to the Guard Dashboard (AdminDashboardController).
+                // 3d. 🛂 BOOKING REVIEW (DIRECTOR ONLY, least privilege): guards work the gate, they never approve or reject
+                // a booking. The full manifest (/admin) sends a guard to the Guard Dashboard (AdminDashboardController).
                 .requestMatchers("/admin/approve/**", "/admin/reject/**", "/admin/reject-visitor", "/admin/api/pending-count").hasRole("DIRECTOR")
-                .requestMatchers("/api/booking/**").hasRole("DIRECTOR")
+
+                // 3d-2. ♻️ REINSTATE BOOKING (DIRECTOR ONLY): brings a payment-expired booking back as paid + approved
+                .requestMatchers("/admin/bookings/*/reinstate", "/admin/bookings/*/reinstate-options").hasRole("DIRECTOR")
 
                 // 3e. 🛡️ GUARD DASHBOARD: today's arrivals, visitors inside and visitors who left (the Director may open it too)
                 .requestMatchers("/guard/dashboard", "/guard/dashboard/**").hasAnyRole("GUARD", "DIRECTOR")

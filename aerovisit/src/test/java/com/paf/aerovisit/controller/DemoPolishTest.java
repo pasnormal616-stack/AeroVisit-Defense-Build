@@ -35,7 +35,6 @@ import com.paf.aerovisit.repository.BookingSlotRepository;
 import com.paf.aerovisit.repository.MuseumZoneRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
-import com.paf.aerovisit.service.OcrService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
 import jakarta.servlet.RequestDispatcher;
@@ -59,7 +58,6 @@ class DemoPolishTest {
     @MockitoBean private VisitorRepository repo;
     @MockitoBean private BookingSlotRepository bookingRepo;
     @MockitoBean private EmailService emailService;
-    @MockitoBean private OcrService ocrService;
     @MockitoBean private PredictiveAdvisorService aiService;
     @MockitoBean private MuseumZoneRepository zoneRepo;
 
@@ -144,7 +142,7 @@ class DemoPolishTest {
 
     @Test
     void staffAreasStillSendLoggedOutUsersToTheLogin() throws Exception {
-        for (String path : new String[] {"/admin", "/admin/staff", "/admin/no-such-page", "/uploads/QR_5.png", "/api/notifications", "/api/booking/verify-id"}) {
+        for (String path : new String[] {"/admin", "/admin/staff", "/admin/no-such-page", "/uploads/QR_5.png", "/api/notifications", "/admin/blacklist"}) {
             mvc.perform(get(path)).andExpect(status().is3xxRedirection()).andExpect(redirectedUrlPattern("**/login"));
         }
         mvc.perform(post("/admin/approve/1").with(csrf())).andExpect(redirectedUrlPattern("**/login"));

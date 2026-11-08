@@ -3,6 +3,7 @@
 <head>
     <th:block th:replace="~{fragments/shell :: head}"></th:block>
     <title>AeroVisit - Website Content</title>
+    <link rel="stylesheet" href="/styles/news.css">
     <script src="/js/shell.js"></script>
 </head>
 <body class="av-app">
@@ -40,12 +41,16 @@
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="hero-tab" data-bs-toggle="tab" data-bs-target="#hero" type="button" role="tab" aria-controls="hero" aria-selected="false"><i class="bi bi-film"></i>Hero Slideshow</button>
             </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="news-tab" data-bs-toggle="tab" data-bs-target="#news" type="button" role="tab" aria-controls="news" aria-selected="false"><i class="bi bi-newspaper"></i>News</button>
+            </li>
         </ul>
         <div class="av-toolbar-meta av-mono">
             <span th:text="|${#lists.size(announcements)} announcements|">0 announcements</span>
             <span th:text="|${#lists.size(guidelines)} guidelines|">0 guidelines</span>
             <span th:text="|${#lists.size(photos)} photos|">0 photos</span>
             <span th:text="|${#lists.size(heroSlides)} hero photos|">0 hero photos</span>
+            <span th:text="|${#lists.size(newsPosts)} news posts|">0 news posts</span>
         </div>
     </div>
 
@@ -411,6 +416,61 @@
                                         </div>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- NEWS TAB: the visitor portal's News feed (posts are edited on news-editor.html, NewsAdminController) -->
+        <div class="tab-pane fade" id="news" role="tabpanel" aria-labelledby="news-tab">
+            <div class="av-panel mb-0">
+                <div class="av-panel-head av-panel-head--wrap">
+                    <span><i class="bi bi-newspaper me-2"></i>News Posts</span>
+                    <span class="d-flex flex-wrap align-items-center gap-2">
+                        <span class="av-label">Newest first &middot; only Published posts appear on the portal, Pinned ones at the top</span>
+                        <a th:href="@{/admin/content/news/new}" class="btn-primary-custom" id="newsNewPost"><i class="bi bi-plus-lg"></i>New post</a>
+                    </span>
+                </div>
+                <div th:if="${#lists.isEmpty(newsPosts)}" class="av-empty">
+                    <i class="bi bi-newspaper"></i>No news posts yet. The visitor portal's News tab says "No news yet" until you publish one.
+                </div>
+                <div class="list-group list-group-flush" id="newsPostList">
+                    <div class="list-group-item py-3" th:each="n : ${newsPosts}" th:attr="data-news-row=${n.id()}">
+                        <div class="d-flex justify-content-between align-items-start gap-3">
+                            <div class="d-flex gap-3 flex-grow-1 av-minw-0">
+                                <img th:if="${n.cover() != null}" th:src="${n.cover().url()}" th:alt="${n.cover().alt()}" class="av-news-thumb rounded object-fit-cover" width="64" height="64" loading="lazy">
+                                <span th:if="${n.cover() == null}" class="av-news-thumb av-news-thumb--empty rounded" aria-hidden="true"><i class="bi bi-image"></i></span>
+                                <div class="av-minw-0">
+                                    <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                                        <span th:if="${n.published()}" class="badge-soft badge-approved">Published</span>
+                                        <span th:unless="${n.published()}" class="badge-soft badge-pending">Draft</span>
+                                        <span th:if="${n.pinned()}" class="badge-soft badge-verified"><i class="bi bi-pin-angle-fill"></i> Pinned</span>
+                                        <span class="av-mono av-muted" th:text="${n.dateLabel()}"></span>
+                                        <span class="av-mono av-muted" th:text="${n.photoCount() == 1} ? '1 photo' : |${n.photoCount()} photos|"></span>
+                                    </div>
+                                    <div class="av-cell-strong text-break" th:text="${n.firstLine()}"></div>
+                                </div>
+                            </div>
+                            <div class="d-inline-flex flex-wrap justify-content-end gap-1 flex-shrink-0">
+                                <a th:href="@{/admin/content/news/{id}/edit(id=${n.id()})}" class="btn btn-sm btn-light text-primary p-1" title="Edit" aria-label="Edit post"><i class="bi bi-pencil"></i></a>
+                                <form th:action="@{/admin/content/news/{id}/publish(id=${n.id()})}" method="post">
+                                    <input type="hidden" name="published" th:value="${!n.published()}">
+                                    <button type="submit" class="btn btn-sm btn-light p-1" th:classappend="${n.published()} ? 'text-secondary' : 'text-success'"
+                                            th:title="${n.published()} ? 'Unpublish (back to draft)' : 'Publish'" th:attr="aria-label=${n.published()} ? 'Unpublish post' : 'Publish post'">
+                                        <i class="bi" th:classappend="${n.published()} ? 'bi-eye-slash' : 'bi-eye'"></i>
+                                    </button>
+                                </form>
+                                <form th:action="@{/admin/content/news/{id}/pin(id=${n.id()})}" method="post">
+                                    <input type="hidden" name="pinned" th:value="${!n.pinned()}">
+                                    <button type="submit" class="btn btn-sm btn-light p-1" th:title="${n.pinned()} ? 'Unpin' : 'Pin to the top'" th:attr="aria-label=${n.pinned()} ? 'Unpin post' : 'Pin post'">
+                                        <i class="bi" th:classappend="${n.pinned()} ? 'bi-pin-angle-fill' : 'bi-pin-angle'"></i>
+                                    </button>
+                                </form>
+                                <form th:action="@{/admin/content/news/{id}/delete(id=${n.id()})}" method="post" onsubmit="return confirm('Delete this post and all its photos permanently? This cannot be undone.');">
+                                    <button type="submit" class="btn btn-sm btn-light text-danger p-1" title="Delete" aria-label="Delete post"><i class="bi bi-trash"></i></button>
+                                </form>
                             </div>
                         </div>
                     </div>

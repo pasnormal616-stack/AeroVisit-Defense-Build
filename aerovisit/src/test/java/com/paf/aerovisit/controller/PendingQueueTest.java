@@ -29,15 +29,17 @@ class PendingQueueTest {
         v.setVisitDate(date);
         v.setTimeWindow(AM);
         v.setGroupSize(1);
-        v.setOcrNameMatch(true);
         v.setSpecialConsideration("Not Applicable");
         return v;
     }
 
-    // Morning has 40 seats left on every date except tomorrow (3 left); Afternoon is full
+    // Morning: 40 seats left on every date (10 held); tomorrow it is exactly full (50 held, counting the pending
+    // requests themselves, which hold their seats now). Afternoon is over-booked (21 held for 20 seats).
     private static final Function<LocalDate, List<PendingQueue.SeatWindow>> SEATS = d -> List.of(
-        new PendingQueue.SeatWindow(AM, "Morning", 50, d.equals(TODAY.plusDays(1)) ? 3 : 40),
-        new PendingQueue.SeatWindow(PM, "Afternoon", 20, 0));
+        d.equals(TODAY.plusDays(1))
+            ? new PendingQueue.SeatWindow(AM, "Morning", 50, 0, 50)
+            : new PendingQueue.SeatWindow(AM, "Morning", 50, 40, 10),
+        new PendingQueue.SeatWindow(PM, "Afternoon", 20, 0, 21));
 
     private static PendingQueue.View build(List<Visitor> requests) {
         return PendingQueue.build(requests, TODAY, SEATS, Set.of(), false);
@@ -100,15 +102,21 @@ class PendingQueueTest {
     void triageTags() {
         Visitor manual = v(1, TODAY.plusDays(3));
         manual.setStatus("PENDING_MANUAL_REVIEW");
-        manual.setOcrNameMatch(false);
-        assertThat(tags(manual)).isEqualTo("manual unverified");
+        assertThat(tags(manual)).isEqualTo("manual");
 
+        Visitor nameBan = v(10, TODAY.plusDays(3));
+        nameBan.setPossibleBanMatch("Juan Dela Cruz");
+        assertThat(tags(nameBan)).isEqualTo("banname");
+
+        // A pending request holds its own seats: a slot exactly full (itself included) is no conflict
         Visitor fits = v(2, TODAY.plusDays(1));
-        fits.setGroupSize(3);   // exactly the 3 seats left tomorrow morning
+        fits.setGroupSize(3);
         assertThat(tags(fits)).isEqualTo("soon");
-        Visitor tooBig = v(3, TODAY.plusDays(1));
-        tooBig.setGroupSize(4);
-        assertThat(tags(tooBig)).isEqualTo("conflict soon");
+        Visitor overBooked = v(3, TODAY.plusDays(1));
+        overBooked.setGroupSize(4);
+        PendingQueue.View over = PendingQueue.build(List.of(overBooked), TODAY,
+            d -> List.of(new PendingQueue.SeatWindow(AM, "Morning", 50, 0, 51)), Set.of(), false);
+        assertThat(over.rowInfo().get(3L).tags()).isEqualTo("conflict soon");
 
         Visitor fullWindow = v(4, TODAY.plusDays(3));
         fullWindow.setTimeWindow(PM);
@@ -117,11 +125,11 @@ class PendingQueueTest {
         noSlot.setTimeWindow("Evening (06:00 PM - 08:00 PM)");
         assertThat(tags(noSlot)).isEqualTo("conflict");
 
-        Visitor master = v(6, TODAY);
-        master.setPurpose(Visitor.MASTER_BOOKING_PURPOSE);
-        master.setTimeWindow(PM);
-        master.setGroupSize(50);
-        assertThat(tags(master)).isEqualTo("large master soon"); // Master Bookings skip the seat count
+        Visitor oldMaster = v(6, TODAY);
+        oldMaster.setPurpose("Educational Tour (Master Booking Request)");
+        oldMaster.setTimeWindow(PM);
+        oldMaster.setGroupSize(50);
+        assertThat(tags(oldMaster)).isEqualTo("conflict large soon"); // no exemption: an older Master Booking is counted like any booking
 
         Visitor fifteen = v(7, TODAY.plusDays(3));
         fifteen.setGroupSize(15);
@@ -144,9 +152,9 @@ class PendingQueueTest {
         manual.setStatus("PENDING_MANUAL_REVIEW");
         PendingQueue.View view = build(List.of(manual, v(2, TODAY), v(3, TODAY.minusDays(4))));
         assertThat(view.chips()).extracting(PendingQueue.Chip::key)
-            .containsExactly("manual", "unverified", "duplicate", "conflict", "large", "master", "special", "soon", "overdue");
-        assertThat(view.chips()).extracting(PendingQueue.Chip::count).containsExactly(1, 0, 0, 0, 0, 0, 0, 2, 1);
-        assertThat(view.chips().get(4).label()).isEqualTo("Large group (16+)");
+            .containsExactly("banname", "manual", "conflict", "large", "special", "soon", "overdue", "awaiting");
+        assertThat(view.chips()).extracting(PendingQueue.Chip::count).containsExactly(0, 1, 0, 0, 0, 2, 1, 0);
+        assertThat(view.chips().get(3).label()).isEqualTo("Large group (16+)");
     }
 
     @Test

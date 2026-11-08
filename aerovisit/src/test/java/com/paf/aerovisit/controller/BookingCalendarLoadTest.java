@@ -25,7 +25,6 @@ import com.paf.aerovisit.model.Visitor;
 import com.paf.aerovisit.repository.BookingSlotRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
-import com.paf.aerovisit.service.OcrService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
 /**
@@ -45,7 +44,6 @@ class BookingCalendarLoadTest {
     @MockitoBean private VisitorRepository repo;
     @MockitoBean private BookingSlotRepository bookingRepo;
     @MockitoBean private EmailService emailService;
-    @MockitoBean private OcrService ocrService;
     @MockitoBean private PredictiveAdvisorService aiService;
 
     private static BookingSlot slot(String window, int max) {
@@ -78,10 +76,23 @@ class BookingCalendarLoadTest {
     @SuppressWarnings("unchecked")
     void aSlotNeverShowsMoreTakenThanItHas() throws Exception {
         when(bookingRepo.findBySlotDateGreaterThanEqualOrderBySlotDateAsc(any())).thenReturn(List.of(slot(MORNING, 10)));
-        when(repo.sumSeatsHeldFrom(any(), any())).thenReturn(List.<Object[]>of(new Object[] {DAY, MORNING, 14L})); // overbooked by a VIP override
+        when(repo.sumSeatsHeldFrom(any(), any())).thenReturn(List.<Object[]>of(new Object[] {DAY, MORNING, 14L})); // overbooked by a Force Approve
 
         List<Map<String, Object>> slots = (List<Map<String, Object>>) mvc.perform(get("/"))
                 .andReturn().getModelAndView().getModel().get("calendarSlots");
         assertThat(slots).extracting(s -> s.get("remaining")).containsExactly(0);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void anApprovedOlderMasterBookingNoLongerClosesItsDate() throws Exception {
+        // Its 40 seats are in the database totals like any group's (SeatsHeldQueryTest); the rest of the day stays bookable
+        when(bookingRepo.findBySlotDateGreaterThanEqualOrderBySlotDateAsc(any())).thenReturn(List.of(slot(MORNING, 100), slot(AFTERNOON, 50)));
+        when(repo.sumSeatsHeldFrom(any(), any())).thenReturn(List.<Object[]>of(new Object[] {DAY, MORNING, 40L}));
+
+        List<Map<String, Object>> slots = (List<Map<String, Object>>) mvc.perform(get("/"))
+                .andReturn().getModelAndView().getModel().get("calendarSlots");
+        assertThat(slots).extracting(s -> s.get("timeWindow"), s -> s.get("remaining")).containsExactlyInAnyOrder(
+                org.assertj.core.groups.Tuple.tuple(MORNING, 60), org.assertj.core.groups.Tuple.tuple(AFTERNOON, 50));
     }
 }

@@ -76,7 +76,7 @@ class TwoGatesOnePassTest {
 
         assertThat(v.getStatus()).isEqualTo("CHECKED-IN");
         verify(repo).save(v);
-        verify(emailService, timeout(2000)).sendCheckInGuidelines("juan@example.com", "Juan Dela Cruz", null);
+        verify(emailService, timeout(2000)).sendCheckInGuidelines("juan@example.com", "Juan Dela Cruz");
     }
 
     @Test
@@ -93,7 +93,7 @@ class TwoGatesOnePassTest {
         assertThat(v.getCheckedInBy()).isNull();
         verify(repo, never()).save(any());
         Thread.sleep(300); // a background email would have started by now
-        verify(emailService, never()).sendCheckInGuidelines(anyString(), anyString(), any());
+        verify(emailService, never()).sendCheckInGuidelines(anyString(), anyString());
     }
 
     @Test

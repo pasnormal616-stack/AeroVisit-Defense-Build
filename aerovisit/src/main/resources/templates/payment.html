@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/visitor :: head}"></th:block>
+    <meta name="referrer" content="no-referrer">
+    <title>Payment - AeroVisit</title>
+</head>
+<body class="vp vp--immersive">
+
+<th:block th:replace="~{fragments/visitor :: backdrop}"></th:block>
+
+<th:block th:replace="~{fragments/visitor :: topnav(false)}"></th:block>
+
+<!-- 💳 PAYMENT PAGE (PaymentController): reached only from the emailed link's unguessable token or the Manage Booking
+     sign-in. Visitors pay on Landbank Link.BizPortal (outside AeroVisit), then upload a screenshot of the receipt. -->
+<div class="vp-page">
+    <div class="vp-page-band" aria-hidden="true"></div>
+    <main class="vp-page-main">
+        <div class="container">
+            <div class="vp-narrow">
+                <div class="vp-bezel vp-reveal">
+                    <div class="vp-bezel-core vp-card-pad">
+
+                        <div th:if="${error}" class="vp-alert" role="alert">
+                            <i class="bi bi-exclamation-octagon-fill" aria-hidden="true"></i> <span th:text="${error}"></span>
+                        </div>
+                        <div th:if="${success}" class="vp-alert vp-alert--ok" role="status">
+                            <i class="bi bi-check-circle-fill" aria-hidden="true"></i> <span th:text="${success}"></span>
+                        </div>
+
+                        <!-- Invalid or expired link: nothing about any booking is shown -->
+                        <th:block th:if="${invalid != null}">
+                            <div class="vp-status-ico vp-status-ico--gold"><i class="bi bi-shield-lock" aria-hidden="true"></i></div>
+                            <h1 class="vp-title-xl">Payment</h1>
+                            <p class="vp-lead" th:text="${invalid}"></p>
+                            <a href="/#manage" class="vp-btn vp-btn--primary vp-btn--block">Go to Booking Sign-In <span class="vp-btn-icon"><i class="bi bi-arrow-right"></i></span></a>
+                        </th:block>
+
+                        <th:block th:if="${invalid == null and booking != null}">
+                            <div class="vp-mb-head">
+                                <div>
+                                    <span class="vp-mb-kicker">Reference ID &middot; <span th:text="${booking.referenceId}"></span></span>
+                                    <h1 class="vp-mb-title" th:text="${walkIn} ? 'Pay for Your Walk-in Visit' : 'Pay for Your Visit'">Pay for Your Visit</h1>
+                                </div>
+                                <span class="vp-status-tag" th:text="${booking.paymentStatusLabel()}"
+                                      th:classappend="${booking.paymentStatus == 'PAID'} ? 'vp-status-tag--ok' : (${booking.paymentStatus == 'PAYMENT_REJECTED'} ? 'vp-status-tag--warn' : '')"></span>
+                            </div>
+
+                            <th:block th:if="${!needsPayment}">
+                                <div class="vp-note"><i class="bi bi-info-circle" aria-hidden="true"></i><div>This booking does not need a payment right now.</div></div>
+                            </th:block>
+
+                            <th:block th:if="${needsPayment}">
+                                <!-- Billing number and amount -->
+                                <div class="vp-pay-billing">
+                                    <div>
+                                        <span class="vp-pay-label">Billing Number</span>
+                                        <strong class="vp-pay-number" th:text="${booking.billingNumber}">000123</strong>
+                                    </div>
+                                    <div>
+                                        <span class="vp-pay-label">Amount to Pay</span>
+                                        <strong class="vp-pay-amount" th:text="${booking.amountDueText()}">PHP 650.00</strong>
+                                    </div>
+                                    <p class="vp-pay-keep">Keep your billing number for reference.</p>
+                                </div>
+                                <dl class="vp-details">
+                                    <div class="vp-details-row" th:if="${booking.admissionCounted()}"><dt>Admission</dt><dd th:text="${booking.admissionSummary()}"></dd></div>
+                                    <div class="vp-details-row"><dt>Visit</dt><dd th:text="|${booking.visitDate} · ${booking.timeWindow}|"></dd></div>
+                                    <div class="vp-details-row" th:if="${booking.paymentStatus != 'PAID' and deadline != ''}"><dt>Payment Deadline</dt><dd class="is-primary" th:text="${deadline}"></dd></div>
+                                </dl>
+
+                                <div th:if="${booking.paymentStatus == 'PAYMENT_REJECTED' and booking.paymentRejectionReason != null}" class="vp-alert" role="alert">
+                                    <i class="bi bi-x-circle-fill" aria-hidden="true"></i>
+                                    <span><strong>Your last receipt was not accepted:</strong> <span th:text="${booking.paymentRejectionReason}"></span> Please upload a new one.</span>
+                                </div>
+                                <!-- 🚶 Walk-ins pay now and go to the gate: the guard checks the receipt, the LANDBANK confirmation and the ID -->
+                                <div th:if="${walkIn and booking.paymentStatus == 'AWAITING_PAYMENT'}" class="vp-note">
+                                    <i class="bi bi-person-walking" aria-hidden="true"></i><div><strong>Walk-in for today.</strong> Pay now, upload the screenshot of your receipt, then show the LANDBANK confirmation on your phone to the guard at the gate.</div>
+                                </div>
+                                <!-- 💳 Pay first: an advance booking was just made; its seats are held while the visitor pays -->
+                                <div th:if="${!walkIn and booking.status == 'AWAITING_RECEIPT'}" class="vp-note">
+                                    <i class="bi bi-calendar-check" aria-hidden="true"></i><div><strong>Booking received, your seats are reserved.</strong> Pay through LANDBANK and upload the screenshot of your receipt before the deadline. We also emailed this payment link to <strong th:text="${booking.email}"></strong>. The museum reviews your booking once the receipt is in.</div>
+                                </div>
+                                <div th:if="${booking.paymentStatus == 'PROOF_SUBMITTED' and !walkIn}" class="vp-note">
+                                    <i class="bi bi-hourglass-split" aria-hidden="true"></i><div><strong>Your receipt is in and your booking is being reviewed.</strong> We will email your Entry QR Code once the museum approves your booking and verifies your payment. You may upload a clearer screenshot below if needed.</div>
+                                </div>
+                                <div th:if="${booking.paymentStatus == 'PROOF_SUBMITTED' and walkIn}" class="vp-note">
+                                    <i class="bi bi-hourglass-split" aria-hidden="true"></i><div><strong>A guard will check your receipt at the gate.</strong> Please go to the gate with your ID and the LANDBANK confirmation on your phone. You may upload a clearer screenshot below if needed.</div>
+                                </div>
+                                <div th:if="${booking.paymentStatus == 'PAID' and !walkIn}" class="vp-note">
+                                    <i class="bi bi-patch-check" aria-hidden="true"></i><div><strong>Your payment has been verified.</strong> Your Entry QR Code has been emailed to you.</div>
+                                </div>
+                                <div th:if="${booking.paymentStatus == 'PAID' and walkIn}" class="vp-note">
+                                    <i class="bi bi-patch-check" aria-hidden="true"></i><div><strong>Payment verified, go to the gate.</strong> Show your ID and your Reference ID to the guard.</div>
+                                </div>
+
+                                <!-- 🚶 The walk-in gate QR: the guard scans it to open this walk-in's Process panel -->
+                                <th:block th:if="${walkInQr != null}"><div th:replace="~{fragments/walkin-qr :: pass(${walkInQr}, ${booking.referenceId}, 'page')}"></div></th:block>
+
+                                <th:block th:if="${booking.paymentStatus != 'PAID'}">
+                                    <!-- How to pay on Landbank Link.BizPortal -->
+                                    <h2 class="vp-mb-section">How to Pay</h2>
+                                    <th:block th:replace="~{fragments/payment-steps :: steps(${booking.billingNumber}, ${booking.amountDueText()}, ${booking.amountDuePlain()}, 'page')}"></th:block>
+                                    <a th:if="${landbankUrl != null}" th:href="${landbankUrl}" target="_blank" rel="noopener noreferrer"
+                                       class="vp-btn vp-btn--gold vp-btn--block">Open LANDBANK Payment Page <span class="vp-btn-icon"><i class="bi bi-box-arrow-up-right" aria-hidden="true"></i></span><span class="visually-hidden"> (opens in a new tab)</span></a>
+                                    <div th:if="${landbankUrl == null}" class="vp-note">
+                                        <i class="bi bi-envelope" aria-hidden="true"></i>
+                                        <div>The online payment page is not available right now. Please contact the museum<th:block th:if="${contactEmail != null}"> at <a th:href="|mailto:${contactEmail}|" th:text="${contactEmail}"></a></th:block> for payment instructions.</div>
+                                    </div>
+
+                                    <!-- Upload Proof of Payment -->
+                                    <h2 class="vp-mb-section">Upload Proof of Payment</h2>
+                                    <form th:if="${uploadBlocker == null}" th:action="@{/payment/proof}" method="post" enctype="multipart/form-data" class="vp-pay-upload">
+                                        <input type="hidden" name="token" th:if="${paymentToken != null}" th:value="${paymentToken}">
+                                        <input type="hidden" name="formToken" th:if="${formToken != null}" th:value="${formToken}">
+                                        <label class="form-label" for="receiptInput">Screenshot of your LANDBANK receipt</label>
+                                        <input type="file" id="receiptInput" name="receipt" class="form-control" required
+                                               accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" aria-describedby="receiptHelp">
+                                        <div class="form-text" id="receiptHelp">JPG, PNG or WEBP, up to <span th:text="${maxReceiptMb}">5</span> MB.</div>
+                                        <button type="submit" class="vp-btn vp-btn--primary vp-btn--block mt-3">Submit Proof of Payment <span class="vp-btn-icon"><i class="bi bi-upload" aria-hidden="true"></i></span></button>
+                                    </form>
+                                    <div th:if="${uploadBlocker != null}" class="vp-note"><i class="bi bi-lock" aria-hidden="true"></i><div th:text="${uploadBlocker}"></div></div>
+                                </th:block>
+                            </th:block>
+
+                            <p class="vp-foot-note" th:if="${contactEmail != null}">Questions about payment? Email
+                                <a th:href="|mailto:${contactEmail}|" th:text="${contactEmail}">museum@example.com</a></p>
+                            <div class="vp-mb-signout">
+                                <a th:href="@{/manage-booking}" class="vp-btn vp-btn--ghost vp-btn--block">Back to Manage Booking</a>
+                            </div>
+                        </th:block>
+
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+    <th:block th:replace="~{fragments/visitor :: footer}"></th:block>
+</div>
+
+<th:block th:replace="~{fragments/visitor :: scripts}"></th:block>
+<script>
+    // Refuses a file over the size limit before it is sent (the server checks again)
+    (function () {
+        var input = document.getElementById('receiptInput');
+        if (!input) return;
+        input.addEventListener('change', function () {
+            var file = input.files[0];
+            input.setCustomValidity(file && file.size > 5 * 1024 * 1024 ? 'The receipt is too large. Please upload a screenshot of 5 MB or less.' : '');
+        });
+    })();
+
+    // 💳 Copy buttons next to the exact LANDBANK values (fragments/payment-steps). The Clipboard API needs a secure page;
+    // older iPhone Safari and plain http fall back to a selected, read-only textarea and execCommand('copy').
+    (function () {
+        var status = document.querySelector('[data-copy-status]');
+        function fallbackCopy(text) {
+            var area = document.createElement('textarea');
+            area.value = text;
+            area.setAttribute('readonly', '');
+            area.style.position = 'fixed';
+            area.style.top = '0';
+            area.style.left = '0';
+            area.style.opacity = '0';
+            area.style.fontSize = '16px'; // stops iPhone Safari zooming in
+            document.body.appendChild(area);
+            area.focus();
+            area.setSelectionRange(0, text.length);
+            var ok = false;
+            try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+            document.body.removeChild(area);
+            return ok;
+        }
+        function copied(button, ok) {
+            var original = button.getAttribute('data-label') || button.textContent;
+            button.setAttribute('data-label', original);
+            button.textContent = ok ? 'Copied' : 'Copy failed';
+            button.classList.toggle('is-copied', ok);
+            if (status) status.textContent = ok ? 'Copied ' + button.getAttribute('data-copy') : 'Copy failed. Please type it.';
+            clearTimeout(button._copyTimer);
+            button._copyTimer = setTimeout(function () {
+                button.textContent = original;
+                button.classList.remove('is-copied');
+            }, 2000);
+        }
+        document.querySelectorAll('.vp-copy[data-copy]').forEach(function (button) {
+            button.addEventListener('click', function () {
+                var text = button.getAttribute('data-copy');
+                if (navigator.clipboard && window.isSecureContext) {
+                    navigator.clipboard.writeText(text).then(function () { copied(button, true); },
+                        function () { copied(button, fallbackCopy(text)); });
+                } else {
+                    copied(button, fallbackCopy(text));
+                }
+            });
+        });
+    })();
+</script>
+</body>
+</html>

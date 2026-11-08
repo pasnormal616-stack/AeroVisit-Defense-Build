@@ -2,7 +2,7 @@
 <html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
 <head>
     <th:block th:replace="~{fragments/shell :: head}"></th:block>
-    <title>AeroVisit - Master Duty Roster</title>
+    <title>AeroVisit - Duty Roster</title>
     <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js'></script>
     <script src="/js/shell.js"></script>
 </head>
@@ -18,8 +18,8 @@
     <div class="av-pagehead">
         <div>
             <span class="av-mono av-code">SEC-05</span>
-            <h1 class="av-pagehead-title">Master Duty Roster</h1>
-            <p class="av-pagehead-desc">Monitor and manage personnel shift schedules for the facility.</p>
+            <h1 class="av-pagehead-title">Duty Roster</h1>
+            <p class="av-pagehead-desc">Who is on duty, by date and time window.</p>
         </div>
         <div class="av-pagehead-actions">
             <a href="/admin" class="btn btn-light d-lg-none"><i class="bi bi-arrow-left"></i> Back to Dashboard</a>
@@ -28,11 +28,6 @@
 
     <div class="av-toolbar">
         <div class="av-tabs"><span class="av-tab is-active"><i class="bi bi-calendar3"></i> Month / List</span></div>
-        <div class="av-toolbar-meta av-mono">
-            <span class="av-legend av-legend--guard">Gate Guard</span>
-            <span class="av-legend av-legend--guide">Tour Guide</span>
-            <span class="av-legend av-legend--admin">Admin</span>
-        </div>
     </div>
 
     <!-- CALENDAR SECTION -->
@@ -40,6 +35,23 @@
         <div class="av-panel-head"><span>Personnel Schedule</span><span class="av-label">Click a shift for details</span></div>
         <div class="av-panel-body">
             <div class="av-cal-scroll"><div id='guardCalendar'></div></div>
+        </div>
+    </div>
+
+    <!-- LIST: by date, then time window, then name (ManagementController.byDateThenWindow) -->
+    <div class="av-panel">
+        <div class="av-panel-head"><span>Duty List</span><span class="av-label">By date, then time window</span></div>
+        <div class="av-panel-body" id="dutyList">
+            <p th:if="${#maps.isEmpty(groupedShifts)}" class="av-empty mb-0">No one is on the duty roster yet.</p>
+            <section th:each="day : ${groupedShifts}" class="mb-3">
+                <h2 class="h6 fw-bold mb-2" th:text="${#temporals.format(day.key, 'EEEE, MMMM d, yyyy')}">Monday, October 5, 2026</h2>
+                <div th:each="win : ${day.value}" class="ms-2 mb-2">
+                    <div class="av-label av-mono" th:text="${#strings.isEmpty(win.key) ? 'No time window' : win.key}">Morning (08:00 AM - 12:00 PM)</div>
+                    <ul class="mb-0">
+                        <li th:each="shift : ${win.value}" class="text-break" th:text="${shift.staffName}">Sgt. Reyes</li>
+                    </ul>
+                </div>
+            </section>
         </div>
     </div>
 </div>
@@ -56,8 +68,7 @@
             <div class="modal-body text-center p-4">
                 <div class="mb-4">
                     <p class="av-label mb-1">Assigned Personnel</p>
-                    <h4 id="modalStaffName" class="fw-bold mb-2 text-uppercase"></h4>
-                    <span id="modalStaffRole" class="av-badge av-badge--info"></span>
+                    <h4 id="modalStaffName" class="fw-bold mb-2 text-uppercase text-break"></h4>
                 </div>
 
                 <ul class="av-kv av-detail-list">
@@ -78,38 +89,25 @@
     document.addEventListener('DOMContentLoaded', function() {
 
         // 1. Pull the raw schedule data from the Java backend
-        var rawRoster = /*[[${shifts}]]*/ [];
+        var rawRoster = /*[[${rosterEntries}]]*/ [];
 
-        // 2. Package it into FullCalendar events
+        // 2. Package it into FullCalendar events: one colour for everyone (no roles), "Name (window)"
         var rosterEvents = rawRoster.map(function(staff) {
-
-            // Role colours mapped to the PAF palette (Ultramarine / Gold / Slate)
-            var bgColor = '#475569'; // Admin (Slate)
-            var textColor = '#ffffff';
-
-            if (staff.role === 'Gate Guard') {
-                bgColor = '#002B80'; // PAF Ultramarine
-            } else if (staff.role === 'Tour Guide') {
-                bgColor = '#8A6D12'; // PAF Gold (AA-contrast tone for white text)
-                textColor = '#ffffff';
-            }
-
-            // Shorten the shift time string for the tiny block view
-            var tinyShift = "ALL DAY";
-            if (staff.shiftTime && staff.shiftTime.includes("Morning")) tinyShift = "AM";
-            if (staff.shiftTime && staff.shiftTime.includes("Afternoon")) tinyShift = "PM";
+            var tinyShift = staff.shiftTime || '';
+            if (tinyShift.includes("Morning")) tinyShift = "AM";
+            else if (tinyShift.includes("Afternoon")) tinyShift = "PM";
+            else if (tinyShift.includes("Full Day")) tinyShift = "ALL DAY";
 
             return {
                 id: staff.id,
-                title: staff.staffName + '\n(' + tinyShift + ')',
+                title: staff.staffName + (tinyShift ? '
+(' + tinyShift + ')' : ''),
                 start: staff.dutyDate,
-                backgroundColor: bgColor,
-                textColor: textColor,
+                backgroundColor: '#002B80', // PAF Ultramarine
+                textColor: '#ffffff',
                 borderColor: 'transparent',
-                // Safely packing the custom data
                 extendedProps: {
                     staffName: staff.staffName,
-                    role: staff.role,
                     dutyDate: staff.dutyDate,
                     fullShift: staff.shiftTime
                 }
@@ -135,12 +133,11 @@
                     var props = info.event.extendedProps;
 
                     // Format the date to look nice (e.g., "Mon, Oct 12, 2026")
-                    let dateObj = new Date(props.dutyDate);
+                    let dateObj = new Date(props.dutyDate + 'T00:00:00');
                     let formattedDate = dateObj.toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
 
                     // Inject the packed data into the Modal HTML
                     document.getElementById('modalStaffName').innerText = props.staffName;
-                    document.getElementById('modalStaffRole').innerText = props.role;
                     document.getElementById('modalDutyDate').innerText = formattedDate;
                     document.getElementById('modalShiftTime').innerText = props.fullShift;
 

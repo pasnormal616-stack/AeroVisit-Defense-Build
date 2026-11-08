@@ -51,21 +51,19 @@ class AiUnreachableFallbackTest {
     }
 
     @Test
-    void aBookingThatFindsTheAiServerDownPausesTheCheckForTheNextOnes() throws Exception {
+    void aCallThatFindsTheAiServerDownPausesTheAiForTheNextOnes() throws Exception {
         AiSwitchTest.FakeSwitch ai = switchedOn();
-        KycService kyc = new KycService(mock(OcrService.class));
-        kyc.apiBaseUrl = deadAddress();
-        kyc.aiSwitch = ai;
+        PredictiveAdvisorService advisor = new PredictiveAdvisorService();
+        advisor.apiBaseUrl = deadAddress();
+        advisor.aiSwitch = ai;
 
-        KycService.KycResult first = kyc.screen(new byte[] {1}, new byte[] {2}, "Juan", "Dela Cruz");
-        assertThat(first.status()).isEqualTo(KycService.MANUAL_REVIEW);
-        assertThat(first.reason()).isEqualTo("AI_SERVICE_UNAVAILABLE");
+        assertThat(advisor.fetchTurnoutPrediction(3, "Clear", 10)).isNull();
         assertThat(ai.state()).isEqualTo(AiSwitch.State.STARTING); // paused, the Director's choice is still ON
         assertThat(ai.wanted()).isTrue();
 
-        // The next visitor isn't sent to the dead server at all
-        KycService.KycResult next = kyc.screen(new byte[] {1}, new byte[] {2}, "Ana", "Reyes");
-        assertThat(next.reason()).isEqualTo("AI_OFF");
+        // The next call isn't sent to the dead server at all
+        assertThat(ai.enabled()).isFalse();
+        assertThat(advisor.chatWithSgtAero("hello", "SGT-ABCDEF12")).isNull();
 
         // ...and once the AI server answers again (the 30-second check), the features are back
         ai.answers = true;
@@ -126,7 +124,6 @@ class AiUnreachableFallbackTest {
     @Test
     void theTimeOutsBeingAvoidedAreReal() {
         // Documents why the fallback matters: without it each call to a silent server waits this long
-        assertThat(KycService.TIMEOUT).isGreaterThanOrEqualTo(Duration.ofSeconds(10));
         assertThat(PredictiveAdvisorService.TIMEOUT).isGreaterThanOrEqualTo(Duration.ofSeconds(10));
     }
 }

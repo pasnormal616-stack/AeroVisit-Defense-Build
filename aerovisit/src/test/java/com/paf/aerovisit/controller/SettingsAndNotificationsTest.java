@@ -58,7 +58,7 @@ class SettingsAndNotificationsTest {
     @Test
     @SuppressWarnings("unchecked")
     void pendingCountReturnsTheApprovalQueueSizeAsUncachedJson() throws Exception {
-        when(repo.countByStatusIn(anyCollection())).thenReturn(4L);
+        when(repo.countPendingQueue()).thenReturn(4L);
 
         mvc.perform(get("/admin/api/pending-count"))
             .andExpect(status().isOk())
@@ -66,10 +66,8 @@ class SettingsAndNotificationsTest {
             .andExpect(jsonPath("$.count").value(4))
             .andExpect(header().string("Cache-Control", containsString("no-store")));
 
-        ArgumentCaptor<Collection<String>> statuses = ArgumentCaptor.forClass(Collection.class);
-        verify(repo).countByStatusIn(statuses.capture());
-        // Same statuses the Pending Approval tab lists
-        assertThat(statuses.getValue()).containsExactlyInAnyOrder("PENDING", "VERIFIED", "PENDING_MANUAL_REVIEW");
+        // The same query the Pending Approval tab lists (one tab: no row waiting for a receipt)
+        verify(repo).countPendingQueue();
     }
 
     @Test
@@ -77,7 +75,7 @@ class SettingsAndNotificationsTest {
     void guardsCannotReadThePendingCount() throws Exception {
         // Booking review is Director-only (least privilege), so the pending queue's size is too
         mvc.perform(get("/admin/api/pending-count")).andExpect(status().isForbidden());
-        verify(repo, never()).countByStatusIn(anyCollection());
+        verify(repo, never()).countPendingQueue();
     }
 
     @Test
@@ -85,7 +83,7 @@ class SettingsAndNotificationsTest {
         mvc.perform(get("/admin/api/pending-count").with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.anonymous()))
             .andExpect(status().is3xxRedirection())
             .andExpect(redirectedUrlPattern("**/login"));
-        verify(repo, never()).countByStatusIn(any());
+        verify(repo, never()).countPendingQueue();
     }
 
     @Test

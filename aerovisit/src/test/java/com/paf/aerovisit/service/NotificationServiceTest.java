@@ -63,18 +63,19 @@ class NotificationServiceTest {
     }
 
     @Test
-    void largeGroupsAndMasterBookingsAreCalledOut() {
+    void largeGroupsAreCalledOutAndEveryRequestIsAPlainBookingRequest() {
         service.bookingRequest(visitor(16));
         assertThat(saved().getMessage()).endsWith("group of 16. Large group.");
 
+        // Master Booking was removed: a request that still carries its old purpose is an ordinary booking request
         AdminNotificationRepository repo2 = mock(AdminNotificationRepository.class);
-        Visitor master = visitor(80);
-        master.setPurpose(Visitor.MASTER_BOOKING_PURPOSE);
-        new NotificationService(repo2).bookingRequest(master);
+        Visitor old = visitor(80);
+        old.setPurpose("Educational Tour (Master Booking Request)");
+        new NotificationService(repo2).bookingRequest(old);
         ArgumentCaptor<AdminNotification> captor = ArgumentCaptor.forClass(AdminNotification.class);
         verify(repo2).save(captor.capture());
-        assertThat(captor.getValue().getType()).isEqualTo(AdminNotification.TYPE_MASTER_BOOKING_REQUEST);
-        assertThat(captor.getValue().getMessage()).isEqualTo("requested a Master Booking for Mon, Oct 12 · group of 80.");
+        assertThat(captor.getValue().getType()).isEqualTo(AdminNotification.TYPE_BOOKING_REQUEST);
+        assertThat(captor.getValue().getMessage()).startsWith("requested a visit on ").endsWith("group of 80. Large group.");
     }
 
     @Test
@@ -97,15 +98,6 @@ class NotificationServiceTest {
         AdminNotification n = saved();
         assertThat(n.getType()).isEqualTo(AdminNotification.TYPE_BOOKING_RESCHEDULED);
         assertThat(n.getMessage()).isEqualTo("changed their booking to Mon, Oct 12 · Morning · group of 4. It needs approval again.");
-    }
-
-    @Test
-    void aCancellationLinksToThatDay() {
-        service.bookingCancelled(visitor(1));
-        AdminNotification n = saved();
-        assertThat(n.getType()).isEqualTo(AdminNotification.TYPE_BOOKING_CANCELLED);
-        assertThat(n.getMessage()).isEqualTo("cancelled their visit on Mon, Oct 12 · Morning · 1 visitor.");
-        assertThat(n.getTargetUrl()).isEqualTo("/admin?filter=all&dateFilter=2026-10-12");
     }
 
     @Test
@@ -146,8 +138,11 @@ class NotificationServiceTest {
     }
 
     @Test
-    void onlyBigGroupsAndMasterBookingsAreAnnouncedOnTheirDay() {
+    void onlyBigGroupsAreAnnouncedOnTheirDay() {
         service.arrivingToday(visitor(15));
+        Visitor oldSmallMaster = visitor(10);
+        oldSmallMaster.setPurpose("Educational Tour (Master Booking Request)");
+        service.arrivingToday(oldSmallMaster);
         verify(repo, never()).save(any());
         service.arrivingToday(visitor(16));
         AdminNotification n = saved();
@@ -155,18 +150,6 @@ class NotificationServiceTest {
         assertThat(n.getMessage()).isEqualTo("arrives today · Morning · group of 16.");
         assertThat(n.getDedupeKey()).isEqualTo("ARRIVING:7:2026-10-12");
         assertThat(AdminNotification.GUARD_TYPES).contains(AdminNotification.TYPE_ARRIVING_TODAY);
-    }
-
-    @Test
-    void aBannedFaceAttemptLinksToTheBanListWithoutABooking() {
-        Visitor attempt = visitor(1);
-        attempt.setId(null);
-        service.bannedFaceAttempt(attempt);
-        AdminNotification n = saved();
-        assertThat(n.getType()).isEqualTo(AdminNotification.TYPE_BANNED_FACE_ATTEMPT);
-        assertThat(n.getMessage()).isEqualTo("tried to book Mon, Oct 12 but their face matches a ban. The booking was refused.");
-        assertThat(n.getTargetUrl()).isEqualTo("/admin/blacklist");
-        assertThat(n.getVisitorId()).isNull();
     }
 
     @Test
@@ -238,11 +221,9 @@ class NotificationServiceTest {
         v.setFeedbackSentiment("NEGATIVE");
         assertThatCode(() -> service.bookingRequest(v)).doesNotThrowAnyException();
         assertThatCode(() -> service.bookingRescheduled(v)).doesNotThrowAnyException();
-        assertThatCode(() -> service.bookingCancelled(v)).doesNotThrowAnyException();
         assertThatCode(() -> service.slotFilling(v.getVisitDate(), MORNING, 0, 40)).doesNotThrowAnyException();
         assertThatCode(() -> service.gateDenied(v, "x")).doesNotThrowAnyException();
         assertThatCode(() -> service.arrivingToday(v)).doesNotThrowAnyException();
-        assertThatCode(() -> service.bannedFaceAttempt(v)).doesNotThrowAnyException();
         assertThatCode(() -> service.approvalEmailFailed(v)).doesNotThrowAnyException();
         assertThatCode(service::aiServiceOffline).doesNotThrowAnyException();
         assertThatCode(() -> service.negativeFeedback(v)).doesNotThrowAnyException();

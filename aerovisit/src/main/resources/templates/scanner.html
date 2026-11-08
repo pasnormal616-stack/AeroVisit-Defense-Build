@@ -48,6 +48,7 @@
                     <li><span>02</span><strong>Green = cleared, proceed</strong></li>
                     <li><span>03</span><strong>Red = deny entry, escalate</strong></li>
                     <li><span>04</span><strong>No QR? Enter the Reference ID (header)</strong></li>
+                    <li><span>05</span><strong>Walk-in QR opens its Process panel here</strong></li>
                 </ul>
             </div>
         </aside>
@@ -57,31 +58,51 @@
 
 <div id="alert-overlay" role="alertdialog" aria-live="assertive">
     <div id="alert-box" class="alert-box">
-        <!-- Image placeholder for Visual Verification -->
-        <img id="alert-id-photo" src="" alt="Target ID Photo">
+        <!-- 🪪💳 THE ID PHOTO AND THE PAYMENT, side by side on every scan (stacked on phones). The receipt opens full screen
+             on a tap (only through /admin/payments/{id}/receipt, which checks the role and the booking). -->
+        <div class="av-scan-pair" id="scan-pair">
+            <figure class="av-scan-side" id="scan-id-side">
+                <span class="av-scan-side-title">ID photo</span>
+                <img id="alert-id-photo" src="" alt="ID photo">
+                <figcaption id="alert-id-photo-label" class="small fw-semibold" style="display:none;"></figcaption>
+            </figure>
+            <section class="av-scan-side d-none" id="scan-pay" aria-label="Payment">
+                <span class="av-scan-side-title">Payment</span>
+                <button type="button" class="av-scan-receipt d-none" id="scan-receipt-open" aria-label="Open the receipt full size">
+                    <img id="scan-receipt" src="" alt="Receipt screenshot">
+                </button>
+                <dl class="av-scan-money">
+                    <dt id="scan-billing-label">Billing number</dt><dd class="av-scan-big" id="scan-billing"></dd>
+                    <dt id="scan-amount-label">Amount due</dt><dd class="av-scan-big" id="scan-amount"></dd>
+                    <dt id="scan-status-label">Status</dt><dd id="scan-status"></dd>
+                </dl>
+                <p class="av-scan-note d-none" id="scan-note"></p>
+            </section>
+        </div>
 
         <h1 id="alert-icon" class="mb-2"></h1>
         <h3 id="alert-message"></h3>
-        <!-- 🪖 GROUP MANIFEST: filled from the scan response -->
+        <!-- 🪖 GROUP: the representative and the headcount, filled from the scan response. Guest names appear only for
+             older bookings that have them on file. -->
         <div id="alert-manifest" class="card text-start mt-3 d-none">
             <ul class="list-group list-group-flush">
                 <li class="list-group-item d-flex justify-content-between gap-3"><span class="text-body-secondary">Lead Name</span><strong id="manifest-lead"></strong></li>
                 <li class="list-group-item d-flex justify-content-between gap-3"><span class="text-body-secondary">Total Headcount</span><strong id="manifest-headcount"></strong></li>
+                <!-- 💱 Admission breakdown and total; hidden for older bookings made before categories existed -->
+                <li class="list-group-item d-none" id="manifest-admission-row"><span class="text-body-secondary d-block">Admission</span><strong id="manifest-admission"></strong></li>
                 <li class="list-group-item d-none" id="manifest-companions-row">
-                    <div class="text-body-secondary mb-1">Manifest</div>
+                    <div class="text-body-secondary mb-1">Guest names on file</div>
                     <ol id="manifest-companions" class="mb-0 ps-3"></ol>
                 </li>
             </ul>
         </div>
         <!-- ✅ VERIFY, THEN CONFIRM: shown for a valid pass. Nothing is saved until the guard accepts or denies. -->
         <div id="decision-controls" class="mt-3 d-none">
-            <!-- 🚌 Master Booking: how many guests actually arrived (sent with Accept) -->
-            <div id="master-headcount" class="card text-start mb-2 d-none">
-                <div class="card-body py-2">
-                    <label for="master-headcount-input" class="form-label mb-1">Guests who actually arrived</label>
-                    <input type="number" id="master-headcount-input" class="form-control form-control-sm" min="1">
-                </div>
-            </div>
+            <!-- 🪪 Free / Discounted visitors: Accept waits for this tick (the server refuses without it and records who ticked) -->
+            <label id="ids-tick" class="card text-start d-none mb-2 p-3" style="display:flex; flex-direction:row; gap:1rem; align-items:center; cursor:pointer; min-height:56px;">
+                <input type="checkbox" id="ids-checked" class="form-check-input m-0 flex-none" style="width:1.6rem; height:1.6rem;">
+                <span class="fw-semibold" id="ids-tick-text"></span>
+            </label>
             <!-- 📱 Phones: Accept / Deny stack as full-width buttons; side by side from 576px up -->
             <div class="d-flex flex-column flex-sm-row gap-2">
                 <button type="button" id="accept-btn" class="btn btn-success flex-fill"><i class="bi bi-check2-circle me-1"></i>Accept &amp; Check-In</button>
@@ -97,6 +118,7 @@
                         <option value="Unregistered person in group">Unregistered person in group</option>
                         <option value="ID does not match lead booker">ID does not match lead booker</option>
                         <option value="Expired or invalid ID presented">Expired or invalid ID presented</option>
+                        <option value="Not eligible for the discounted/free rate">Not eligible for the discounted/free rate</option>
                         <option value="Security concern">Security concern</option>
                     </select>
                     <button type="button" id="deny-confirm" class="btn btn-sm btn-danger w-100 mt-2">Confirm Deny Entry</button>
@@ -108,7 +130,19 @@
     </div>
 </div>
 
+<!-- 🔍 The receipt, full screen: tap anywhere or press Esc to close -->
+<div class="av-zoom" id="receipt-zoom" role="dialog" aria-modal="true" aria-label="Receipt, full size" hidden>
+    <img id="receipt-zoom-img" src="" alt="Receipt screenshot, full size">
+    <button type="button" class="btn btn-light av-zoom-close" id="receipt-zoom-close" aria-label="Close the receipt"><i class="bi bi-x-lg"></i></button>
+</div>
+
+<!-- 🚶 A walk-in QR opens this, the Guard Dashboard's own Process panel, over the running camera (no page change) -->
+<th:block th:replace="~{fragments/process-panel :: panel}"></th:block>
+<div th:replace="~{fragments/ban :: banDialog}"></div>
+
 <th:block th:replace="~{fragments/shell :: scripts}"></th:block>
+<th:block th:replace="~{fragments/ban :: banDialogScript}"></th:block>
+<script src="/js/process-panel.js"></script>
 
 <script>
     // --- MILITARY HUD AUDIO SYNTHESIZER ---
@@ -181,9 +215,13 @@
         el('alert-message').innerText = message;
     }
 
+    // 🪪 The Free / Discounted IDs tick, when the pass has one: Accept stays off until it is ticked
+    let idsTickNeeded = false;
+    function idsTickMissing() { return idsTickNeeded && !el('ids-checked').checked; }
+
     // Blocks double-submits while an Accept / Deny request is in flight
     function setBusy(busy) {
-        el('accept-btn').disabled = busy;
+        el('accept-btn').disabled = busy || idsTickMissing();
         el('deny-open').disabled = busy;
         el('deny-confirm').disabled = busy;
     }
@@ -212,8 +250,35 @@
         setBusy(false);
     }
 
+    // 🚶 The walk-in Process panel (shared with the Guard Dashboard) over the running camera. Its Check In / Reject are
+    // sent with fetch; on success the panel closes, the card shows the outcome for 2 seconds and scanning resumes.
+    function walkInDone(message, kind) {
+        el('alert-overlay').classList.add('show');
+        if (kind === 'checkin') finishDecision('success', '✅', message);
+        else finishDecision('error', '❌', message);
+    }
+
+    // Deny Entry from the panel: the scanner's own reason step (the same /admin/api/deny-entry as an advance pass)
+    function walkInDeny(name) {
+        el('decision-controls').classList.remove('d-none');
+        el('accept-btn').classList.add('d-none');
+        idsTickNeeded = false;
+        el('ids-tick').classList.add('d-none');
+        el('deny-panel').classList.remove('d-none');
+        el('deny-reason').value = '';
+        setBusy(false);
+        el('alert-resume-note').classList.add('d-none');
+        const dismissBtn = el('alert-dismiss');
+        dismissBtn.classList.remove('d-none');
+        dismissBtn.textContent = 'Cancel — no decision, resume scanning';
+        showResult('verify', '🛑', 'Deny entry: ' + name);
+        el('alert-overlay').classList.add('show');
+        el('deny-reason').focus();
+    }
+
     function onScanSuccess(decodedText, decodedResult) {
-        if (isProcessing) return;
+        // A dialog is open (the Process panel, Ban): the camera keeps running, but scans wait until it closes
+        if (isProcessing || document.body.classList.contains('modal-open')) return;
         isProcessing = true;
 
         postForm('/admin/api/scan', { qrData: decodedText })
@@ -221,6 +286,10 @@
             const idPhoto = el('alert-id-photo');
 
             // Inject the ID Image if the backend found one
+            const idPhotoLabel = el('alert-id-photo-label');
+            idPhotoLabel.textContent = data.imageLabel || 'ID photo';
+            idPhotoLabel.style.display = data.imageUrl ? 'block' : 'none';
+            idPhoto.alt = data.imageLabel || 'ID photo';
             if (data.imageUrl && data.imageUrl !== '') {
                 idPhoto.src = data.imageUrl;
                 idPhoto.style.display = 'inline-block';
@@ -229,7 +298,7 @@
                 idPhoto.src = '';
             }
 
-            // 🪖 GROUP MANIFEST card (textContent only: names are visitor-supplied)
+            // 🪖 GROUP card (textContent only: names are visitor-supplied)
             const manifestCard = el('alert-manifest');
             const companionList = el('manifest-companions');
             const partySize = parseInt(data.headcount, 10) || 1;
@@ -237,37 +306,50 @@
             if (data.leadName) {
                 el('manifest-lead').textContent = data.leadName;
                 el('manifest-headcount').textContent = partySize;
+                el('manifest-admission').textContent = data.admission || '';
+                el('manifest-admission-row').classList.toggle('d-none', !data.admission);
                 companionList.replaceChildren(...companions.map(name => {
                     const li = document.createElement('li');
                     li.textContent = name;
                     return li;
                 }));
-                if (partySize > 1 && companions.length === 0) {
-                    // Booked before manifests were required
-                    const li = document.createElement('li');
-                    li.className = 'text-danger fw-semibold';
-                    li.textContent = 'No manifest on file. Verify every guest manually.';
-                    companionList.replaceChildren(li);
-                }
-                el('manifest-companions-row').classList.toggle('d-none', partySize <= 1);
+                el('manifest-companions-row').classList.toggle('d-none', companions.length === 0);
                 manifestCard.classList.remove('d-none');
             } else {
                 manifestCard.classList.add('d-none');
             }
 
+            fillPayment(data);
+
+            // 🚶 SCAN TO OPEN: a walk-in QR opens its Process panel right here, over the camera (nothing was saved by the
+            // scan). Closing it without an action resumes scanning at once.
+            if (data.status === 'process' && data.panel && window.AeroProcess) {
+                clearTimeout(resumeTimer);
+                el('alert-overlay').classList.remove('show');
+                currentVisitorId = data.visitorId;
+                playBeep('success');
+                const panel = data.panel;
+                AeroProcess.open(name => panel[name] || '', {
+                    ajax: true,
+                    onDone: walkInDone,
+                    onDeny: () => walkInDeny(panel.name || data.visitorName || ''),
+                    onClose: resumeScanning
+                });
+                return;
+            }
+
             // ✅ Accept / Deny only for a valid pass (status "ready"); the server re-checks both actions
             const ready = data.status === 'ready';
             currentVisitorId = ready ? data.visitorId : '';
+            el('accept-btn').classList.remove('d-none');
             el('decision-controls').classList.toggle('d-none', !ready);
             el('deny-panel').classList.add('d-none');
             el('deny-reason').value = '';
+            idsTickNeeded = ready && !!data.idsCheckText;
+            el('ids-tick-text').textContent = data.idsCheckText || '';
+            el('ids-checked').checked = false;
+            el('ids-tick').classList.toggle('d-none', !idsTickNeeded);
             setBusy(false);
-            const isMaster = ready && data.masterBooking === 'true';
-            el('master-headcount').classList.toggle('d-none', !isMaster);
-            if (isMaster) {
-                el('master-headcount-input').max = partySize;
-                el('master-headcount-input').value = partySize;
-            }
 
             el('alert-resume-note').classList.add('d-none');
             const dismissBtn = el('alert-dismiss');
@@ -288,7 +370,7 @@
             // No auto-resume: the card stays until the guard acts
             clearTimeout(resumeTimer);
             el('alert-overlay').classList.add('show');
-            (ready ? el('accept-btn') : dismissBtn).focus();
+            (ready ? (idsTickNeeded ? el('ids-checked') : el('accept-btn')) : dismissBtn).focus();
         })
         .catch(error => {
             console.error("Transmission Error:", error);
@@ -296,11 +378,70 @@
         });
     }
 
+    // 💳 The payment block next to the ID photo (textContent only). Hidden for a fake QR (no booking found).
+    function fillPayment(data) {
+        const found = !!data.leadName;
+        const hasMoney = !!data.amountDue;
+        el('scan-pay').classList.toggle('d-none', !found);
+        el('scan-pair').classList.toggle('is-paired', found);
+        ['billing', 'amount', 'status'].forEach(k => {
+            el('scan-' + k + '-label').classList.toggle('d-none', !hasMoney);
+            el('scan-' + k).classList.toggle('d-none', !hasMoney);
+        });
+        el('scan-billing').textContent = data.billingNumber || '—';
+        el('scan-amount').textContent = data.amountDue || '';
+        el('scan-status').textContent = data.paymentStatus || '';
+        el('scan-note').textContent = data.paymentNote || '';
+        el('scan-note').classList.toggle('d-none', !data.paymentNote);
+        const receipt = el('scan-receipt');
+        if (data.receiptUrl) {
+            receipt.src = data.receiptUrl;
+            el('scan-receipt-open').classList.remove('d-none');
+        } else {
+            receipt.removeAttribute('src');
+            el('scan-receipt-open').classList.add('d-none');
+        }
+    }
+
+    // 🔍 Tap the receipt: full screen; tap anywhere, the close button or Esc closes it and returns focus
+    let zoomReturn = null;
+    function openZoom(src, from) {
+        zoomReturn = from;
+        el('receipt-zoom-img').src = src;
+        el('receipt-zoom').hidden = false;
+        // Over the Process panel, Bootstrap keeps the focus inside the panel; a tap anywhere still closes the zoom
+        if (!document.body.classList.contains('modal-open')) el('receipt-zoom-close').focus();
+    }
+    function closeZoom() {
+        el('receipt-zoom').hidden = true;
+        el('receipt-zoom-img').removeAttribute('src');
+        if (zoomReturn) zoomReturn.focus();
+    }
+    el('scan-receipt-open').addEventListener('click', () => openZoom(el('scan-receipt').src, el('scan-receipt-open')));
+    // 🚶 The Process panel's receipt and ID photo open in the same zoom (not a new tab), so the camera page stays in front
+    ['pxReceiptLink', 'pxPhotoLink'].forEach(id => {
+        const link = el(id);
+        if (link) link.addEventListener('click', e => {
+            const href = link.getAttribute('href');
+            if (!href) return;
+            e.preventDefault();
+            openZoom(href, link);
+        });
+    });
+    el('receipt-zoom').addEventListener('click', closeZoom);
+    // Capture phase + stop: Esc closes only the zoom, not the Process panel under it
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && !el('receipt-zoom').hidden) { e.stopPropagation(); e.preventDefault(); closeZoom(); }
+    }, true);
+
     el('alert-dismiss').addEventListener('click', resumeScanning);
 
+    el('ids-checked').addEventListener('change', () => { el('accept-btn').disabled = idsTickMissing(); });
+
     el('accept-btn').addEventListener('click', () => {
+        if (idsTickMissing()) { el('ids-checked').focus(); return; }
         const params = { visitorId: currentVisitorId };
-        if (!el('master-headcount').classList.contains('d-none')) params.headcount = el('master-headcount-input').value;
+        if (idsTickNeeded) params.idsChecked = 'true';
         setBusy(true);
         postForm('/admin/api/confirm-check-in', params)
         .then(data => data.status === 'success' ? finishDecision('success', '✅', data.message) : decisionFailed(data.message))

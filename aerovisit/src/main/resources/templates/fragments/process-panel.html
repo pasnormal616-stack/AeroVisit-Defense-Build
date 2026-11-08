@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<body>
+<!-- 🚶 PROCESS WALK-IN: one panel, used by the Guard Dashboard (filled from the clicked Process button's data-px-*) and by
+     the gate scanner (filled from the walk-in scan's "panel", opened over the running camera). /js/process-panel.js fills
+     it. Full screen on phones, a large dialog on desktop. It sits at the top level of the page (not inside a table) so it
+     opens on iPhone Safari. The server (/admin/walk-ins/{id}/process) checks every tick again: no tick, no action. -->
+<div th:fragment="panel" class="modal fade av-process" id="processModal" tabindex="-1" aria-labelledby="processTitle" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-fullscreen-sm-down modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title" id="processTitle"><i class="bi bi-person-walking me-2"></i><span id="pxName">Walk-in</span></h5>
+                    <div class="av-mono av-small av-muted"><span id="pxRef"></span> · <span id="pxWindow"></span></div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- 📷 Scanner only: why the last action was refused (the panel stays open so the guard can fix it) -->
+                <div class="alert alert-danger py-2 mb-3" id="pxError" role="alert" hidden></div>
+
+                <div class="av-process-status">
+                    <span class="badge-soft" id="pxPayment"></span>
+                    <span class="av-process-alert" id="pxWaiting" hidden></span>
+                    <span class="av-process-alert av-process-alert--ok" id="pxInside" hidden></span>
+                </div>
+
+                <div class="av-process-grid">
+                    <!-- Receipt (tap to zoom) next to the billing number and amount, in big text -->
+                    <section class="av-process-card" id="pxReceiptCard">
+                        <a id="pxReceiptLink" href="#" target="_blank" rel="noopener" class="av-process-zoom" title="Open the receipt full size">
+                            <img id="pxReceipt" alt="Receipt screenshot">
+                        </a>
+                        <div class="av-process-money">
+                            <span class="av-label">Billing number</span>
+                            <b class="av-process-big av-mono" id="pxBilling"></b>
+                            <span class="av-label">Amount</span>
+                            <b class="av-process-big av-mono" id="pxAmount"></b>
+                            <!-- 💳 "Verified by … on …" (Visitor.paymentNote, the same line as the scanner card) -->
+                            <span class="av-process-verified" id="pxVerified" hidden></span>
+                        </div>
+                    </section>
+
+                    <!-- The ID photo (tap to zoom), the representative and the group -->
+                    <section class="av-process-card">
+                        <a id="pxPhotoLink" href="#" target="_blank" rel="noopener" class="av-process-zoom" title="Open the ID photo full size">
+                            <img id="pxPhoto" alt="ID photo">
+                        </a>
+                        <div class="av-process-who">
+                            <span class="av-label" id="pxPhotoLabel">ID photo</span>
+                            <div class="av-small">Check the physical ID against this photo and the booking name.</div>
+                            <span class="av-label mt-2">Group</span>
+                            <b id="pxGroup"></b>
+                            <span class="av-mono" id="pxTotal"></span>
+                        </div>
+                    </section>
+
+                    <!-- Name resembles a ban: the banned person next to the ID photo -->
+                    <section class="av-process-card av-process-ban" id="pxBanCard" hidden>
+                        <img id="pxBanPhoto" alt="Photo of the banned person">
+                        <div>
+                            <strong class="text-danger"><i class="bi bi-exclamation-octagon"></i> Name matches a ban</strong>
+                            <div id="pxBanName"></div>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- The ticks that apply (each one checked again by the server) -->
+                <form id="processForm" method="post" class="av-process-ticks">
+                    <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                    <label class="av-process-tick" id="pxTickMatch">
+                        <input type="checkbox" name="matchConfirmed" value="true">
+                        <span>Billing number and amount match the receipt
+                            <small>Also compare it with the Landbank/GCash confirmation on the visitor's phone.</small></span>
+                    </label>
+                    <label class="av-process-tick" id="pxTickIds">
+                        <input type="checkbox" name="idsChecked" value="true">
+                        <span id="pxIdsText"></span>
+                    </label>
+                    <label class="av-process-tick" id="pxTickBan">
+                        <input type="checkbox" name="banChecked" value="true">
+                        <span>ID checked against the ban</span>
+                    </label>
+                </form>
+
+                <!-- ❌ Reject receipt: a quick reason (or Other + text), emailed with the new deadline -->
+                <form id="pxRejectForm" method="post" class="av-process-reject" hidden>
+                    <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                    <input type="hidden" name="reason" id="pxRejectReason">
+                    <fieldset>
+                        <legend class="av-label">Why is the receipt rejected? (emailed to the visitor)</legend>
+                        <label class="av-process-choice"><input type="radio" name="pxQuick" value="The amount on the receipt does not match the billing amount."> Wrong amount</label>
+                        <label class="av-process-choice"><input type="radio" name="pxQuick" value="The billing number on the receipt does not match your booking."> Wrong billing number</label>
+                        <label class="av-process-choice"><input type="radio" name="pxQuick" value="The receipt photo is unclear or cropped. Please upload a clear, complete screenshot."> Unclear or cropped photo</label>
+                        <label class="av-process-choice"><input type="radio" name="pxQuick" value="other"> Other</label>
+                    </fieldset>
+                    <textarea id="pxRejectOther" class="form-control mt-2" rows="2" maxlength="500" placeholder="Type the reason" hidden></textarea>
+                    <p class="av-small av-muted mt-2 mb-2">The visitor may upload a new receipt within the walk-in payment time.</p>
+                    <button type="submit" class="btn btn-danger w-100 av-process-btn" id="pxRejectSubmit" disabled>Reject receipt</button>
+                </form>
+
+                <!-- Already inside: Check Out -->
+                <form id="pxCheckoutForm" action="/admin/manual-checkin" method="post" hidden>
+                    <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                    <input type="hidden" name="referenceId" id="pxCheckoutRef">
+                    <button type="submit" class="btn btn-outline-primary w-100 av-process-btn"><i class="bi bi-box-arrow-right"></i> Check Out</button>
+                </form>
+            </div>
+            <!-- The main button stays at the bottom of the panel; the other actions sit just above it -->
+            <div class="modal-footer av-process-footer">
+                <div class="av-process-more">
+                    <button type="button" class="btn btn-outline-danger" id="pxRejectToggle"><i class="bi bi-x-circle"></i> Reject receipt</button>
+                    <button type="button" class="btn btn-outline-danger" id="pxDeny"><i class="bi bi-shield-x"></i> Deny Entry</button>
+                    <button type="button" class="btn btn-outline-danger" id="pxBan"><i class="bi bi-person-x"></i> Ban</button>
+                </div>
+                <button type="submit" form="processForm" class="btn btn-success btn-lg w-100 av-process-btn" id="pxSubmit" disabled>
+                    <i class="bi bi-check2-circle"></i> <span id="pxSubmitText">Verify &amp; Check In</span></button>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

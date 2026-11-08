@@ -16,7 +16,7 @@ import jakarta.annotation.PreDestroy;
 // nobody is waiting on the page any more to see an error.
 //
 // Not used for verification codes (OtpService): the visitor is waiting for that code and the form must be able to say
-// "we couldn't send it". Not used for the emergency closure and roster batches either: those report to the Director,
+// "we couldn't send it". Not used for the emergency closure batch either: it reports to the Director,
 // on the same page, exactly how many emails failed, so the people missed can be phoned.
 //
 // Two sender threads (a slow mail server can't pile up more), up to 1000 queued emails; when the queue is full the

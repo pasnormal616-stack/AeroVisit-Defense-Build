@@ -56,27 +56,60 @@ public interface VisitorRepository extends JpaRepository<Visitor, Long> {
     // 6. Feedback links identify the visitor by their unguessable secure token, not the sequential ID
     Optional<Visitor> findBySecureToken(String secureToken);
 
+    // 💳 Payment: the emailed payment link's key (never the billing number), the Director's "Awaiting Payment
+    // Verification" list, and the bookings the deadline sweep checks
+    Optional<Visitor> findByPaymentToken(String paymentToken);
+
+    List<Visitor> findByPaymentStatus(String paymentStatus);
+
+    List<Visitor> findByStatusAndPaymentStatusIn(String status, java.util.Collection<String> paymentStatuses);
+
+    // 🗂️ The Pending Approval tab (Visitor.inPendingQueue): requests awaiting review that are not waiting on the visitor
+    // (no receipt still to come, none rejected), plus older approve-then-pay bookings whose receipt is in
+    String PENDING_QUEUE_WHERE = " WHERE (v.status IN ('PENDING', 'PENDING_MANUAL_REVIEW', 'VERIFIED')"
+            + " AND (v.paymentStatus IS NULL OR v.paymentStatus NOT IN ('AWAITING_PAYMENT', 'PAYMENT_REJECTED')))"
+            + " OR (v.status = 'APPROVED' AND v.paymentStatus = 'PROOF_SUBMITTED')";
+
+    @Query("SELECT v FROM Visitor v" + PENDING_QUEUE_WHERE)
+    List<Visitor> findPendingQueue();
+
+    @Query("SELECT COUNT(v) FROM Visitor v" + PENDING_QUEUE_WHERE)
+    long countPendingQueue();
+
+    // ⌛ Pending Approval, "Waiting for payment receipt" (review only, Visitor.waitingForReceipt): no receipt yet, or a
+    // new one is due after a rejection. Never in the queue above.
+    String WAITING_RECEIPT_WHERE = " WHERE v.status = 'AWAITING_RECEIPT'"
+            + " OR (v.status IN ('PENDING', 'PENDING_MANUAL_REVIEW', 'VERIFIED') AND v.paymentStatus IN ('AWAITING_PAYMENT', 'PAYMENT_REJECTED'))";
+
+    @Query("SELECT v FROM Visitor v" + WAITING_RECEIPT_WHERE)
+    List<Visitor> findWaitingForReceipt();
+
+    @Query("SELECT COUNT(v) FROM Visitor v" + WAITING_RECEIPT_WHERE)
+    long countWaitingForReceipt();
+
+    // ✉️ Resend payment link: claims the resend only when none went out in the last 10 minutes (cutoff = now - 10 min),
+    // so two clicks or two tabs send one email
+    @Modifying
+    @Transactional
+    @Query("UPDATE Visitor v SET v.paymentLinkResentAt = :now WHERE v.id = :id"
+         + " AND (v.paymentLinkResentAt IS NULL OR v.paymentLinkResentAt <= :cutoff)")
+    int claimPaymentLinkResend(@org.springframework.data.repository.query.Param("id") Long id,
+                               @org.springframework.data.repository.query.Param("now") java.time.LocalDateTime now,
+                               @org.springframework.data.repository.query.Param("cutoff") java.time.LocalDateTime cutoff);
+
+    // 💳 Payment deadline sweep: bookings in these statuses still waiting for a payment (pay first + older approvals)
+    List<Visitor> findByStatusInAndPaymentStatusIn(java.util.Collection<String> statuses, java.util.Collection<String> paymentStatuses);
+
     // 7. Manage Booking lookup: only this email's bookings, instead of loading every visitor
     List<Visitor> findByEmailIgnoreCase(String email);
 
     // 7b. Manage Booking portal sign-in: the email and the Booking Reference ID must both match
     Optional<Visitor> findByEmailIgnoreCaseAndReferenceIdIgnoreCase(String email, String referenceId);
 
-    // 8. VIP buyout: dates held by an approved (or already admitted) Master Booking are closed to public bookings
-    @Query("SELECT DISTINCT v.visitDate FROM Visitor v WHERE v.purpose = '" + Visitor.MASTER_BOOKING_PURPOSE
-         + "' AND v.status IN ('APPROVED', 'CHECKED-IN', 'CHECKED-OUT')")
-    List<LocalDate> findBuyoutDates();
-
-    // 8b. Emergency closure: dates the Director closed (MuseumClosure) are locked for every booking.
-    // Kept here beside findBuyoutDates so the booking code reads both closed-date lists from one repository.
+    // 8. Emergency closure: dates the Director closed (MuseumClosure) are locked for every booking.
+    // Kept here so the booking code reads the closed dates from the same repository as the bookings.
     @Query("SELECT c.closureDate FROM MuseumClosure c")
     List<LocalDate> findClosureDates();
-
-    // 9. VIP buyout override: standard visitors already APPROVED on the buyout date (the master booking itself and other master bookings excluded)
-    @Query("SELECT v FROM Visitor v WHERE v.visitDate = :visitDate AND v.status = 'APPROVED' AND v.id <> :masterId"
-         + " AND (v.purpose IS NULL OR v.purpose <> '" + Visitor.MASTER_BOOKING_PURPOSE + "')")
-    List<Visitor> findApprovedVisitorsToOverride(@org.springframework.data.repository.query.Param("visitDate") LocalDate visitDate,
-                                                 @org.springframework.data.repository.query.Param("masterId") Long masterId);
 
     // 🚦 Two gates on one booking: changes the status only if it is still `from`, in one UPDATE, so of two guards pressing
     // Accept (or checking out) at once exactly one gets 1 back and the other gets 0. Used through GateClaim.
@@ -84,6 +117,16 @@ public interface VisitorRepository extends JpaRepository<Visitor, Long> {
     @Transactional
     @Query("UPDATE Visitor v SET v.status = :to WHERE v.id = :id AND v.status = :from")
     int claimStatus(Long id, String from, String to);
+
+    // 📝 The feedback email, exactly once: stamps the time only while none is set, in one UPDATE, so of the sweep and a
+    // guard's check-out at the same moment exactly one gets 1 back (and sends). Used through FeedbackEmails.
+    @Modifying
+    @Transactional
+    @Query("UPDATE Visitor v SET v.feedbackEmailSentAt = :at WHERE v.id = :id AND v.feedbackEmailSentAt IS NULL")
+    int claimFeedbackEmail(Long id, java.time.LocalDateTime at);
+
+    // 📝 Today's visits that were checked in and have not had their feedback email yet (the 15-minute sweep)
+    List<Visitor> findByVisitDateAndStatusInAndFeedbackEmailSentAtIsNull(LocalDate visitDate, java.util.Collection<String> statuses);
 
     // 10. Mock data: deletes only simulated visitors, never a real booking. Matches the rows MockVisitorGenerator makes
     // (email ends in @mock.aerovisit) and the two kinds the earlier mock generator made. Returns the number deleted.
@@ -160,9 +203,18 @@ public interface VisitorRepository extends JpaRepository<Visitor, Long> {
     // vector, or whose personal details are not anonymized yet (rows purged before anonymization existed included)
     @Query("SELECT v FROM Visitor v WHERE v.status IN :statuses AND v.visitDate < :cutoff"
          + " AND (v.idImageUrl IS NOT NULL OR v.qrCodeUrl IS NOT NULL OR v.idCardImageUrl IS NOT NULL OR v.faceEncoding IS NOT NULL"
+         + " OR v.receiptImageUrl IS NOT NULL OR v.earlierReceiptUrls IS NOT NULL OR v.idFaceCropUrl IS NOT NULL"
          + " OR v.fullName IS NULL OR v.fullName <> 'REDACTED')")
     List<Visitor> findExpiredWithFiles(@org.springframework.data.repository.query.Param("statuses") java.util.Collection<String> statuses,
                                        @org.springframework.data.repository.query.Param("cutoff") LocalDate cutoff);
+
+    // 🚶 Walk-ins: one day's (Guard's Walk-ins tab, payments today, daily report), all of them (Director's Walk-ins tab),
+    // and the approved ones whose check-in deadline has passed (15-minute sweep)
+    List<Visitor> findByBookingCategoryAndVisitDate(String bookingCategory, LocalDate visitDate);
+
+    List<Visitor> findByBookingCategory(String bookingCategory);
+
+    List<Visitor> findByBookingCategoryAndStatusAndCheckInDueAtBefore(String bookingCategory, String status, java.time.LocalDateTime time);
 
     // 13. Unreviewed requests whose visit date has passed (auto-expired by the nightly retention job)
     List<Visitor> findByStatusInAndVisitDateBefore(java.util.Collection<String> statuses, LocalDate date);

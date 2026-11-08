@@ -68,7 +68,7 @@ class AutoCheckOutSweepTest {
         Visitor endsThisMinute = inside(4, TODAY, "Late (01:00 PM - 05:30 PM)");            // 17:30 itself is still open
         Visitor evening = inside(5, TODAY, "Evening (04:00 PM - 08:00 PM)");                // active right now
         Visitor nightShift = inside(6, TODAY, "Night (06:00 PM - 11:00 PM)");               // hasn't started yet
-        Visitor master = inside(7, TODAY, "Master Booking Bypass");                         // unreadable: waits for 11:59 PM
+        Visitor master = inside(7, TODAY, "Master Booking Bypass");                         // older booking, unreadable: waits for 11:59 PM
         Visitor noWindow = inside(8, TODAY, null);
         Visitor tomorrow = inside(9, TODAY.plusDays(1), "Morning (08:00 AM - 12:00 PM)");
         Visitor noDate = inside(10, null, "Morning (08:00 AM - 12:00 PM)");

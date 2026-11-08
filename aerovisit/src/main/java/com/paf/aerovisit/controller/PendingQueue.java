@@ -21,8 +21,9 @@ import java.util.function.Function;
 // Each row gets triage tags for the quick-filter chips.
 final class PendingQueue {
 
-    // One time window's seats on a group's date: name = the label before "(", e.g. "Morning"
-    record SeatWindow(String window, String name, int maxCapacity, int remaining) {}
+    // One time window's seats on a group's date: name = the label before "(", e.g. "Morning"; booked = seats held there
+    // (pending requests included, since they hold their seats: pay first), which can exceed maxCapacity after a Force Approve
+    record SeatWindow(String window, String name, int maxCapacity, int remaining, int booked) {}
 
     // tone: overdue | today | tomorrow | later | nodate (CSS class and default open state)
     record Group(String key, String label, String tone, boolean open, int requests, int people,
@@ -38,28 +39,60 @@ final class PendingQueue {
 
     static final String OVERDUE = "overdue";
     static final String NO_DATE = "nodate";
+    // ⌛ The review-only group after the ready ones: bookings still waiting for the visitor's payment receipt
+    static final String AWAITING = "awaiting";
 
     // Chip order on the page; the key is also the tag written on matching rows
     static final List<String[]> CHIPS = List.of(
+            new String[] {"banname", "Name matches a ban"},
             new String[] {"manual", "Manual review"},
-            new String[] {"unverified", "Name unverified"},
-            new String[] {"duplicate", "Possible duplicate"},
             new String[] {"conflict", "Seat conflict"},
             new String[] {"large", "Large group (" + (NotificationService.LARGE_GROUP_THRESHOLD + 1) + "+)"},
-            new String[] {"master", "Master Booking"},
             new String[] {"special", "Special consideration"},
             new String[] {"soon", "Today / tomorrow"},
-            new String[] {OVERDUE, "Overdue"});
+            new String[] {OVERDUE, "Overdue"},
+            new String[] {AWAITING, "Awaiting receipt"});
 
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("EEE, MMM d", Locale.US);
 
     private PendingQueue() {}
 
     // requests: already sorted (FIFO or newest first), kept in that order inside each group.
-    // seatsFor: seats per window for a date today or later (closed day = every window 0); closedDates: buyouts + closures.
+    // seatsFor: seats per window for a date today or later (closed day = every window 0); closedDates: emergency closures.
     // singleDay: a visit date was picked, so its one group opens whatever its tone.
     static View build(List<Visitor> requests, LocalDate today, Function<LocalDate, List<SeatWindow>> seatsFor,
                       java.util.Set<LocalDate> closedDates, boolean singleDay) {
+        return build(requests, List.of(), today, seatsFor, closedDates, singleDay);
+    }
+
+    // Same, plus ONE "Waiting for payment receipt" group after the ready groups (review only, never approvable), its
+    // bookings ordered by their pay-by deadline (soonest first). They carry the "awaiting" tag only, so the other chips
+    // count ready requests.
+    static View build(List<Visitor> requests, List<Visitor> waiting, LocalDate today, Function<LocalDate, List<SeatWindow>> seatsFor,
+                      java.util.Set<LocalDate> closedDates, boolean singleDay) {
+        View ready = buildReady(requests, today, seatsFor, closedDates, singleDay);
+        if (waiting.isEmpty()) return ready;
+        List<Visitor> sorted = new ArrayList<>(waiting);
+        sorted.sort(java.util.Comparator.comparing(Visitor::getPaymentDueAt, java.util.Comparator.nullsLast(java.util.Comparator.<java.time.LocalDateTime>naturalOrder()))
+                .thenComparing(Visitor::getId, java.util.Comparator.nullsLast(java.util.Comparator.<Long>naturalOrder())));
+        List<Visitor> rows = new ArrayList<>(ready.rows());
+        Map<Long, Group> starts = new HashMap<>(ready.groupStarts());
+        Map<Long, Row> info = new HashMap<>(ready.rowInfo());
+        int people = 0;
+        for (Visitor v : sorted) {
+            people += Math.max(1, v.getGroupSize());
+            info.put(v.getId(), new Row(AWAITING, AWAITING, search(v), false));
+        }
+        starts.put(sorted.get(0).getId(), new Group(AWAITING, "Waiting for payment receipt", AWAITING, true, sorted.size(), people,
+                false, List.of()));
+        rows.addAll(sorted);
+        List<Chip> chips = new ArrayList<>();
+        for (Chip c : ready.chips()) chips.add(AWAITING.equals(c.key()) ? new Chip(AWAITING, c.label(), sorted.size()) : c);
+        return new View(rows, starts, info, chips);
+    }
+
+    private static View buildReady(List<Visitor> requests, LocalDate today, Function<LocalDate, List<SeatWindow>> seatsFor,
+                                   java.util.Set<LocalDate> closedDates, boolean singleDay) {
         Map<String, List<Visitor>> byKey = new LinkedHashMap<>();
         List<Visitor> overdue = new ArrayList<>();
         TreeMap<LocalDate, List<Visitor>> dated = new TreeMap<>();
@@ -114,19 +147,20 @@ final class PendingQueue {
         return new View(rows, starts, info, chips);
     }
 
-    // The chips a request belongs to. "conflict": a standard booking for today or later whose group is larger than the
-    // seats left in its window, or whose window has no slot that day (Approve would refuse both).
+    // The chips a request belongs to. "banname": the name resembles a ban (compare the ID photo). "manual": an older
+    // request flagged for manual review. "conflict": a booking for today or later whose window has no slot that day, or is
+    // over capacity (a pending booking already holds its seats, so that only happens after an override); a booking that
+    // holds no seats conflicts when its group is larger than the seats left. Approve would refuse each of them.
     static String tags(Visitor v, String tone, List<SeatWindow> windows) {
         List<String> tags = new ArrayList<>();
+        if (v.getPossibleBanMatch() != null && !v.getPossibleBanMatch().isBlank()) tags.add("banname");
         if ("PENDING_MANUAL_REVIEW".equals(v.getStatus())) tags.add("manual");
-        if (!v.isOcrNameMatch()) tags.add("unverified");
-        if (v.getPossibleDuplicateOf() != null) tags.add("duplicate");
-        if (!v.isMasterBooking() && !OVERDUE.equals(tone) && !NO_DATE.equals(tone)) {
+        if (!OVERDUE.equals(tone) && !NO_DATE.equals(tone)) {
             SeatWindow w = windows.stream().filter(s -> s.window().equals(v.getTimeWindow())).findFirst().orElse(null);
-            if (w == null || Math.max(1, v.getGroupSize()) > w.remaining()) tags.add("conflict");
+            boolean conflict = w == null || (v.holdsSeat() ? w.booked() > w.maxCapacity() : Math.max(1, v.getGroupSize()) > w.remaining());
+            if (conflict) tags.add("conflict");
         }
         if (v.getGroupSize() > NotificationService.LARGE_GROUP_THRESHOLD) tags.add("large");
-        if (v.isMasterBooking()) tags.add("master");
         String special = v.getSpecialConsideration();
         if (special != null && !special.isBlank() && !"Not Applicable".equals(special)) tags.add("special");
         if ("today".equals(tone) || "tomorrow".equals(tone)) tags.add("soon");

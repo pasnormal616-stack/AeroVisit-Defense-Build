@@ -4,8 +4,8 @@
  * - Floating nav state + nav links that open in-page tabs
  * - Three-step booking flow layered over the ORIGINAL booking logic:
  *   it only observes the existing #registrationFormWrapper "locked-form" class and
- *   the #selectedDateBadge text (both driven by register.html's calendar/master
- *   booking code), so eventClick / toggleMasterBooking / capacity checks are untouched.
+ *   the #selectedDateBadge text (both driven by register.html's calendar code),
+ *   so the day/time picker and capacity checks are untouched.
  */
 (function () {
     'use strict';
@@ -226,14 +226,13 @@
         }
 
         function refreshSummary() {
-            var master = window.isMasterMode === true;
             var dateOut = document.getElementById('summaryDate');
             var winOut = document.getElementById('summaryWindow');
             var capOut = document.getElementById('summaryRemaining');
             var next0 = document.getElementById('stepNext0');
-            if (dateOut) dateOut.textContent = master ? 'Set in next step' : (dateInput && dateInput.value) || '—';
+            if (dateOut) dateOut.textContent = (dateInput && dateInput.value) || '—';
             if (winOut) winOut.textContent = (timeInput && timeInput.value) || '—';
-            if (capOut) capOut.textContent = master ? 'Group bypass' : (unlocked() && window.maxAllowedForSelectedDate ? window.maxAllowedForSelectedDate + ' seats' : '—');
+            if (capOut) capOut.textContent = (unlocked() && window.maxAllowedForSelectedDate ? window.maxAllowedForSelectedDate + ' seats' : '—');
             if (next0) next0.disabled = !unlocked();
         }
 

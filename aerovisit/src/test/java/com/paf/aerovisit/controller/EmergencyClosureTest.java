@@ -117,6 +117,55 @@ class EmergencyClosureTest {
     }
 
     @Test
+    void paidBookingsAreAskedToRescheduleAndKeepTheirPaymentWhileUnpaidOnesAreCancelled() throws Exception {
+        newClosure();
+        Visitor paid = visitor(1, "APPROVED");
+        paid.setAdmissionTotalCentavos(25_000L);
+        paid.setPaymentStatus(Visitor.PAY_PAID);
+        Visitor underReview = visitor(2, "APPROVED");
+        underReview.setAdmissionTotalCentavos(25_000L);
+        underReview.setPaymentStatus(Visitor.PAY_PROOF_SUBMITTED);
+        Visitor unpaid = visitor(3, "APPROVED");
+        unpaid.setAdmissionTotalCentavos(25_000L);
+        unpaid.setPaymentStatus(Visitor.PAY_AWAITING);
+        when(repo.findByVisitDate(CLOSED)).thenReturn(List.of(paid, underReview, unpaid));
+
+        declare(CLOSED.toString(), REASON)
+            .andExpect(flash().attribute("success", containsString(
+                "1 booking(s) cancelled, 2 paid booking(s) asked to reschedule, 3 visitor(s) notified by email.")));
+
+        for (Visitor v : List.of(paid, underReview)) {
+            assertThat(v.getStatus()).isEqualTo(Visitor.STATUS_RESCHEDULE_REQUIRED);
+            assertThat(v.getQrCodeUrl()).isNull();
+            assertThat(v.holdsSeat()).isFalse();
+            verify(emailService).sendClosureReschedule(v, REASON);
+            verify(emailService, never()).sendEmergencyCancellation(eq(v), anyString());
+        }
+        assertThat(paid.getPaymentStatus()).isEqualTo(Visitor.PAY_PAID); // the payment is kept
+        assertThat(underReview.getPaymentStatus()).isEqualTo(Visitor.PAY_PROOF_SUBMITTED);
+        assertThat(unpaid.getStatus()).isEqualTo("CANCELLED");
+        verify(emailService).sendEmergencyCancellation(unpaid, REASON);
+    }
+
+    @Test
+    void rejectingAPaidBookingNeedsTheNonRefundableConfirmation() throws Exception {
+        Visitor v = visitor(41, "APPROVED");
+        v.setAdmissionTotalCentavos(25_000L);
+        v.setPaymentStatus(Visitor.PAY_PAID);
+        when(repo.findById(41L)).thenReturn(Optional.of(v));
+
+        mvc.perform(post("/admin/reject-visitor").with(csrf()).param("id", "41").param("presetReason", "Security clearance failed"))
+            .andExpect(flash().attribute("error", "This visitor has paid; payments are non-refundable. Tick the confirmation to reject it."));
+        assertThat(v.getStatus()).isEqualTo("APPROVED");
+        verify(repo, never()).save(any());
+
+        mvc.perform(post("/admin/reject-visitor").with(csrf()).param("id", "41").param("presetReason", "Security clearance failed")
+                .param("confirmPaid", "true"))
+            .andExpect(redirectedUrl("/admin"));
+        assertThat(v.getStatus()).isEqualTo("REJECTED");
+    }
+
+    @Test
     void failedEmailsAreCountedAndDoNotStopTheBatch() throws Exception {
         newClosure();
         Visitor smtpDown = visitor(1, "APPROVED");

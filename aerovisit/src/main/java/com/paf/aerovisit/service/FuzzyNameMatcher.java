@@ -5,8 +5,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-// 🔤 FUZZY NAME MATCH for OCR text (KycService). Tesseract misreads a letter or two ("N1CHOLAS"), so each name is
-// compared with the words on the ID by Levenshtein distance instead of exact text. The allowed edits grow with the
+// 🔤 FUZZY NAME MATCH, used by IdentityBans.nameBan to flag a booking whose name resembles a banned name (a typo or a
+// spelling variant). Each name is compared with the words of the other name by Levenshtein distance instead of exact text. The allowed edits grow with the
 // word's length so short names stay strict: 1-3 letters exact, 4-7 letters 1 edit, 8+ letters 2 edits.
 // No library: a plain two-row Levenshtein that stops early once a word can no longer match.
 final class FuzzyNameMatcher {

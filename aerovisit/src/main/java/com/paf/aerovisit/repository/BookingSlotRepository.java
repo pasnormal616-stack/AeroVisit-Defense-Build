@@ -15,6 +15,9 @@ public interface BookingSlotRepository extends JpaRepository<BookingSlot, Long> 
     // and orders them so the closest dates appear first in the dropdown!
     List<BookingSlot> findBySlotDateGreaterThanEqualOrderBySlotDateAsc(LocalDate date);
 
+    // Slots from start to end, both dates included (the Bulk Slot Generator skips a date + window that already has one)
+    List<BookingSlot> findBySlotDateBetween(LocalDate start, LocalDate end);
+
     // Capacity of one date + time window (used by the just-in-time approval check)
     List<BookingSlot> findBySlotDateAndTimeWindow(LocalDate slotDate, String timeWindow);
 

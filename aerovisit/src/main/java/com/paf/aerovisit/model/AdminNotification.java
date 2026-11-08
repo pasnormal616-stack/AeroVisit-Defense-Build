@@ -18,6 +18,7 @@ public class AdminNotification {
 
     // --- Director: bookings ---
     public static final String TYPE_BOOKING_REQUEST = "BOOKING_REQUEST";
+    // Older rows only: a Master Booking request (the feature was removed; new requests are BOOKING_REQUEST)
     public static final String TYPE_MASTER_BOOKING_REQUEST = "MASTER_BOOKING_REQUEST";
     public static final String TYPE_BOOKING_RESCHEDULED = "BOOKING_RESCHEDULED";
     public static final String TYPE_BOOKING_CANCELLED = "BOOKING_CANCELLED";
@@ -27,22 +28,35 @@ public class AdminNotification {
     public static final String TYPE_BANNED_FACE_ATTEMPT = "BANNED_FACE_ATTEMPT";
     public static final String TYPE_EMAIL_FAILED = "EMAIL_FAILED";
     public static final String TYPE_AI_OFFLINE = "AI_OFFLINE";
+    // 💳 Payment: a receipt to verify (resolved once it is verified or rejected), and a booking released at its deadline
+    public static final String TYPE_PAYMENT_PROOF = "PAYMENT_PROOF_SUBMITTED";
+    public static final String TYPE_PAYMENT_EXPIRED = "PAYMENT_EXPIRED";
+    // ♻️ The Director reinstated a payment-expired booking (paid at Landbank, receipt late)
+    public static final String TYPE_BOOKING_REINSTATED = "BOOKING_REINSTATED";
+    // 📅 A paid request was not reviewed before its visit date: the visitor was asked to pick a new date
+    public static final String TYPE_UNREVIEWED_PAID = "UNREVIEWED_PAID";
+    // 🚶 A walk-in's receipt for the gate to verify (Guard bell; resolved once it is verified or rejected)
+    public static final String TYPE_WALK_IN_PAYMENT_PROOF = "WALK_IN_PAYMENT_PROOF";
     // Feedback the AI labelled NEGATIVE; links to the Director-only Analytics page
     public static final String TYPE_NEGATIVE_FEEDBACK = "NEGATIVE_FEEDBACK";
     // --- Guard + Director ---
-    // A large group or Master Booking arriving today (6:30 AM)
+    // A large group arriving today (6:30 AM)
     public static final String TYPE_ARRIVING_TODAY = "ARRIVING_TODAY";
     // Older rows only: large group at booking time (replaced by booking requests and arriving-today)
     public static final String TYPE_LARGE_GROUP = "LARGE_GROUP";
 
     // Booking requests: resolved by themselves once the booking leaves the approval queue
     public static final List<String> REQUEST_TYPES = List.of(TYPE_BOOKING_REQUEST, TYPE_MASTER_BOOKING_REQUEST, TYPE_BOOKING_RESCHEDULED);
+    // Resolved by themselves too: requests (once the booking leaves the approval queue) and receipts (once checked)
+    public static final List<String> SELF_RESOLVING_TYPES = List.of(TYPE_BOOKING_REQUEST, TYPE_MASTER_BOOKING_REQUEST,
+            TYPE_BOOKING_RESCHEDULED, TYPE_PAYMENT_PROOF, TYPE_WALK_IN_PAYMENT_PROOF);
 
     // Types each role sees (and marks as seen / read) in the bell
-    public static final List<String> GUARD_TYPES = List.of(TYPE_ARRIVING_TODAY, TYPE_LARGE_GROUP);
+    public static final List<String> GUARD_TYPES = List.of(TYPE_ARRIVING_TODAY, TYPE_LARGE_GROUP, TYPE_WALK_IN_PAYMENT_PROOF);
     public static final List<String> DIRECTOR_TYPES = List.of(TYPE_BOOKING_REQUEST, TYPE_MASTER_BOOKING_REQUEST,
             TYPE_BOOKING_RESCHEDULED, TYPE_BOOKING_CANCELLED, TYPE_SLOT_FILLING, TYPE_GATE_DENIED, TYPE_BANNED_FACE_ATTEMPT,
-            TYPE_EMAIL_FAILED, TYPE_AI_OFFLINE, TYPE_NEGATIVE_FEEDBACK, TYPE_ARRIVING_TODAY, TYPE_LARGE_GROUP);
+            TYPE_EMAIL_FAILED, TYPE_AI_OFFLINE, TYPE_NEGATIVE_FEEDBACK, TYPE_ARRIVING_TODAY, TYPE_LARGE_GROUP,
+            TYPE_PAYMENT_PROOF, TYPE_PAYMENT_EXPIRED, TYPE_BOOKING_REINSTATED);
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

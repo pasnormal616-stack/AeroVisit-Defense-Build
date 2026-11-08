@@ -27,7 +27,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-import com.paf.aerovisit.model.StaffSchedule;
 
 @Service
 public class EmailService {
@@ -101,20 +100,40 @@ public class EmailService {
 
     // Sends one HTML email from the museum's address (fromAddress); qrPath may be null (no attachment).
     private void send(String toEmail, String subject, String html, Path qrPath) {
+        send(toEmail, subject, html, qrPath, null);
+    }
+
+    // Same, with a Reply-To address (null = replies go to the sender)
+    private void send(String toEmail, String subject, String html, Path qrPath, String replyTo) {
+        send(toEmail, subject, html, qrPath == null ? null : new FileSystemResource(qrPath), "Entry_QRCode.png", replyTo);
+    }
+
+    // 🚶 The walk-in gate pass: the QR is made in memory from the booking's secure token (never saved under uploads/)
+    static final String WALK_IN_QR_FILE = "Walk-in_Pass_QR.png";
+
+    private void sendWithWalkInQr(String toEmail, String subject, String html, String qrToken) {
+        send(toEmail, subject, html,
+                new org.springframework.core.io.ByteArrayResource(com.paf.aerovisit.util.QRCodeGenerator.pngBytes(qrToken, 320)),
+                WALK_IN_QR_FILE, null);
+    }
+
+    // qr: shown in the message itself (<img src="cid:entryQr">: approved.html, reminder.html, the walk-in emails) and
+    // also attached as qrName; null = a plain HTML email
+    private void send(String toEmail, String subject, String html, org.springframework.core.io.Resource qr, String qrName, String replyTo) {
         if (mailPassword == null || mailPassword.isBlank()) {
             throw new MailDeliveryException("AEROVISIT_MAIL_PASSWORD is not set");
         }
         try {
             MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, qrPath != null, "UTF-8");
+            MimeMessageHelper helper = new MimeMessageHelper(message, qr != null, "UTF-8");
             helper.setFrom(fromAddress, SENDER_NAME);
             helper.setTo(toEmail);
+            if (replyTo != null && !replyTo.isBlank()) helper.setReplyTo(replyTo);
             helper.setSubject(subject);
             helper.setText(html, true);
-            if (qrPath != null) {
-                // Shown in the message itself (approved.html / reminder.html: <img src="cid:entryQr">) and still attached
-                helper.addInline("entryQr", new FileSystemResource(qrPath), "image/png");
-                helper.addAttachment("Entry_QRCode.png", new FileSystemResource(qrPath));
+            if (qr != null) {
+                helper.addInline("entryQr", qr, "image/png");
+                helper.addAttachment(qrName, qr, "image/png");
             }
             mailSender.send(message);
         } catch (MailException | MessagingException | UnsupportedEncodingException e) { // login refused, SMTP error, timeout
@@ -200,17 +219,15 @@ public class EmailService {
     }
 
     // --- NEW: THE INSTANT "PENDING REGISTRATION" AUTO-REPLY ---
-    public void sendPendingNotification(String toEmail, String name, String date, boolean isMasterBooking) {
-        sendPendingNotification(toEmail, name, date, isMasterBooking, null);
+    public void sendPendingNotification(String toEmail, String name, String date) {
+        sendPendingNotification(toEmail, name, date, null);
     }
 
     // Same auto-reply, but also shows the visitor's Booking Reference ID when one is provided
-    public void sendPendingNotification(String toEmail, String name, String date, boolean isMasterBooking, String referenceId) {
+    public void sendPendingNotification(String toEmail, String name, String date, String referenceId) {
         try {
-            String subject = isMasterBooking ? "PAF Aerospace Museum - Master Booking Request Received"
-                                             : "PAF Aerospace Museum - Visit Request Received";
-            sendHtml(toEmail, subject, render("pending",
-                    vars("name", name, "date", date, "masterBooking", isMasterBooking, "referenceId", referenceId)));
+            String subject = "PAF Aerospace Museum - Visit Request Received";
+            sendHtml(toEmail, subject, render("pending", vars("name", name, "date", date, "referenceId", referenceId)));
             System.out.println("⏳ Pending Auto-Reply successfully sent to " + toEmail);
         } catch (MailDeliveryException e) {
             System.err.println("❌ Failed to send Pending Auto-Reply email: " + e.getMessage());
@@ -228,7 +245,7 @@ public class EmailService {
     }
 
     // ...plus the booked time window (e.g. "Morning (08:00 AM - 12:00 PM)"), shown with the gate's arrive-on-time rule;
-    // null hides it (Master Bookings take the whole day)
+    // null hides it (no readable slot, e.g. an older booking's "Master Booking Bypass")
     public void sendApprovalEmailWithQR(String toEmail, String visitorName, String date, String qrCodeFileName,
                                         String referenceId, String timeWindow) {
         try {
@@ -259,11 +276,26 @@ public class EmailService {
         }
     }
 
-    // Figures for the Director's end-of-day email. Counts are bookings; *Guests sum groupSize (a Master Booking is one booking, many guests).
+    // Figures for the Director's end-of-day email. Counts are bookings; *Guests sum groupSize (a group is one booking, many guests).
     public record DailyReport(String date, long expected, long expectedGuests, long checkedIn, long checkedInGuests,
                               long noShows, long noShowGuests, long stillOpen, long noShowsAllTime,
-                              String nextDate, long pendingNextDay, Insights insights) {
+                              String nextDate, long pendingNextDay, Insights insights, WalkInPayments walkIns) {
+        public DailyReport(String date, long expected, long expectedGuests, long checkedIn, long checkedInGuests,
+                           long noShows, long noShowGuests, long stillOpen, long noShowsAllTime,
+                           String nextDate, long pendingNextDay, Insights insights) {
+            this(date, expected, expectedGuests, checkedIn, checkedInGuests, noShows, noShowGuests, stillOpen, noShowsAllTime,
+                 nextDate, pendingNextDay, insights, WalkInPayments.NONE);
+        }
+
         public Long checkInRate() { return expected > 0 ? Math.round(checkedIn * 100.0 / expected) : null; }
+    }
+
+    // 🚶 The day's walk-ins (bookings and guests, part of the expected figures) and their verified payments: count,
+    // total and each billing number with who verified it, to check against Landbank's records the same day
+    public record WalkInPayment(String billingNumber, String amount, String verifiedBy, String verifiedAt) {}
+
+    public record WalkInPayments(long bookings, long guests, int count, String total, java.util.List<WalkInPayment> payments) {
+        public static final WalkInPayments NONE = new WalkInPayments(0, 0, 0, com.paf.aerovisit.util.Peso.format(0), java.util.List.of());
     }
 
     // Visit insights from data each Visitor row already holds. Null / empty = nothing to report that day.
@@ -292,14 +324,9 @@ public class EmailService {
 
     // --- 4. THE CHECK-IN GUIDELINES EMAIL (HTML) ---
     public void sendCheckInGuidelines(String to, String name) {
-        sendCheckInGuidelines(to, name, null);
-    }
-
-    // Same guidelines email, but introduces today's Tour Guide when one is on duty (falls back to a generic line when null)
-    public void sendCheckInGuidelines(String to, String name, String tourGuideName) {
         try {
             String subject = "PAF Aerospace Museum - Entry Confirmed: Visitor Guidelines";
-            sendHtml(to, subject, render("check-in", vars("name", name, "tourGuideName", tourGuideName)));
+            sendHtml(to, subject, render("check-in", vars("name", name)));
             System.out.println("🟢 Check-In Guidelines successfully sent to " + to);
 
         } catch (MailDeliveryException e) {
@@ -358,20 +385,7 @@ public class EmailService {
         }
     }
 
-    // --- 9. BOOKING CANCELLATION: FACILITY OVERRIDE (HTML) ---
-    public void sendOverrideCancellationEmail(String toEmail, String visitorName, String date, String referenceId) {
-        try {
-            String subject = "PAF Aerospace Museum - Scheduled Visit Cancelled";
-            sendHtml(toEmail, subject, render("override-cancelled", vars("name", visitorName == null ? "Visitor" : visitorName,
-                    "date", date, "referenceId", referenceId, "bookUrl", bookingPageUrl())));
-            System.out.println("📭 Override Cancellation email successfully sent to " + toEmail);
-
-        } catch (MailDeliveryException e) {
-            System.err.println("❌ Failed to send Override Cancellation email: " + e.getMessage());
-        }
-    }
-
-    // --- 10. BOOKING CANCELLATION: EMERGENCY CLOSURE (HTML) ---
+    // --- 9. BOOKING CANCELLATION: EMERGENCY CLOSURE (HTML) ---
     // Unlike the other senders, failures are thrown, so the closure batch can count and report each one
     public void sendEmergencyCancellation(com.paf.aerovisit.model.Visitor visitor, String reason) throws MailDeliveryException {
 
@@ -379,29 +393,146 @@ public class EmailService {
 
         String visitorName = visitor.getName();
         String htmlMsg = render("emergency-cancelled", vars("name", visitorName == null ? "Visitor" : visitorName,
-                "date", String.valueOf(visitor.getVisitDate()), "reason", reason,
+                "date", String.valueOf(visitor.getVisitDate()), "reason", reason, "paid", false,
                 "referenceId", visitor.getReferenceId(), "bookUrl", bookingPageUrl()));
 
         sendHtml(visitor.getEmail(), subject, htmlMsg);
         System.out.println("📭 Emergency Closure email successfully sent to " + visitor.getEmail());
     }
 
-    // --- 11. STAFF DUTY ROSTER (HTML) ---
-    // Sent by "Publish Roster & Notify Staff". Like the emergency closure email, failures are thrown so the batch can count them
-    public void sendStaffScheduleEmail(String toEmail, String staffName, List<StaffSchedule> assignedSlots) throws MailDeliveryException {
+    // 🚨 Emergency closure for a booking already paid (or whose receipt is being checked): the payment is kept and the
+    // visitor picks another date in Manage Booking (the Terms: payments are non-refundable). Thrown like the email above.
+    public void sendClosureReschedule(com.paf.aerovisit.model.Visitor visitor, String reason) throws MailDeliveryException {
+        String subject = "PAF Aerospace Museum - Museum Closure: Please Reschedule Your Visit on " + visitor.getVisitDate();
+        String visitorName = visitor.getName();
+        String htmlMsg = render("emergency-cancelled", vars("name", visitorName == null ? "Visitor" : visitorName,
+                "date", String.valueOf(visitor.getVisitDate()), "reason", reason, "paid", true,
+                "billingNumber", visitor.getBillingNumber(), "amount", visitor.amountDueText(),
+                "referenceId", visitor.getReferenceId(), "bookUrl", manageBookingUrl(),
+                "deadline", visitor.rescheduleDeadline() == null ? null : visitor.rescheduleDeadline().toString()));
+        sendHtml(visitor.getEmail(), subject, htmlMsg);
+        System.out.println("📭 Closure reschedule email successfully sent to " + visitor.getEmail());
+    }
 
-        String subject = "PAF Aerospace Museum - Upcoming Duty Roster";
+    // 📅 A paid booking must pick a new date in Manage Booking by its deadline (Visitor.rescheduleDeadline): sent when a paid
+    // request was not reviewed before its visit date, and (reminder = true) once, 7 days before the deadline
+    public void sendRescheduleNeeded(com.paf.aerovisit.model.Visitor visitor, boolean reminder) throws MailDeliveryException {
+        String subject = reminder
+                ? "PAF Aerospace Museum - Reminder: Please Choose a New Date for Your Visit"
+                : "PAF Aerospace Museum - Please Choose a New Date for Your Visit";
+        String visitorName = visitor.getName();
+        String htmlMsg = render("reschedule-needed", vars("name", visitorName == null ? "Visitor" : visitorName,
+                "date", String.valueOf(visitor.getVisitDate()), "reminder", reminder,
+                "unreviewed", com.paf.aerovisit.model.Visitor.UNREVIEWED_NOTE.equals(visitor.getRejectionReason()),
+                "deadline", String.valueOf(visitor.rescheduleDeadline()),
+                "billingNumber", visitor.getBillingNumber(), "amount", visitor.amountDueText(),
+                "referenceId", visitor.getReferenceId(), "bookUrl", manageBookingUrl()));
+        sendHtml(visitor.getEmail(), subject, htmlMsg);
+        System.out.println("📭 Reschedule-needed email successfully sent to " + visitor.getEmail());
+    }
 
-        DateTimeFormatter dutyDateFormat = DateTimeFormatter.ofPattern("EEE, MMM d, yyyy", Locale.US);
-        List<Map<String, Object>> slots = new ArrayList<>();
-        for (StaffSchedule slot : assignedSlots) {
-            slots.add(vars("date", slot.getDutyDate() == null ? "" : slot.getDutyDate().format(dutyDateFormat),
-                    "shift", slot.getShiftTime()));
+    // --- 10. 💳 PAYMENT (Landbank Link.BizPortal, outside AeroVisit) ---
+    // What the payment emails show, read from the booking when the email is queued (the booking may change later)
+    // walkIn: booked at the museum for today (the emails then speak of minutes and the gate, not of approval and a QR)
+    // approved: the booking was already approved (older approve-then-pay bookings); false = pay first, then review
+    // qrToken: a walk-in's secure token, so the walk-in payment email carries its gate QR (null for advance bookings)
+    public record PaymentNotice(String to, String name, String referenceId, String billingNumber, String amount,
+                                String breakdown, String deadline, String paymentToken, String reason, boolean walkIn,
+                                boolean approved, String contactEmail, String qrToken) {
+        // Without a gate QR (advance bookings, and callers that don't need one)
+        public PaymentNotice(String to, String name, String referenceId, String billingNumber, String amount,
+                             String breakdown, String deadline, String paymentToken, String reason, boolean walkIn,
+                             boolean approved, String contactEmail) {
+            this(to, name, referenceId, billingNumber, amount, breakdown, deadline, paymentToken, reason, walkIn, approved,
+                    contactEmail, null);
         }
 
-        String htmlMsg = render("staff-roster", vars("staffName", staffName == null ? "Officer" : staffName, "slots", slots));
+        public static PaymentNotice of(com.paf.aerovisit.model.Visitor v) {
+            return of(v, null);
+        }
 
-        sendHtml(toEmail, subject, htmlMsg);
-        System.out.println("📨 Duty roster email successfully sent to " + toEmail);
+        // contactEmail: the museum contact email from Settings (Website Content), or null when none is set
+        public static PaymentNotice of(com.paf.aerovisit.model.Visitor v, String contactEmail) {
+            return new PaymentNotice(v.getEmail(), v.getName() == null ? "Visitor" : v.getName(), v.getReferenceId(),
+                    v.getBillingNumber(), v.amountDueText(), v.admissionSummary(),
+                    PaymentWorkflow.deadlineText(v.getPaymentDueAt()), v.getPaymentToken(), v.getPaymentRejectionReason(), v.walkIn(),
+                    "APPROVED".equals(v.getStatus()), contactEmail == null || contactEmail.isBlank() ? null : contactEmail.trim(),
+                    v.walkIn() ? v.getSecureToken() : null);
+        }
+    }
+
+    // The visitor's own payment page: the unguessable token is the key (never the billing number)
+    String paymentPageUrl(String paymentToken) {
+        return publicBaseUrl + "/payment?token=" + paymentToken;
+    }
+
+    private String manageBookingUrl() {
+        return publicBaseUrl + "/manage-booking";
+    }
+
+    private Map<String, Object> paymentVars(PaymentNotice n) {
+        return vars("name", n.name(), "referenceId", n.referenceId(), "billingNumber", n.billingNumber(), "amount", n.amount(),
+                "breakdown", n.breakdown(), "deadline", n.deadline(), "reason", n.reason(), "walkIn", n.walkIn(),
+                "approved", n.approved(),
+                "contactEmail", n.contactEmail() != null ? n.contactEmail() : fromAddress,
+                "payUrl", n.paymentToken() == null ? manageBookingUrl() : paymentPageUrl(n.paymentToken()),
+                "bookUrl", bookingPageUrl(), "walkInQr", n.walkIn() && n.qrToken() != null);
+    }
+
+    // Approved, please pay: billing number, amount, breakdown, deadline and the button to the payment page (no QR yet).
+    // Failures are thrown, so the background sender reports them to the Director's bell (like the approval email).
+    public void sendPaymentRequest(PaymentNotice n) {
+        try {
+            String subject = n.walkIn() ? "PAF Aerospace Museum - Your Walk-in Billing Number: " + n.billingNumber()
+                    : n.approved() ? "PAF Aerospace Museum - Visit Approved: Please Complete Your Payment"
+                    : "PAF Aerospace Museum - Booking Received: Please Pay by " + n.deadline();
+            String html = render("payment-requested", paymentVars(n));
+            // 🚶 A walk-in's email also carries its gate QR ("Show this QR to the guard at the gate")
+            if (n.walkIn() && n.qrToken() != null) sendWithWalkInQr(n.to(), subject, html, n.qrToken());
+            else sendHtml(n.to(), subject, html);
+            System.out.println("💳 Payment request email successfully sent to " + n.to());
+        } catch (MailDeliveryException e) {
+            System.err.println("❌ Failed to send payment request email: " + e.getMessage());
+            throw e;
+        }
+    }
+
+    // 🚶 A FREE walk-in (nothing to pay): its gate pass by email, so the QR isn't lost if the visitor closes the page.
+    // Failures are thrown (the background sender logs them); the "go to the gate" screen already shows the same QR.
+    public void sendWalkInPass(String toEmail, String visitorName, String referenceId, String timeWindow, String qrToken) {
+        try {
+            String html = render("walkin-pass", vars("name", visitorName == null ? "Visitor" : visitorName,
+                    "referenceId", referenceId, "timeWindow", timeWindow));
+            sendWithWalkInQr(toEmail, "PAF Aerospace Museum - Your Walk-in Pass for Today", html, qrToken);
+            System.out.println("🚶 Walk-in pass email successfully sent to " + toEmail);
+        } catch (MailDeliveryException e) {
+            System.err.println("❌ Failed to send walk-in pass email: " + e.getMessage());
+            throw e;
+        }
+    }
+
+    // The receipt was not accepted: the reason, the new deadline and the same link to upload another one
+    public void sendPaymentRejected(PaymentNotice n) {
+        try {
+            sendHtml(n.to(), "PAF Aerospace Museum - Payment Receipt Not Accepted: Upload a New One by " + n.deadline(),
+                    render("payment-rejected", paymentVars(n)));
+            System.out.println("💳 Receipt rejection email successfully sent to " + n.to());
+        } catch (MailDeliveryException e) {
+            System.err.println("❌ Failed to send receipt rejection email: " + e.getMessage());
+            throw e;
+        }
+    }
+
+    // No receipt by the deadline: the seats were released (the nightly-style sweep never throws, so failures are logged).
+    // Reply-To is the museum contact email, so a visitor who already paid and simply replies reaches the museum even
+    // when the sender is a no-reply address (Amazon SES); no contact email set = no Reply-To.
+    public void sendPaymentExpired(PaymentNotice n) {
+        try {
+            send(n.to(), "PAF Aerospace Museum - Booking Released: Payment Not Received", render("payment-expired", paymentVars(n)),
+                    null, n.contactEmail());
+            System.out.println("💳 Payment expiry email successfully sent to " + n.to());
+        } catch (MailDeliveryException e) {
+            System.err.println("❌ Failed to send payment expiry email: " + e.getMessage());
+        }
     }
 }

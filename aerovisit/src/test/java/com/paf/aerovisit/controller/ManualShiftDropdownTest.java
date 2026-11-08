@@ -41,7 +41,7 @@ import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
-/** The manual Add Shift form and Edit Shift modal list the configured time windows (like the AI preview), not three hard-coded shifts. No database. */
+/** The Duty Roster's windows are the picked date's booking slots (Assign Staff and the Edit window), and shift overlaps. No database. */
 @WebMvcTest(ManagementController.class)
 @Import(SecurityConfig.class)
 @WithMockUser(roles = "DIRECTOR")
@@ -63,38 +63,64 @@ class ManualShiftDropdownTest {
     @MockitoBean private TimeWindowConfigRepository timeWindowRepo;
     @MockitoBean private MuseumClosureRepository closureRepo;
 
-    // option values of <select id="..."> on the rendered staff page
-    private List<String> optionValues(String html, String selectId) {
-        Matcher select = Pattern.compile("<select id=\"" + selectId + "\"[^>]*>(.*?)</select>", Pattern.DOTALL).matcher(html);
-        assertThat(select.find()).as(selectId).isTrue();
-        Matcher option = Pattern.compile("<option value=\"([^\"]*)\"").matcher(select.group(1));
-        List<String> values = new ArrayList<>();
-        while (option.find()) values.add(option.group(1));
-        return values;
-    }
-
     private String staffPage() throws Exception {
         return mvc.perform(get("/admin/staff")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
     }
 
-    @Test
-    void bothDropdownsListTheConfiguredWindowsInStartOrder() throws Exception {
-        when(timeWindowRepo.findAllByOrderByStartTimeAsc()).thenReturn(List.of(MORNING, MIDDAY, EVENING));
-        String html = staffPage();
+    // Booking slots on that date, one per window (the roster's windows for the date)
+    private void slotsOn(LocalDate day, TimeWindowConfig... windows) {
+        List<BookingSlot> slots = new ArrayList<>();
+        for (TimeWindowConfig w : windows) {
+            BookingSlot slot = new BookingSlot();
+            slot.setSlotDate(day);
+            slot.setTimeWindow(w.getLabel());
+            slot.setMaxCapacity(50);
+            slots.add(slot);
+        }
+        when(bookingRepo.findAll()).thenReturn(slots);
+    }
 
-        List<String> expected = List.of("Morning (0800H-1200H)", MIDDAY.getLabel(), EVENING.getLabel());
-        assertThat(optionValues(html, "shiftTime")).containsExactlyElementsOf(expected);
-        assertThat(optionValues(html, "editShiftTime")).containsExactlyElementsOf(expected);
-        assertThat(optionValues(html, "shiftTime")).doesNotContain("Afternoon (1300H-1700H)", "Full Day (0800H-1700H)");
+    // The Assign Staff window checkboxes on the rendered page
+    private static List<String> windowBoxes(String html) {
+        Matcher box = Pattern.compile("name=\"shiftTime\" value=\"([^\"]*)\"").matcher(html);
+        List<String> values = new ArrayList<>();
+        while (box.find()) values.add(box.group(1));
+        return values;
+    }
+
+    private static String rosterDay(LocalDate day) {
+        return "/admin/staff?day=" + day + "#roster";
     }
 
     @Test
-    void withNoWindowsConfiguredTheThreeOriginalShiftsAreOffered() throws Exception {
-        when(timeWindowRepo.findAllByOrderByStartTimeAsc()).thenReturn(List.of());
-        List<String> legacy = List.of("Morning (0800H-1200H)", "Afternoon (1300H-1700H)", "Full Day (0800H-1700H)");
-        String html = staffPage();
-        assertThat(optionValues(html, "shiftTime")).containsExactlyElementsOf(legacy);
-        assertThat(optionValues(html, "editShiftTime")).containsExactlyElementsOf(legacy);
+    void theAssignFormOffersExactlyThatDatesBookingSlotsInTimeOrder() throws Exception {
+        LocalDate day = LocalDate.now().plusDays(2);
+        when(timeWindowRepo.findAllByOrderByStartTimeAsc()).thenReturn(List.of(MORNING, MIDDAY, EVENING)); // configured, but only two are slots
+        slotsOn(day, EVENING, MORNING);
+        String html = mvc.perform(get("/admin/staff").param("day", day.toString())).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+
+        assertThat(windowBoxes(html)).containsExactly(MORNING.getLabel(), EVENING.getLabel());
+        String assign = html.substring(html.indexOf("id=\"assignStaffForm\""), html.indexOf("</form>", html.indexOf("id=\"assignStaffForm\"")));
+        assertThat(assign).doesNotContain("value=\"Morning (0800H-1200H)\"").doesNotContain("value=\"" + MIDDAY.getLabel() + "\"");
+        assertThat(html)
+            .contains("<label class=\"form-check-label av-mono\" for=\"rosterWindow0\">8:00 AM – 12:00 PM</label>")
+            .contains("id=\"rosterWholeDay\"");
+        // the Edit window gets the same slots for that date, by exact time
+        assertThat(html).contains("\"" + day + "\":[{\"value\":\"" + MORNING.getLabel() + "\",\"text\":\"8:00 AM \\u2013 12:00 PM\"}"); // JS-escaped dash
+    }
+
+    @Test
+    void aDateWithNoBookingSlotsSaysSoAndOffersNoWindows() throws Exception {
+        LocalDate day = LocalDate.now().plusDays(2);
+        when(timeWindowRepo.findAllByOrderByStartTimeAsc()).thenReturn(List.of(MORNING, MIDDAY, EVENING));
+        slotsOn(day.plusDays(1), MORNING);
+        String html = mvc.perform(get("/admin/staff").param("day", day.toString())).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+
+        assertThat(windowBoxes(html)).isEmpty();
+        assertThat(html).contains("<p class=\"av-empty mb-0\">No booking slots on this date</p>")
+            .containsPattern("<fieldset class=\"m-0 p-0 border-0\" disabled=\"disabled\">");
     }
 
     @Test
@@ -105,26 +131,25 @@ class ManualShiftDropdownTest {
     }
 
     @Test
-    void addingAShiftOutsideTheConfiguredWindowsIsRefused() throws Exception {
+    void addingAShiftOutsideTheDatesBookingSlotsIsRefused() throws Exception {
         when(timeWindowRepo.findAllByOrderByStartTimeAsc()).thenReturn(List.of(MORNING, MIDDAY));
         LocalDate day = LocalDate.now().plusDays(2);
-        mvc.perform(post("/admin/staff/add").with(csrf()).param("staffName", "Sgt. Reyes").param("role", "Gate Guard")
-                .param("startDate", day.toString()).param("endDate", day.toString()).param("shiftTime", "Afternoon (1300H-1700H)"))
-            .andExpect(redirectedUrl("/admin/staff"))
-            .andExpect(flash().attribute("error", "Shift time \"Afternoon (1300H-1700H)\" is not one of the configured time windows."));
+        slotsOn(day, MORNING, MIDDAY);
+        mvc.perform(post("/admin/staff/add").with(csrf()).param("staffName", "Sgt. Reyes")
+                .param("dutyDate", day.toString()).param("shiftTime", "Afternoon (1300H-1700H)"))
+            .andExpect(redirectedUrl(rosterDay(day)))
+            .andExpect(flash().attribute("error", "⛔ \"Afternoon (1300H-1700H)\" is not one of the booking slots on " + day + ". Nothing was saved."));
         verify(staffRepo, never()).save(any());
     }
 
     @Test
-    void addingAShiftInAConfiguredWindowStillWorks() throws Exception {
+    void addingAShiftInOneOfTheDatesSlotsStillWorks() throws Exception {
         when(timeWindowRepo.findAllByOrderByStartTimeAsc()).thenReturn(List.of(MORNING, MIDDAY));
         LocalDate day = LocalDate.now().plusDays(2);
-        BookingSlot open = new BookingSlot();
-        open.setSlotDate(day);
-        when(bookingRepo.findAll()).thenReturn(List.of(open));
+        slotsOn(day, MORNING, MIDDAY);
 
-        mvc.perform(post("/admin/staff/add").with(csrf()).param("staffName", "Sgt. Reyes").param("role", "Gate Guard")
-                .param("startDate", day.toString()).param("endDate", day.toString()).param("shiftTime", MIDDAY.getLabel()))
+        mvc.perform(post("/admin/staff/add").with(csrf()).param("staffName", "Sgt. Reyes")
+                .param("dutyDate", day.toString()).param("shiftTime", MIDDAY.getLabel()))
             .andExpect(flash().attributeExists("success"));
         verify(staffRepo).save(org.mockito.ArgumentMatchers.argThat((StaffSchedule s) -> MIDDAY.getLabel().equals(s.getShiftTime())));
     }
@@ -134,7 +159,6 @@ class ManualShiftDropdownTest {
     private static StaffSchedule onDuty(String name, LocalDate day, String shiftTime) {
         StaffSchedule s = new StaffSchedule();
         s.setStaffName(name);
-        s.setRole("Gate Guard");
         s.setDutyDate(day);
         s.setShiftTime(shiftTime);
         return s;
@@ -143,9 +167,7 @@ class ManualShiftDropdownTest {
     private LocalDate openDayWithReyesOnMorningDuty() {
         when(timeWindowRepo.findAllByOrderByStartTimeAsc()).thenReturn(List.of(MORNING, MIDDAY, EVENING));
         LocalDate day = LocalDate.now().plusDays(2);
-        BookingSlot open = new BookingSlot();
-        open.setSlotDate(day);
-        when(bookingRepo.findAll()).thenReturn(List.of(open));
+        slotsOn(day, MORNING, MIDDAY, EVENING);
         StaffSchedule existing = onDuty("Sgt. Reyes", day, "Morning (0800H-1200H)");
         // stubbed both ways, so the test doesn't dictate which query the fix uses
         when(staffRepo.findByDutyDateOrderByStaffNameAsc(day)).thenReturn(List.of(existing));
@@ -157,9 +179,9 @@ class ManualShiftDropdownTest {
     void anOfficerCannotBeGivenAnOverlappingShiftOnTheSameDay() throws Exception {
         LocalDate day = openDayWithReyesOnMorningDuty();
         // Midday 11:00-14:00 overlaps his Morning 08:00-12:00; the name differs only in case and spacing
-        mvc.perform(post("/admin/staff/add").with(csrf()).param("staffName", " sgt. reyes ").param("role", "Gate Guard")
-                .param("startDate", day.toString()).param("endDate", day.toString()).param("shiftTime", MIDDAY.getLabel()))
-            .andExpect(redirectedUrl("/admin/staff"))
+        mvc.perform(post("/admin/staff/add").with(csrf()).param("staffName", " sgt. reyes ")
+                .param("dutyDate", day.toString()).param("shiftTime", MIDDAY.getLabel()))
+            .andExpect(redirectedUrl(rosterDay(day)))
             .andExpect(flash().attributeExists("error"));
         verify(staffRepo, never()).save(any());
     }
@@ -167,8 +189,8 @@ class ManualShiftDropdownTest {
     @Test
     void aSecondShiftThatDoesNotOverlapIsStillAllowed() throws Exception {   // passes today; stops the fix over-blocking
         LocalDate day = openDayWithReyesOnMorningDuty();
-        mvc.perform(post("/admin/staff/add").with(csrf()).param("staffName", "Sgt. Reyes").param("role", "Gate Guard")
-                .param("startDate", day.toString()).param("endDate", day.toString()).param("shiftTime", EVENING.getLabel()))
+        mvc.perform(post("/admin/staff/add").with(csrf()).param("staffName", "Sgt. Reyes")
+                .param("dutyDate", day.toString()).param("shiftTime", EVENING.getLabel()))
             .andExpect(flash().attributeExists("success"));
         verify(staffRepo).save(any(StaffSchedule.class));
     }
@@ -212,7 +234,7 @@ class ManualShiftDropdownTest {
         when(staffRepo.findByDutyDateOrderByStaffNameAsc(day)).thenReturn(List.of(morning, evening));
 
         // Moving the evening shift to Midday collides with his morning shift
-        mvc.perform(post("/admin/staff/update").with(csrf()).param("id", "5").param("staffName", "Sgt. Reyes").param("role", "Gate Guard")
+        mvc.perform(post("/admin/staff/update").with(csrf()).param("id", "5").param("staffName", "Sgt. Reyes")
                 .param("dutyDate", day.toString()).param("shiftTime", MIDDAY.getLabel()))
             .andExpect(flash().attribute("error", "⛔ Sgt. Reyes is already on duty Morning (0800H-1200H) on " + day
                     + ", which overlaps " + MIDDAY.getLabel() + ". Nothing was saved."));
@@ -220,49 +242,26 @@ class ManualShiftDropdownTest {
         verify(staffRepo, never()).save(any());
 
         // Re-saving the evening shift as it is: its own row never counts as a clash
-        mvc.perform(post("/admin/staff/update").with(csrf()).param("id", "5").param("staffName", "Sgt. Reyes").param("role", "Gate Guard")
+        mvc.perform(post("/admin/staff/update").with(csrf()).param("id", "5").param("staffName", "Sgt. Reyes")
                 .param("dutyDate", day.toString()).param("shiftTime", EVENING.getLabel()))
             .andExpect(flash().attributeExists("success"));
-    }
-
-    @Test
-    void aRangeWithOneClashingDaySavesNoneOfItsDays() throws Exception {
-        when(timeWindowRepo.findAllByOrderByStartTimeAsc()).thenReturn(List.of(MORNING, MIDDAY, EVENING));
-        LocalDate first = LocalDate.now().plusDays(2);
-        List<BookingSlot> slots = new ArrayList<>();
-        for (int i = 0; i < 3; i++) {
-            BookingSlot open = new BookingSlot();
-            open.setSlotDate(first.plusDays(i));
-            slots.add(open);
-        }
-        when(bookingRepo.findAll()).thenReturn(slots);
-        LocalDate middle = first.plusDays(1);
-        when(staffRepo.findByDutyDateOrderByStaffNameAsc(middle)).thenReturn(List.of(onDuty("SGT. REYES", middle, "Morning (0800H-1200H)")));
-
-        mvc.perform(post("/admin/staff/add").with(csrf()).param("staffName", "Sgt. Reyes").param("role", "Gate Guard")
-                .param("startDate", first.toString()).param("endDate", first.plusDays(2).toString()).param("shiftTime", MIDDAY.getLabel()))
-            .andExpect(flash().attribute("error", "⛔ Sgt. Reyes is already on duty Morning (0800H-1200H) on " + middle
-                    + ", which overlaps " + MIDDAY.getLabel() + ". Nothing was saved."));
-        verify(staffRepo, never()).save(any());
     }
 
     @Test
     void officerNamesAreTrimmedWhenSaved() throws Exception {
         when(timeWindowRepo.findAllByOrderByStartTimeAsc()).thenReturn(List.of(MORNING, MIDDAY));
         LocalDate day = LocalDate.now().plusDays(2);
-        BookingSlot open = new BookingSlot();
-        open.setSlotDate(day);
-        when(bookingRepo.findAll()).thenReturn(List.of(open));
+        slotsOn(day, MORNING, MIDDAY);
 
-        mvc.perform(post("/admin/staff/add").with(csrf()).param("staffName", "  Sgt. Reyes  ").param("role", "Gate Guard")
-                .param("startDate", day.toString()).param("endDate", day.toString()).param("shiftTime", MIDDAY.getLabel()))
+        mvc.perform(post("/admin/staff/add").with(csrf()).param("staffName", "  Sgt. Reyes  ")
+                .param("dutyDate", day.toString()).param("shiftTime", MIDDAY.getLabel()))
             .andExpect(flash().attributeExists("success"));
         verify(staffRepo).save(org.mockito.ArgumentMatchers.argThat((StaffSchedule s) -> "Sgt. Reyes".equals(s.getStaffName())));
 
         StaffSchedule old = onDuty("Sgt. Reyes", day, MIDDAY.getLabel());
         old.setId(9L);
         when(staffRepo.findById(9L)).thenReturn(Optional.of(old));
-        mvc.perform(post("/admin/staff/update").with(csrf()).param("id", "9").param("staffName", " Sgt. Cruz ").param("role", "Gate Guard")
+        mvc.perform(post("/admin/staff/update").with(csrf()).param("id", "9").param("staffName", " Sgt. Cruz ")
                 .param("dutyDate", day.toString()).param("shiftTime", MIDDAY.getLabel()))
             .andExpect(flash().attributeExists("success"));
         assertThat(old.getStaffName()).isEqualTo("Sgt. Cruz");
@@ -272,9 +271,7 @@ class ManualShiftDropdownTest {
     void editingKeepsAnOlderShiftValueButRefusesAMadeUpNewOne() throws Exception {
         when(timeWindowRepo.findAllByOrderByStartTimeAsc()).thenReturn(List.of(MORNING, MIDDAY));
         LocalDate day = LocalDate.now().plusDays(2);
-        BookingSlot open = new BookingSlot();
-        open.setSlotDate(day);
-        when(bookingRepo.findAll()).thenReturn(List.of(open));
+        slotsOn(day, MORNING, MIDDAY);
         StaffSchedule old = new StaffSchedule();
         old.setId(1L);
         old.setStaffName("Sgt. Reyes");
@@ -282,14 +279,13 @@ class ManualShiftDropdownTest {
         old.setShiftTime("Afternoon (1300H-1700H)"); // its window was since removed
         when(staffRepo.findById(1L)).thenReturn(Optional.of(old));
 
-        mvc.perform(post("/admin/staff/update").with(csrf()).param("id", "1").param("staffName", "Sgt. Reyes").param("role", "Admin")
+        mvc.perform(post("/admin/staff/update").with(csrf()).param("id", "1").param("staffName", "Sgt. Reyes")
                 .param("dutyDate", day.toString()).param("shiftTime", "Afternoon (1300H-1700H)"))
             .andExpect(flash().attributeExists("success"));
-        assertThat(old.getRole()).isEqualTo("Admin");
 
-        mvc.perform(post("/admin/staff/update").with(csrf()).param("id", "1").param("staffName", "Sgt. Reyes").param("role", "Admin")
+        mvc.perform(post("/admin/staff/update").with(csrf()).param("id", "1").param("staffName", "Sgt. Reyes")
                 .param("dutyDate", day.toString()).param("shiftTime", "Graveyard (0000H-0600H)"))
-            .andExpect(flash().attribute("error", "Shift time \"Graveyard (0000H-0600H)\" is not one of the configured time windows."));
+            .andExpect(flash().attribute("error", "⛔ \"Graveyard (0000H-0600H)\" is not one of the booking slots on " + day + ". Nothing was saved."));
         assertThat(old.getShiftTime()).isEqualTo("Afternoon (1300H-1700H)");
     }
 }

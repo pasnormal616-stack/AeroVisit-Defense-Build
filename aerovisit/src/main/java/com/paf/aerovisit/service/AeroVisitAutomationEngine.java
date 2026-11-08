@@ -39,6 +39,15 @@ public class AeroVisitAutomationEngine {
     // 🔔 Header bell: arrivals this morning, and the 30-day clean-up. Optional, so tests building the engine by hand still work.
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     NotificationService notificationService;
+
+    // The museum contact email (Settings) shown in, and set as Reply-To of, the "Booking Released" email. Optional.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    PaymentWorkflow paymentWorkflow;
+
+    // 📝 The feedback email, once per booking (sweep + auto check-out). Optional, so engines built in unit tests still
+    // work: without it the booking's own timestamp guards the send.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    FeedbackEmails feedbackEmails;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     com.paf.aerovisit.repository.AdminNotificationRepository notificationRepo;
 
@@ -73,7 +82,7 @@ public class AeroVisitAutomationEngine {
         System.out.println("✅ Automated Reminder Cycle Complete.");
     }
 
-    // 🔔 6:30 AM: large groups and Master Bookings arriving today go to the Guard's and Director's bell
+    // 🔔 6:30 AM: large groups arriving today go to the Guard's and Director's bell
     @Scheduled(cron = "0 30 6 * * ?")
     public void executeArrivalAlerts() {
         if (notificationService == null) return;
@@ -107,7 +116,7 @@ public class AeroVisitAutomationEngine {
         // Everyone who entered: still inside, or already checked out (by the guard or the 11:59 PM sweep)
         List<Visitor> checkedIn = expected.stream().filter(v -> "CHECKED-IN".equals(v.getStatus()) || "CHECKED-OUT".equals(v.getStatus())).toList();
         List<Visitor> noShows = expected.stream().filter(v -> "NO_SHOW".equals(v.getStatus())).toList();
-        // Still APPROVED at midnight: a label the sweep can't read (e.g. a Master Booking) is resolved the next night
+        // Still APPROVED at midnight: a label the sweep can't read (e.g. an older booking's "Master Booking Bypass") is resolved the next night
         long stillOpen = expected.stream().filter(v -> "APPROVED".equals(v.getStatus())).count();
         LocalDate nextDay = today.plusDays(1);
         long pendingNextDay = repo.findByVisitDate(nextDay).stream().filter(Visitor::awaitsApproval).count();
@@ -119,11 +128,29 @@ public class AeroVisitAutomationEngine {
         }
         emailService.sendDirectorDailyReport(alertEmail, new EmailService.DailyReport(today.toString(),
             expected.size(), guests(expected), checkedIn.size(), guests(checkedIn), noShows.size(), guests(noShows),
-            stillOpen, repo.countTotalNoShows(), nextDay.toString(), pendingNextDay, insights(checkedIn)));
+            stillOpen, repo.countTotalNoShows(), nextDay.toString(), pendingNextDay, insights(checkedIn),
+            walkInPayments(repo.findByBookingCategoryAndVisitDate(Visitor.CATEGORY_WALK_IN, today))));
         System.out.println("✅ Director Dispatch successfully sent to: " + alertEmail);
     }
 
     static final Set<String> EXPECTED_STATUSES = Set.of("APPROVED", "CHECKED-IN", "CHECKED-OUT", "NO_SHOW");
+
+    private static final DateTimeFormatter VERIFIED_AT = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH);
+
+    // 🚶 The day's walk-ins that held seats (same statuses as Expected), and their payments verified as paid: count, total,
+    // and each billing number with who verified it, by billing number
+    static EmailService.WalkInPayments walkInPayments(List<Visitor> walkIns) {
+        List<Visitor> held = walkIns.stream().filter(v -> v.getStatus() != null && EXPECTED_STATUSES.contains(v.getStatus())).toList();
+        List<Visitor> paid = walkIns.stream().filter(v -> Visitor.PAY_PAID.equals(v.getPaymentStatus()))
+            .sorted(Comparator.comparing(Visitor::getBillingNumber, Comparator.nullsLast(Comparator.<String>naturalOrder()))).toList();
+        if (held.isEmpty() && paid.isEmpty()) return EmailService.WalkInPayments.NONE;
+        long total = paid.stream().mapToLong(Visitor::amountDueCentavos).sum();
+        return new EmailService.WalkInPayments(held.size(), guests(held), paid.size(), com.paf.aerovisit.util.Peso.format(total), paid.stream()
+            .map(v -> new EmailService.WalkInPayment(v.getBillingNumber(), v.amountDueText(),
+                    v.getPaymentVerifiedBy() == null ? "" : v.getPaymentVerifiedBy(),
+                    v.getPaymentVerifiedAt() == null ? "" : VERIFIED_AT.format(v.getPaymentVerifiedAt())))
+            .toList());
+    }
 
     private static long guests(List<Visitor> visitors) {
         return visitors.stream().mapToLong(v -> Math.max(1, v.getGroupSize())).sum();
@@ -188,6 +215,80 @@ public class AeroVisitAutomationEngine {
     }
 
     // =========================================================================
+    // 3a. 💳 PAYMENT DEADLINE SWEEP (every 15 minutes)
+    // =========================================================================
+    // Built like the no-show sweep. A booking still waiting for payment (AWAITING_PAYMENT, or its receipt was rejected)
+    // whose deadline has passed becomes PAYMENT_EXPIRED: not seat-holding, so its seats free up at once. That covers pay
+    // first (AWAITING_RECEIPT, and a pending booking whose receipt was rejected) and older approve-then-pay bookings
+    // (APPROVED). The visitor is emailed and the Director's bell is told. A booking whose receipt was submitted
+    // (PROOF_SUBMITTED) is never expired automatically: the Director decides. The receipt files are kept.
+    static final java.util.Set<String> EXPIRABLE_PAYMENT_STATUSES = Set.of(Visitor.PAY_AWAITING, Visitor.PAY_REJECTED);
+    static final java.util.Set<String> EXPIRABLE_BOOKING_STATUSES = Set.of(Visitor.STATUS_AWAITING_RECEIPT, "APPROVED",
+            "PENDING", "PENDING_MANUAL_REVIEW", "VERIFIED");
+
+    @Scheduled(cron = "0 */15 * * * *")
+    public void executePaymentDeadlineSweep() {
+        int expired = expireUnpaidBookings(LocalDateTime.now());
+        if (expired > 0) {
+            System.out.println("💳 [PAYMENT SWEEP] " + expired + " unpaid booking(s) released at their payment deadline.");
+        }
+        int late = releaseLateWalkIns(LocalDateTime.now());
+        if (late > 0) {
+            System.out.println("🚶 [WALK-IN SWEEP] " + late + " walk-in(s) not checked in by their deadline released (NO_SHOW).");
+        }
+    }
+
+    // 🚶 A walk-in not checked in by its check-in deadline (free: the walk-in minutes after booking; paid: the window's end)
+    // stops holding today's seats: NO_SHOW, like the nightly no-show sweep, but within 15 minutes. Advance bookings are
+    // left to the nightly sweep.
+    int releaseLateWalkIns(LocalDateTime now) {
+        int count = 0;
+        for (Visitor v : repo.findByBookingCategoryAndStatusAndCheckInDueAtBefore(Visitor.CATEGORY_WALK_IN, "APPROVED", now)) {
+            if (!v.walkIn() || !"APPROVED".equals(v.getStatus()) || v.getCheckInDueAt() == null || !now.isAfter(v.getCheckInDueAt())) continue;
+            v.setStatus("NO_SHOW");
+            v.setQrCodeUrl(null);
+            repo.save(v);
+            count++;
+        }
+        return count;
+    }
+
+    int expireUnpaidBookings(LocalDateTime now) {
+        int count = 0;
+        String contactEmail = null;
+        for (Visitor v : repo.findByStatusInAndPaymentStatusIn(EXPIRABLE_BOOKING_STATUSES, EXPIRABLE_PAYMENT_STATUSES)) {
+            if (v.getStatus() == null || !EXPIRABLE_BOOKING_STATUSES.contains(v.getStatus())
+                    || !EXPIRABLE_PAYMENT_STATUSES.contains(v.getPaymentStatus())) continue;
+            if (v.getPaymentDueAt() == null || !now.isAfter(v.getPaymentDueAt())) continue;
+            v.setStatus(Visitor.STATUS_PAYMENT_EXPIRED);
+            v.setQrCodeUrl(null);
+            repo.save(v);
+            count++;
+            if (count == 1 && paymentWorkflow != null) contactEmail = paymentWorkflow.contactEmail(); // read once per sweep
+            emailService.sendPaymentExpired(EmailService.PaymentNotice.of(v, contactEmail)); // logs a failure, never throws
+            if (notificationService != null) notificationService.paymentExpired(v); // never throws
+        }
+        return count;
+    }
+
+    // =========================================================================
+    // 3c. 📝 FEEDBACK EMAIL SWEEP (every 15 minutes)
+    // =========================================================================
+    // A visit's feedback email goes out G minutes (Director setting, default 30) after its booked time window ends,
+    // whether or not the guard checked the visitor out, for advance bookings and walk-ins. Check-out is unchanged:
+    // the visitor stays CHECKED-IN (Inside Now) until a guard or the 5:30 PM / 11:59 PM auto check-out.
+    @Scheduled(cron = "0 */15 * * * *")
+    public void executeFeedbackEmailSweep() {
+        if (feedbackEmails == null) return;
+        try {
+            int sent = feedbackEmails.sendDue(LocalDateTime.now());
+            if (sent > 0) System.out.println("📝 [FEEDBACK SWEEP] " + sent + " feedback email(s) sent after the visit window ended.");
+        } catch (RuntimeException e) {
+            System.err.println("❌ Feedback email sweep failed this round: " + e.getMessage());
+        }
+    }
+
+    // =========================================================================
     // 3b. 🚫 NO-SHOW SWEEP (Runs at 11:59 PM)
     // =========================================================================
     // Kept apart from the 5:30 PM sweep because Director-configured time windows can run into the night. A window
@@ -207,13 +308,14 @@ public class AeroVisitAutomationEngine {
     // =========================================================================
     // 4. 🗑️ DATA RETENTION PURGE (Runs nightly at 2:00 AM)
     // =========================================================================
-    // Finished visits keep their database row (analytics, reports, audit) but lose their ID photos, QR code and face
-    // vector, and have their personal details anonymized, once the visit date is more than RETENTION_DAYS days old.
-    // DENIED_ENTRY is purged too (decided 2026-10-18): a gate denial follows the same 30 days. A person who must be kept
-    // out for longer is banned (biometric ban), and the ban keeps its own copy of the face and photo.
+    // Finished visits keep their database row (analytics, reports, audit) but lose their ID photos, QR code, payment
+    // receipts and any legacy face data, and have their personal details anonymized, once the visit date is more than
+    // RETENTION_DAYS days old. DENIED_ENTRY is purged too (decided 2026-10-18): a gate denial follows the same 30 days. A
+    // person who must be kept out for longer is banned (Ban Visitor: email, phone and name, no photo).
     static final int RETENTION_DAYS = 30;
     static final Set<String> PURGEABLE_STATUSES = Set.of("CHECKED-OUT", "NO_SHOW", "CANCELLED", "REJECTED",
-            "CANCELLED_BY_VISITOR", "CANCELLED_OVERRIDE", "DENIED_ENTRY");
+            "CANCELLED_BY_VISITOR", "CANCELLED_OVERRIDE", "DENIED_ENTRY", Visitor.STATUS_PAYMENT_EXPIRED,
+            Visitor.STATUS_RESCHEDULE_REQUIRED);
 
     // What the purge writes over a visitor's personal details (kept in sync with VisitorRepository.findExpiredWithFiles)
     static final String REDACTED = "REDACTED";
@@ -238,7 +340,9 @@ public class AeroVisitAutomationEngine {
         Path uploads = Paths.get("uploads");
         System.out.println("🗑️ [AUTOMATION] Data retention purge: anonymizing visits and removing ID photos and QR codes older than " + RETENTION_DAYS + " days...");
         int expired = expireUnreviewedBookings(today);
-        System.out.println("⌛ [RETENTION] " + expired + " unreviewed request(s) past their visit date marked REJECTED (expired).");
+        System.out.println("⌛ [RETENTION] " + expired + " unreviewed request(s) past their visit date expired (paid ones: Reschedule Needed).");
+        int reminded = remindToReschedule(today);
+        if (reminded > 0) System.out.println("📅 [RETENTION] " + reminded + " reminder(s) sent to pick a new date.");
         int purged = purgeExpiredFiles(today, uploads);
         System.out.println("✅ [PURGE COMPLETE] " + purged + " finished visit(s) anonymized and cleared of ID photo / QR files.");
         int lifted = liftExpiredBans(today, uploads);
@@ -253,6 +357,29 @@ public class AeroVisitAutomationEngine {
                 System.err.println("⚠️ [RETENTION] bell notifications not purged: " + e.getMessage());
             }
         }
+    }
+
+    // 📅 One reminder, 7 days before the deadline (or later if missed), to a RESCHEDULE_REQUIRED booking still without a
+    // new date. reminderSent marks it sent (reset when the booking became RESCHEDULE_REQUIRED). Returns the reminders sent.
+    static final int RESCHEDULE_REMINDER_DAYS = 7;
+
+    int remindToReschedule(LocalDate today) {
+        int count = 0;
+        for (Visitor v : repo.findByStatus(Visitor.STATUS_RESCHEDULE_REQUIRED)) {
+            LocalDate deadline = v.rescheduleDeadline();
+            if (deadline == null || v.isReminderSent() || deadline.isBefore(today)
+                    || today.isBefore(deadline.minusDays(RESCHEDULE_REMINDER_DAYS))) continue;
+            try {
+                emailService.sendRescheduleNeeded(v, true);
+            } catch (RuntimeException e) {
+                System.err.println("❌ Reschedule reminder failed for visitor #" + v.getId() + ": " + e.getMessage());
+                continue; // tried again next night
+            }
+            v.setReminderSent(true);
+            repo.save(v);
+            count++;
+        }
+        return count;
     }
 
     // 💬 Chatbot messages (table chat_logs, written by the AI service) older than the retention period are deleted:
@@ -272,10 +399,28 @@ public class AeroVisitAutomationEngine {
     // can never be approved, so it becomes REJECTED with an "expired" reason. REJECTED is already a terminal, seat-free,
     // purgeable status everywhere (NO_SHOW would count it as approved demand in the analytics), so the purge clears its
     // photos and details 30 days later like any other finished visit. Never emails anyone. Returns the requests expired.
+    // 💳 A PAID request (receipt submitted, or already marked paid) is not rejected: the museum didn't review it in time,
+    // so it becomes RESCHEDULE_REQUIRED like a closure. The visitor keeps the payment, is emailed to pick a new date in
+    // Manage Booking (within Visitor.RESCHEDULE_DAYS), and the Director's bell is told.
     int expireUnreviewedBookings(LocalDate today) {
         int count = 0;
         for (Visitor v : repo.findByStatusInAndVisitDateBefore(Visitor.APPROVABLE_STATUSES, today)) {
             if (!v.awaitsApproval() || v.getVisitDate() == null || !v.getVisitDate().isBefore(today)) continue;
+            if (v.paymentRequired() && v.paymentInHand()) {
+                v.setStatus(Visitor.STATUS_RESCHEDULE_REQUIRED);
+                v.setRejectionReason(Visitor.UNREVIEWED_NOTE);
+                v.setQrCodeUrl(null);
+                v.setReminderSent(false);
+                repo.save(v);
+                count++;
+                try {
+                    emailService.sendRescheduleNeeded(v, false);
+                } catch (RuntimeException e) {
+                    System.err.println("❌ Reschedule email failed for visitor #" + v.getId() + ": " + e.getMessage());
+                }
+                if (notificationService != null) notificationService.unreviewedPaidRequest(v); // never throws
+                continue;
+            }
             v.setStatus("REJECTED");
             v.setRejectionReason(EXPIRED_UNREVIEWED_REASON);
             repo.save(v);
@@ -322,8 +467,25 @@ public class AeroVisitAutomationEngine {
                 v.setIdCardImageUrl(null);
                 changed = true;
             }
-            // The face vector is biometric data like the photos it came from: it goes with them (a face already added
-            // to the biometric blacklist keeps its own copy in blacklisted_faces)
+            if (v.getIdFaceCropUrl() != null && removeFile(uploadDir, v.getIdFaceCropUrl())) {
+                v.setIdFaceCropUrl(null);
+                changed = true;
+            }
+            // 💳 The payment receipt screenshot goes with the ID photos (the billing number and amount stay for audit)
+            if (v.getReceiptImageUrl() != null && removeFile(uploadDir, v.getReceiptImageUrl())) {
+                v.setReceiptImageUrl(null);
+                changed = true;
+            }
+            // 🧾 and so do the earlier receipts a re-upload kept (cleared only once every file is gone)
+            if (v.getEarlierReceiptUrls() != null) {
+                boolean allGone = true;
+                for (String earlier : v.earlierReceiptList()) allGone &= removeFile(uploadDir, earlier);
+                if (allGone) {
+                    v.setEarlierReceiptUrls(null);
+                    changed = true;
+                }
+            }
+            // Legacy face vector (bookings made before KYC was removed): biometric data, so it goes with the photos
             if (v.getFaceEncoding() != null) {
                 v.setFaceEncoding(null);
                 changed = true;
@@ -390,7 +552,7 @@ public class AeroVisitAutomationEngine {
     // 🧹 AUTO CHECK-OUT: CHECKED-IN visitors whose visit is over become CHECKED-OUT and get the feedback email.
     // Earlier dates always; today only once the booked time window has ended (same end-minute rule as the gate and the
     // no-show sweep). With endOfDay (the 11:59 PM sweep) every visit dated today is over, so night windows and
-    // unreadable labels (e.g. a Master Booking's) are checked out then. Future dates and missing dates are never touched.
+    // unreadable labels (e.g. an older booking's "Master Booking Bypass") are checked out then. Future dates and missing dates are never touched.
     int autoCheckOut(LocalDateTime now, boolean endOfDay) {
         LocalDate today = now.toLocalDate();
         int count = 0;
@@ -407,8 +569,8 @@ public class AeroVisitAutomationEngine {
             v.setCheckedInBy(v.getCheckedInBy() + " (Auto-Sweep)");
             repo.save(v);
 
-            // Triggers the feedback email as they are swept out of the system
-            emailService.sendCheckOutFeedback(v.getEmail(), v.getName(), v.getSecureToken());
+            // The feedback email as they are swept out, unless the 15-minute sweep (or a guard) already sent it
+            FeedbackEmails.sendOnce(feedbackEmails, emailService, v, now);
             count++;
         }
         return count;
@@ -416,7 +578,7 @@ public class AeroVisitAutomationEngine {
 
     // 🚫 NO-SHOWS: an APPROVED booking whose visit is over without a check-in becomes NO_SHOW, so it stops looking like
     // a live pass forever. Earlier dates always; today only once the booked time window has ended (same end-minute rule
-    // as the gate). An unreadable label (e.g. a Master Booking's) waits for the next night's sweep. Never emails anyone.
+    // as the gate). An unreadable label (e.g. an older booking's "Master Booking Bypass") waits for the next night's sweep. Never emails anyone.
     int markNoShows(LocalDateTime now) {
         LocalDate today = now.toLocalDate();
         int count = 0;

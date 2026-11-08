@@ -19,10 +19,9 @@ import com.paf.aerovisit.config.SecurityConfig;
 import com.paf.aerovisit.repository.BookingSlotRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
-import com.paf.aerovisit.service.OcrService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
-/** Booking form: one consent checkbox (guidelines + Terms + Privacy Policy, R.A. 10173) instead of two; email OTP + selfie upload. No database. */
+/** Booking form: ONE consent, the Terms and Conditions popup (it covers the guidelines, the Terms of Entry and the Privacy Policy, R.A. 10173); email OTP + selfie upload. No database. */
 @WebMvcTest(VisitorPortalController.class)
 @Import(SecurityConfig.class)
 class SingleConsentTest {
@@ -32,7 +31,6 @@ class SingleConsentTest {
     @MockitoBean private VisitorRepository repo;
     @MockitoBean private BookingSlotRepository bookingRepo;
     @MockitoBean private EmailService emailService;
-    @MockitoBean private OcrService ocrService;
     @MockitoBean private PredictiveAdvisorService aiService;
 
     private String form() throws Exception {
@@ -40,29 +38,65 @@ class SingleConsentTest {
         return html.substring(html.indexOf("id=\"mainRegForm\""), html.indexOf("</form>", html.indexOf("id=\"mainRegForm\"")));
     }
 
+    private String page() throws Exception {
+        return mvc.perform(get("/")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+    }
+
+    // The Terms and Conditions popup: from its opening tag to the end of its markup (its script follows it)
+    private static String popup(String html) {
+        int start = html.lastIndexOf("<div", html.indexOf("id=\"vpBookingTermsModal\""));
+        return html.substring(start, html.indexOf("<script>", start));
+    }
+
     @Test
-    void theFormHasExactlyOneRequiredConsentCheckbox() throws Exception {
-        String form = form();
-        Matcher boxes = Pattern.compile("<input[^>]*type=\"checkbox\"[^>]*>").matcher(form);
+    void thereIsExactlyOneConsentCheckboxOnThePageAndItIsInTheTermsPopup() throws Exception {
+        String html = page();
+        Matcher boxes = Pattern.compile("<input[^>]*type=\"checkbox\"[^>]*>").matcher(html);
         int count = 0;
         String box = null;
         while (boxes.find()) { count++; box = boxes.group(); }
         assertThat(count).isEqualTo(1);
-        assertThat(box).contains("id=\"rulesAgree\"", "required").doesNotContain("name=");   // browser-only, as before
-        assertThat(form).doesNotContain("privacyConsent");
+        assertThat(box).contains("id=\"termsAgree\"");
+        assertThat(popup(html)).contains(box, "<label class=\"form-check-label\" for=\"termsAgree\">I have read and agree to the Terms and Conditions.</label>");
+        // The form carries the popup's answer to the server, which refuses a booking without it
+        assertThat(form()).contains("<input type=\"hidden\" name=\"termsAccepted\" id=\"termsAcceptedInput\" value=\"\">")
+                .doesNotContain("type=\"checkbox\"", "rulesAgree", "privacyConsent", "Admission is free");
     }
 
     @Test
-    void theConsentCoversGuidelinesTermsAndPrivacyWithWorkingPolicyLinks() throws Exception {
-        String html = mvc.perform(get("/")).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        assertThat(form()).containsSubsequence("<label class=\"form-check-label\" for=\"rulesAgree\">",
-            "I have read and agree to the museum guidelines above and the",
-            "<a href=\"#vpTermsModal\" role=\"button\" data-bs-toggle=\"modal\" data-bs-target=\"#vpTermsModal\">Terms of Entry &amp; Base Regulations</a>",
-            "I consent to the processing of my personal data",
-            "<a href=\"#vpPrivacyModal\" role=\"button\" data-bs-toggle=\"modal\" data-bs-target=\"#vpPrivacyModal\">Privacy Policy</a>",
-            "Data Privacy Act of 2012 (R.A. 10173)", "</label>");
-        // the popups those links open are on the same page (footer fragment)
+    void theTermsPopupHasTheGivenTextAnAccessibleDialogAndADisabledAgreeButton() throws Exception {
+        String html = page();
+        String popup = popup(html);
+        assertThat(popup).contains("class=\"modal fade vp-legal vp-terms\"", "data-bs-backdrop=\"static\"",
+                "aria-labelledby=\"vpBookingTermsTitle\"", "aria-describedby=\"vpBookingTermsSubtitle\"",
+                "<h2 class=\"modal-title\" id=\"vpBookingTermsTitle\">Terms and Conditions</h2>",
+                "id=\"vpBookingTermsSubtitle\">PAF Museum Booking and Reservation System</span>",
+                "<button type=\"button\" class=\"vp-btn vp-btn--primary\" id=\"termsAgreeBtn\" disabled>Agree &amp; Continue</button>");
+        assertThat(popup).containsSubsequence("<h3>Confidentiality of Information</h3>", "subject to the Data Privacy Act of 2012",
+                "<h3>No-Refund Policy</h3>", "Reservation payments are non-refundable.",
+                "<h3>Rescheduling Due to Museum Closure</h3>", "through Manage Booking.",
+                "<h3>Visitor Acknowledgment</h3>", "read, understood, and agreed to these Terms and Conditions.");
+        // The privacy notice and the Terms of Entry stay linked from the one consent (and from step 3)
+        assertThat(popup).contains("data-terms-swap=\"#vpPrivacyModal\">Privacy Policy</a>",
+                "data-terms-swap=\"#vpTermsModal\">Terms of Entry &amp; Base Regulations</a>");
+        assertThat(form()).contains("data-bs-target=\"#vpPrivacyModal\">Privacy Policy</a>", "data-terms-open>Review</button>");
         assertThat(html).contains("id=\"vpTermsModal\"", "id=\"vpPrivacyModal\"");
+    }
+
+    @Test
+    void theStepsAreLockedUntilAgreedAndThePopupOpensOnlyWhenTheVisitorStartsBooking() throws Exception {
+        String html = page();
+        // The popup is outside the form and the steps (a top-level dialog, moved to <body> by its script)
+        assertThat(html.indexOf("id=\"vpBookingTermsModal\"")).isGreaterThan(html.indexOf("</form>"));
+        assertThat(html).contains("document.body.appendChild(modalEl)");
+        assertThat(html).containsSubsequence("id=\"termsGate\"", "id=\"termsGateBtn\" data-terms-open",
+                "<div class=\"vp-terms-locked\" id=\"termsLockedRegion\" inert aria-disabled=\"true\">", "id=\"bookingSteps\"", "id=\"mainRegForm\"");
+        // Opened by starting to book (Book tab, "Book a Visit" links, a tap on the locked steps), never on page load
+        assertThat(html).contains("bookTab.addEventListener('click', startBooking)", "bookTab.addEventListener('shown.bs.tab', startBooking)",
+                "document.querySelectorAll('[data-open-tab=\"book-tab\"]')", "gate.addEventListener('click'");
+        String script = html.substring(html.indexOf("var modalEl = document.getElementById('vpBookingTermsModal')"));
+        script = script.substring(0, script.indexOf("</script>"));
+        assertThat(script).doesNotContain("DOMContentLoaded", "vp:welcome-closed", "window.addEventListener('load'");
     }
 
     @Test
@@ -78,58 +112,37 @@ class SingleConsentTest {
         assertThat(html).contains("fetch(url", "'/otp/send'", "'/otp/verify'", "setCustomValidity");
     }
 
+    // 🪪 One ID photo (no selfie): "Take a photo" (camera on phones) or "Upload a photo", JPG / PNG / WEBP
     @Test
-    void theTwoKycPhotosComeOnlyFromTheLiveCameraWithNoUploadFallback() throws Exception {
+    void theIdStepAsksForOnePhotoTakenOrUploadedAndNoSelfie() throws Exception {
         String form = form();
-        // The camera's two photos still travel in these inputs (/save reads them as uploads), but they are never shown
-        for (String[] in : new String[][] {{"idCardImageInput", "highResIdImage"}, {"idImageInput", "livenessImage"}}) {
-            Matcher m = Pattern.compile("<input[^>]*id=\"" + in[0] + "\"[^>]*>").matcher(form);
-            assertThat(m.find()).isTrue();
-            assertThat(m.group()).contains("type=\"file\"", "name=\"" + in[1] + "\"", "class=\"vp-liveness-input\"",
-                "tabindex=\"-1\"", "aria-hidden=\"true\"", "required").doesNotContain("capture=", "form-control");
-        }
-        assertThat(form).contains("<label for=\"livenessStartBtn\"", "Your Valid ID + Selfie Holding It",
-                "id=\"livenessBlocked\"", "uploaded files are not accepted")
-            .doesNotContain("vp-upload-file", "vp-upload-step", "livenessNote", "Close-up photo of your ID", "<label for=\"idCardImageInput\"");
-        // The camera box is shown from the start (no script-only reveal that a fallback could undo)
-        assertThat(form).contains("<div class=\"vp-liveness\" id=\"livenessBox\">");
+        Matcher sent = Pattern.compile("<input[^>]*id=\"idCardImageInput\"[^>]*>").matcher(form);
+        assertThat(sent.find()).isTrue();
+        assertThat(sent.group()).contains("type=\"file\"", "name=\"highResIdImage\"", "accept=\"image/jpeg,image/png,image/webp\"",
+                "required", "aria-hidden=\"true\"");
+        Matcher camera = Pattern.compile("<input[^>]*id=\"idPhotoCamera\"[^>]*>").matcher(form);
+        assertThat(camera.find()).isTrue();
+        assertThat(camera.group()).contains("capture=\"environment\"", "accept=\"image/jpeg,image/png,image/webp\"").doesNotContain("name=");
+        Matcher gallery = Pattern.compile("<input[^>]*id=\"idPhotoGallery\"[^>]*>").matcher(form);
+        assertThat(gallery.find()).isTrue();
+        assertThat(gallery.group()).doesNotContain("capture=", "name=");
+        assertThat(form).contains("Photo of your valid ID", "Take a photo", "Upload a photo", "id=\"idPhotoPreview\"",
+                "Show the whole card", "Avoid glare", "name on the ID is readable")
+            .doesNotContain("livenessImage", "Selfie Holding It", "livenessBox", "vp-cam");
 
         String html = mvc.perform(get("/")).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        assertThat(html).contains("function hardStop(reason, canRetry)",
-                "'A live camera is required for identity verification. Please grant camera permissions or switch to a smartphone to continue.'",
-                "hardStop('This browser cannot open a live camera on this page.', false);")
-            .doesNotContain("UPLOAD_INSTEAD", "fallback(", "upload a close-up photo of your ID and a selfie holding it instead");
+        // Downscaled to 2000 px and sent as JPEG; HEIC is converted when the browser can read it, else refused clearly
+        assertThat(html).contains("var MAX_SIDE = 2000", "'image/jpeg', QUALITY", "This photo is in HEIC format", "'Retake'", "'Choose another'")
+            .doesNotContain("function hardStop(", "A live camera is required for identity verification", "face_landmarker");
     }
 
     @Test
-    void theSelfieTipSitsWithTheCaptureControlsNotInsideTheFullScreenCamera() throws Exception {
-        String form = form();
-        assertThat(form).containsSubsequence("id=\"livenessBox\"", "id=\"livenessModal\"",
-            "<div class=\"vp-note vp-cam-tip\" role=\"note\">", "💡",
-            "<strong>Pro Tip:</strong> For the fastest verification, hold your device slightly above eye level in a well-lit area.",
-            "id=\"idCardImageInput\"", "id=\"idImageInput\"");
-        // once only, and outside the camera overlay (it must never cover the face / ID guides)
-        assertThat(form.split("vp-cam-tip\"", -1)).hasSize(2);
-        String overlay = form.substring(form.indexOf("id=\"livenessModal\""), form.indexOf("id=\"livenessPrompt\""));
-        assertThat(overlay).doesNotContain("Pro Tip");
-    }
-
-    @Test
-    void stepOneTellsPhoneUsersToLayTheIdFlatOnATable() throws Exception {
+    void theFormAsksForTheThreeAdmissionCountsWithNoMasterBookingOrGuestList() throws Exception {
         String html = mvc.perform(get("/")).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        assertThat(html).contains(
-            "'Step 1 of 2: Place your ID flat on a table and align it within the frame for a clear scan.'",
-            // a laptop webcam can't see the table, so it gets its own wording
-            "'Step 1 of 2: Hold your ID up to the camera and align it within the frame for a clear scan.'",
-            "place your ID flat on a table and align it within the frame for a clear scan");
-    }
-
-    @Test
-    void theMasterBookingToggleNeverTouchesTheTwoKycPhotos() throws Exception {
-        // Zero-trust KYC: Master mode uses the same required two-step capture as every booking
-        String html = mvc.perform(get("/")).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        int start = html.indexOf("function toggleMasterBooking");
-        String toggle = html.substring(start, html.indexOf("function syncCompanionField", start));
-        assertThat(toggle).doesNotContain("idImageInput", "idCardImageInput", "livenessBox", "vp-upload");
+        assertThat(form()).contains("name=\"discountedCount\"", "name=\"regularCount\"", "name=\"freeCount\"",
+                "Estimated Total", "The total excludes the free category.", "Only your own details and ID are needed for the whole group.")
+                .doesNotContain("name=\"groupSize\"", "id=\"groupSizeInput\"");
+        assertThat(html).doesNotContain("Master Booking", "toggleMasterBooking", "isMasterBooking", "name=\"companionNames\"",
+                "companionManual", "companionCsv", "guest-list-template", "eventJustification");
     }
 }

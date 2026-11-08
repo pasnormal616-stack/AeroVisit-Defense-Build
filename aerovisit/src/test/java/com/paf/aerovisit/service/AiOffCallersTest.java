@@ -25,19 +25,6 @@ class AiOffCallersTest {
     }
 
     @Test
-    void aBookingGoesStraightToManualReview() {
-        KycService kyc = new KycService(mock(OcrService.class));
-        kyc.apiBaseUrl = BLACKHOLE;
-        kyc.aiSwitch = off();
-        KycService.KycResult[] result = new KycService.KycResult[1];
-
-        assertThat(millis(() -> result[0] = kyc.screen(new byte[] {1}, new byte[] {2}, "Juan", "Dela Cruz"))).isLessThan(1000);
-        assertThat(result[0].status()).isEqualTo(KycService.MANUAL_REVIEW);
-        assertThat(result[0].reason()).isEqualTo("AI_OFF");
-        assertThat(result[0].faceEncoding()).isNull();
-    }
-
-    @Test
     void forecastFeedbackChatAndRetrainAnswerOfflineAtOnce() {
         PredictiveAdvisorService ai = new PredictiveAdvisorService();
         ai.apiBaseUrl = BLACKHOLE;

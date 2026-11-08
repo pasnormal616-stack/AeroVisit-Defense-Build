@@ -90,26 +90,28 @@ class PendingApprovalViewTest {
 
     @Test
     void pendingTabReadsOnlyRequestsAwaitingReviewNeverTheWholeTable() throws Exception {
-        when(repo.findByStatusIn(anyCollection())).thenReturn(new ArrayList<>(List.of(v(1, "PENDING", TODAY, 1))));
+        when(repo.findPendingQueue()).thenReturn(new ArrayList<>(List.of(v(1, "PENDING", TODAY, 1))));
         pendingPage();
-        verify(repo).findByStatusIn(AdminDashboardController.AWAITING_REVIEW_STATUSES);
+        verify(repo).findPendingQueue();
         verify(repo, never()).findAll();
     }
 
     @Test
     void requestsAreGroupedByDateWithSeatsLeftChipsAndLaterDatesCollapsed() throws Exception {
         LocalDate later = TODAY.plusDays(6);
-        when(repo.findByStatusIn(anyCollection())).thenReturn(new ArrayList<>(List.of(
-            v(1, "PENDING", later, 2), v(2, "PENDING", TODAY, 4), v(3, "PENDING", TODAY.minusDays(1), 1))));
+        Visitor today4 = v(2, "PENDING", TODAY, 4);
+        when(repo.findPendingQueue()).thenReturn(new ArrayList<>(List.of(
+            v(1, "PENDING", later, 2), today4, v(3, "PENDING", TODAY.minusDays(1), 1))));
         when(bookingRepo.findAll()).thenReturn(List.of(slot(TODAY, 10), slot(later, 30)));
-        // 7 of today's 10 morning seats are already approved: a group of 4 no longer fits
+        // 7 of today's 10 morning seats are already approved and the pending group of 4 holds its own seats too:
+        // 11 held for 10, a seat conflict (a pending request now counts in the seats held, so it can't fit "again")
         when(repo.findByVisitDateBetweenAndStatusIn(TODAY, later, Visitor.SEAT_HOLDING_STATUSES))
-            .thenReturn(List.of(v(9, "APPROVED", TODAY, 7)));
+            .thenReturn(List.of(v(9, "APPROVED", TODAY, 7), today4));
 
         String html = pendingPage();
         assertThat(html).containsSubsequence(
             "data-group-head=\"overdue\"", "Overdue: visit date has passed", "<span>Visitor 3</span>",
-            "data-group-head=\"" + TODAY + "\"", "Today · ", "1 request · 4 people", "Morning 3 left", "<span>Visitor 2</span>",
+            "data-group-head=\"" + TODAY + "\"", "Today · ", "1 request · 4 people", "Morning FULL", "<span>Visitor 2</span>",
             "data-group-head=\"" + later + "\"", "Morning 30 left", "<span>Visitor 1</span>");
         // later dates start collapsed (server-side, so nothing flashes before the script runs); no tags = no data-tags
         assertThat(html).containsPattern("<tr data-group=\"" + later + "\" data-search=\"[^\"]*\" data-visitor-id=\"\\d+\" hidden=\"hidden\">");
@@ -121,13 +123,13 @@ class PendingApprovalViewTest {
 
     @Test
     void emptyQueueSaysSoInsteadOfAnEmptyTable() throws Exception {
-        when(repo.findByStatusIn(anyCollection())).thenReturn(new ArrayList<>());
+        when(repo.findPendingQueue()).thenReturn(new ArrayList<>());
         assertThat(pendingPage()).contains("No requests are waiting for approval.").doesNotContain("data-triage=\"manual\"");
     }
 
     @Test
     void verifiedRequestsGetTheBadgeApproveAndRejectButNotForceApprove() throws Exception {
-        when(repo.findByStatusIn(anyCollection())).thenReturn(new ArrayList<>(List.of(v(4, "VERIFIED", TODAY, 1))));
+        when(repo.findPendingQueue()).thenReturn(new ArrayList<>(List.of(v(4, "VERIFIED", TODAY, 1))));
         String html = pendingPage();
         assertThat(html).contains("Pending Review", "action=\"/admin/approve/4\"", "data-bs-target=\"#rejectModal4\"")
             .doesNotContain("/admin/approve-override/4");
@@ -135,7 +137,7 @@ class PendingApprovalViewTest {
 
     @Test
     void approveAndRejectFormsCarryTheOfficersPendingView() throws Exception {
-        when(repo.findByStatusIn(any())).thenReturn(new ArrayList<>());
+        when(repo.findPendingQueue()).thenReturn(new ArrayList<>());
         when(repo.findByVisitDate(TODAY)).thenReturn(new ArrayList<>(List.of(v(5, "PENDING", TODAY, 1))));
         String html = pendingPage("sort", "desc", "dateFilter", TODAY.toString(), "capacityDate", TODAY.toString());
         String back = "/admin?filter=pending&amp;sort=desc&amp;dateFilter=" + TODAY + "&amp;capacityDate=" + TODAY;
@@ -166,5 +168,57 @@ class PendingApprovalViewTest {
             mvc.perform(post("/admin/approve/77").with(csrf()).param("returnTo", bad)).andExpect(redirectedUrl("/admin"));
         }
         mvc.perform(post("/admin/approve/77").with(csrf())).andExpect(redirectedUrl("/admin")); // no field: as before
+    }
+
+    // --- 💳 One tab: Pending Approval only (no "Awaiting Payment Verification" tab) ---
+
+    @Test
+    void theOldPaymentTabAddressOpensPendingApproval() throws Exception {
+        mvc.perform(get("/admin").param("filter", "payment")).andExpect(redirectedUrl("/admin?filter=pending"));
+        when(repo.findPendingQueue()).thenReturn(new ArrayList<>());
+        assertThat(pendingPage()).doesNotContain("Awaiting Payment Verification", "filter=payment");
+    }
+
+    @Test
+    void aRowWithItsReceiptShowsTheIdPhotoReceiptBillingNumberAndAmountAndApproveMarksPaid() throws Exception {
+        Visitor paid = v(21, "PENDING", TODAY.plusDays(2), 3);
+        paid.setIdCardImageUrl("photo-21.jpg");
+        paid.setDiscountedCount(1);
+        paid.setRegularCount(2);
+        paid.setFreeCount(0);
+        paid.setDiscountedPriceCentavos(10_000L);
+        paid.setRegularPriceCentavos(15_000L);
+        paid.setAdmissionTotalCentavos(40_000L);
+        paid.setBillingNumber("000555");
+        paid.setPaymentStatus(Visitor.PAY_PROOF_SUBMITTED);
+        paid.setReceiptImageUrl("receipt-21.jpg");
+        Visitor free = v(22, "PENDING", TODAY.plusDays(2), 2);
+        free.setDiscountedCount(0);
+        free.setRegularCount(0);
+        free.setFreeCount(2);
+        free.setAdmissionTotalCentavos(0L);
+        free.setPaymentStatus(Visitor.PAY_NOT_REQUIRED);
+        when(repo.findPendingQueue()).thenReturn(new ArrayList<>(List.of(paid, free)));
+
+        String html = pendingPage();
+        assertThat(html).contains("src=\"/uploads/photo-21.jpg\"", "src=\"/admin/payments/21/receipt\"", "000555", "PHP 400.00",
+                "1 Discounted · 2 Regular", "Approve &amp; Mark Paid", "action=\"/admin/payments/21/reject\"", "3 visitors · ₱400.00", "Proof submitted", "2 visitors · Free");
+        assertThat(html).doesNotContain("ID verified", "ID unverified", "Possible duplicate");
+    }
+
+    @Test
+    void bookingsWaitingForAReceiptAreNotListed() throws Exception {
+        Visitor awaiting = v(31, Visitor.STATUS_AWAITING_RECEIPT, TODAY.plusDays(2), 1);
+        awaiting.setAdmissionTotalCentavos(15_000L);
+        awaiting.setPaymentStatus(Visitor.PAY_AWAITING);
+        Visitor rejected = v(32, "PENDING", TODAY.plusDays(2), 1);
+        rejected.setAdmissionTotalCentavos(15_000L);
+        rejected.setPaymentStatus(Visitor.PAY_REJECTED);
+        Visitor ready = v(33, "PENDING", TODAY.plusDays(2), 1);
+        // even if the query returned them, the tab lists only what is ready for review
+        when(repo.findPendingQueue()).thenReturn(new ArrayList<>(List.of(awaiting, rejected, ready)));
+
+        String html = pendingPage();
+        assertThat(html).contains("<span>Visitor 33</span>").doesNotContain("<span>Visitor 31</span>", "<span>Visitor 32</span>");
     }
 }

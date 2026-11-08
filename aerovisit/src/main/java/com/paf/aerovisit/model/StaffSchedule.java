@@ -32,7 +32,8 @@ public class StaffSchedule {
     private boolean archived = false;
 
     // --- Roster Notification Flag ---
-    // True once "Publish Roster & Notify Staff" has emailed this shift to its officer, so it is not sent twice
+    // Unused since 2026-11-06 (Publish Roster & Notify Staff was removed). Kept so the column and its values stay;
+    // new entries get false
     @Column(nullable = false, columnDefinition = "boolean default false")
     private boolean rosterNotified = false;
 

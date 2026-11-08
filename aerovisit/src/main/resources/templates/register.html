@@ -2,6 +2,7 @@
 <html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
 <head>
     <th:block th:replace="~{fragments/visitor :: head}"></th:block>
+    <link rel="stylesheet" href="/styles/news.css">
     <title>Book a Visit - AeroVisit</title>
     <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js'></script>
 </head>
@@ -76,7 +77,12 @@
             <!-- Segmented tabs -->
             <ul class="nav vp-segment" id="bookingTabs" role="tablist">
                 <li class="nav-item" role="presentation">
-                    <button class="nav-link active" id="book-tab" data-bs-toggle="tab" data-bs-target="#book" type="button" role="tab" aria-controls="book" aria-selected="true">
+                    <button class="nav-link active" id="news-tab" data-bs-toggle="tab" data-bs-target="#news" type="button" role="tab" aria-controls="news" aria-selected="true">
+                        <i class="bi bi-newspaper"></i>News
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="book-tab" data-bs-toggle="tab" data-bs-target="#book" type="button" role="tab" aria-controls="book" aria-selected="false">
                         <i class="bi bi-ticket-detailed"></i>Book a Visit
                     </button>
                 </li>
@@ -99,8 +105,24 @@
 
             <div class="tab-content vp-tabbody" id="bookingTabsContent">
 
+                <!-- TAB 0: NEWS (Director-managed: Admin > Website Content > News). Pages of 5 posts come from /news/feed as the visitor scrolls (news.js). -->
+                <div class="tab-pane fade show active" id="news" role="tabpanel" aria-labelledby="news-tab">
+                    <div class="vp-news">
+                        <span class="vp-eyebrow"><span class="dot"></span>Latest from the museum</span>
+                        <h2 class="vp-section-title">News</h2>
+                        <div class="vp-news-feed" id="newsFeed" role="feed" aria-busy="false" aria-label="Museum news"></div>
+                        <p class="vp-news-empty" id="newsEmpty" hidden><i class="bi bi-newspaper" aria-hidden="true"></i>No news yet. Check back soon.</p>
+                        <div class="vp-news-sentinel" id="newsSentinel" aria-hidden="true"></div>
+                        <div class="vp-news-more-wrap">
+                            <button type="button" class="vp-btn vp-btn--ghost" id="newsLoadMore" hidden>Load more</button>
+                        </div>
+                        <p class="vp-news-end" id="newsEnd" hidden>You're all caught up.</p>
+                        <p class="visually-hidden" id="newsStatus" role="status" aria-live="polite"></p>
+                    </div>
+                </div>
+
                 <!-- TAB 1: BOOK A VISIT -->
-                <div class="tab-pane fade show active" id="book" role="tabpanel" aria-labelledby="book-tab">
+                <div class="tab-pane fade" id="book" role="tabpanel" aria-labelledby="book-tab">
 
                     <div class="vp-step-head">
                         <div>
@@ -109,6 +131,34 @@
                         <span id="selectedDateBadge" class="badge bg-warning text-dark vp-date-badge">No Date Selected</span>
                     </div>
 
+                    <!-- 📝 TERMS GATE: the steps stay inert until the visitor agrees in the Terms and Conditions popup
+                         (fragments/visitor :: bookingTerms). A tap on the locked steps lands here and opens the popup. -->
+                    <div class="vp-terms-gate" id="termsGate">
+                    <div class="vp-terms-gate-card" id="termsGateCard">
+                        <i class="bi bi-file-earmark-text" aria-hidden="true"></i>
+                        <div>
+                            <strong>Before you book</strong>
+                            <p>Read and accept the Terms and Conditions to start booking.</p>
+                        </div>
+                        <button type="button" class="vp-btn vp-btn--primary" id="termsGateBtn" data-terms-open>Read Terms and Conditions</button>
+                    </div>
+                    <div class="vp-terms-locked" id="termsLockedRegion" inert aria-disabled="true">
+                    <!-- 🚶 ADVANCE BOOKING or WALK-IN (TODAY). Walk-in is offered only while today has a window with seats and
+                         20+ minutes left (VisitorPortalController.showForm: walkIn); otherwise the card says why. -->
+                    <div class="vp-booking-type" id="bookingTypeChoice" role="group" aria-label="How are you visiting?">
+                        <button type="button" class="vp-type-card is-picked" data-booking-type="ADVANCE" aria-pressed="true">
+                            <i class="bi bi-calendar-check" aria-hidden="true"></i>
+                            <span><b>Advance Booking</b><small>Pick a date. The museum reviews your request and emails your entry QR code.</small></span>
+                        </button>
+                        <button type="button" class="vp-type-card" data-booking-type="WALK_IN" aria-pressed="false" th:disabled="${!walkIn.open()}"
+                                th:attr="aria-describedby=${walkIn.open()} ? null : 'walkInReason'">
+                            <i class="bi bi-person-walking" aria-hidden="true"></i>
+                            <span><b>Walk-in (Today)</b>
+                                <small th:if="${walkIn.open()}">Already at the museum? Book for today, pay, and go to the gate.</small>
+                                <small th:unless="${walkIn.open()}" id="walkInReason" th:text="${walkIn.reason}">Today's last time window has ended.</small>
+                            </span>
+                        </button>
+                    </div>
                     <ol class="vp-stepper" aria-label="Booking progress">
                         <li><button type="button" class="vp-step-pill is-current"><span class="vp-step-num">01</span><span class="vp-step-text"><b>Arrival Date</b><small>Pick an open slot</small></span></button></li>
                         <li><button type="button" class="vp-step-pill" disabled><span class="vp-step-num">02</span><span class="vp-step-text"><b>Visitor Profile</b><small>Identity &amp; contact</small></span></button></li>
@@ -127,7 +177,22 @@
                                         <p>Choose an available slot from the flight calendar below to unlock passenger details.</p>
                                     </div>
                                 </div>
-                                <div class="row g-4">
+                                <!-- 🚶 Walk-in: today's windows instead of the calendar (the current one is preselected) -->
+                                <div class="vp-walkin-picker d-none" id="walkInPicker" th:attr="data-today=${walkInToday},data-max-pax=${walkInMaxPax}">
+                                    <h3 class="vp-times-title">Today, <span th:text="${#temporals.format(walkInToday, 'EEEE, MMMM d')}">Tuesday, November 3</span></h3>
+                                    <p class="vp-hint mb-2">Choose your time window. Windows that end within 20 minutes are not offered.</p>
+                                    <div class="vp-times-grid" role="group" aria-label="Today's time windows">
+                                        <button th:each="w : ${walkIn.windows}" type="button" class="vp-time-btn vp-walkin-window"
+                                                th:attr="data-window=${w.label},data-remaining=${w.remaining},data-current=${w.current}" aria-pressed="false">
+                                            <b th:text="${#strings.substringBefore(w.label + ' (', ' (')}">Morning</b>
+                                            <small th:text="${#strings.contains(w.label, '(')} ? ${#strings.substringBefore(#strings.substringAfter(w.label, '('), ')')} : 'Any time'">08:00 AM - 12:00 PM</small>
+                                            <span class="vp-time-seats" th:text="${w.remaining} + ' seats left'">12 seats left</span>
+                                        </button>
+                                    </div>
+                                    <p class="vp-hint mt-2" th:text="'At most ' + ${walkInMaxPax} + ' persons per walk-in booking.'">At most 20 persons per walk-in booking.</p>
+                                </div>
+                                <!-- 📅 data-earliest: the first day an advance booking may be for (today is Walk-in only); /save checks it too -->
+                                <div class="row g-4" id="advancePicker" th:attr="data-earliest=${advanceEarliest}">
                                     <div class="col-lg-8">
                                         <div class="vp-calendar-well">
                                             <div id='publicCalendar'></div>
@@ -137,6 +202,12 @@
                                             <span class="sw-low">15 seats or fewer</span>
                                             <span class="sw-full">Fully booked</span>
                                         </div>
+                                        <!-- 🎌 The full "Closed: <holiday>" text for the closed days of the month shown (a phone cell is too narrow) -->
+                                        <ul class="vp-closed-note" id="closedDaysNote" hidden></ul>
+                                        <p class="vp-hint mt-2" id="walkInNudge">
+                                            <i class="bi bi-person-walking me-1" aria-hidden="true"></i>Visiting today? Choose Walk-in (Today) instead.
+                                            <button type="button" class="vp-btn vp-btn--ghost vp-btn--sm ms-1" data-switch-walkin th:if="${walkIn.open()}">Switch to Walk-in</button>
+                                        </p>
                                         <!-- STEP 1b: time windows of the picked day (Calendly-style); built by the calendar script -->
                                         <div class="vp-times d-none" id="timePicker">
                                             <h3 class="vp-times-title" id="timePickerTitle">Select a Time</h3>
@@ -153,15 +224,6 @@
                                             </dl>
                                         </div>
 
-                                        <!-- Master Booking Box -->
-                                        <div class="vp-master">
-                                            <span class="ico"><i class="bi bi-bus-front"></i></span>
-                                            <div>
-                                                <h3>Large Educational Tour?</h3>
-                                                <p>Schools and Universities bringing massive groups (50+ students) can request a Master Booking to bypass the daily calendar limits.</p>
-                                                <button type="button" class="btn btn-sm btn-dark" id="masterToggleBtn" onclick="toggleMasterBooking()">Unlock Master Booking</button>
-                                            </div>
-                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -177,6 +239,8 @@
                             <form action="/save" th:object="${visitor}" method="post" id="mainRegForm" enctype="multipart/form-data">
                                 <!-- 🔑 One-time KYC nonce from the server (VisitorPortalController.showForm); /save checks and burns it -->
                                 <input type="hidden" name="kycNonce" th:value="${kycNonce}">
+                                <!-- 🚶 WALK_IN for a walk-in; empty = Advance Booking (set by the choice cards above) -->
+                                <input type="hidden" name="bookingType" id="bookingTypeInput" value="">
 
                                 <!-- STEP 2: VISITOR PROFILE -->
                                 <section class="vp-step" aria-labelledby="stepTitle1">
@@ -301,150 +365,104 @@
                                             </div>
                                         </div>
 
-                                        <div class="vp-grid-2">
-                                            <div class="vp-field">
-                                                <label for="groupSizeInput" class="form-label">Total Visitors</label>
-                                                <input type="number" class="form-control" th:field="*{groupSize}" value="1" min="1" id="groupSizeInput" required>
-                                                <small class="vp-field-warning d-none" id="capacityWarning">Exceeds limits!</small>
-                                            </div>
-                                            <div class="vp-field">
-                                                <label for="purposeSelect" class="form-label">Purpose of Visit</label>
-                                                <select class="form-select" th:field="*{purpose}" id="purposeSelect" required>
-                                                    <option value="Educational Tour">Educational Tour</option>
-                                                    <option value="Research">Research / Thesis</option>
-                                                    <option value="Recreation">Recreation / Leisure</option>
-                                                    <option value="Official Business">Official Business</option>
-                                                </select>
-                                            </div>
+                                        <div class="vp-field">
+                                            <label for="purposeSelect" class="form-label">Purpose of Visit</label>
+                                            <select class="form-select" th:field="*{purpose}" id="purposeSelect" required>
+                                                <option value="Educational Tour">Educational Tour</option>
+                                                <option value="Research">Research / Thesis</option>
+                                                <option value="Recreation">Recreation / Leisure</option>
+                                                <option value="Official Business">Official Business</option>
+                                            </select>
                                         </div>
 
-                                        <!-- GROUP MANIFEST (shown and required only when Total Visitors is 2 or more) -->
-                                        <div class="vp-field d-none" id="companionField">
-                                            <label for="companionInput" class="form-label" id="companionLabel">Companion Names (one per line) <span class="req">*</span></label>
-
-                                            <!-- 🚌 MASTER BOOKING ONLY: three ways to give the guest list. Hidden (and its inputs disabled) in a standard booking. -->
-                                            <div class="d-none" id="manifestModes">
-                                                <div class="nav vp-segment flex-wrap mb-3" role="tablist" aria-label="How to add the guest list">
-                                                    <button type="button" class="nav-link active" role="tab" aria-selected="true" data-manifest-mode="manual"><i class="bi bi-pencil-square"></i>Manual</button>
-                                                    <button type="button" class="nav-link" role="tab" aria-selected="false" data-manifest-mode="paste"><i class="bi bi-clipboard-plus"></i>Bulk Paste</button>
-                                                    <button type="button" class="nav-link" role="tab" aria-selected="false" data-manifest-mode="csv"><i class="bi bi-filetype-csv"></i>CSV Upload</button>
-                                                    <button type="button" class="nav-link" disabled aria-disabled="true" title="Coming in v2.0"><i class="bi bi-file-earmark-pdf"></i>Upload PDF Manifest <span class="badge text-bg-secondary ms-1">Coming in v2.0</span></button>
-                                                </div>
-                                                <div id="manifestManual">
-                                                    <div id="manualRows" class="d-grid gap-2 mb-2"></div>
-                                                    <button type="button" class="vp-btn vp-btn--ghost" id="addManualRow"><i class="bi bi-plus-lg me-1"></i>Add guest</button>
-                                                </div>
-                                                <div class="d-none" id="manifestCsv">
-                                                    <a href="/downloads/guest-list-template.csv" download="guest-list-template.csv" class="vp-btn vp-btn--ghost mb-2" id="csvTemplateLink">
-                                                        <i class="bi bi-download me-1"></i>Download Template (.csv)</a>
-                                                    <input type="file" id="companionCsvInput" class="form-control" name="companionCsv" accept=".csv,.txt,text/csv,text/plain" disabled>
-                                                    <div class="form-text">Open the template in Excel, fill in one guest per row under Last Name, First Name and Middle Name (Middle Name may be left blank), then save it as CSV. Max 256 KB.</div>
-                                                    <div class="form-text fw-semibold" id="csvSummary" aria-live="polite"></div>
-                                                </div>
+                                        <!-- 💱 ADMISSION: three counts. The server adds them up into groupSize (seats, capacity, reports) and
+                                             prices them itself at the Director's current prices; this total is only an estimate. -->
+                                        <fieldset class="vp-field vp-admission" aria-describedby="admissionHelp">
+                                            <legend class="form-label">Number of Visitors</legend>
+                                            <div class="vp-admission-row">
+                                                <label for="discountedCountInput">
+                                                    <b>Students / Reservists / Retired Military Personnel and their Dependents</b>
+                                                    <small>Discounted &middot; <span th:text="${admission.discountedText()}">PHP 100.00</span> each</small>
+                                                </label>
+                                                <input type="number" class="form-control vp-count" id="discountedCountInput" name="discountedCount" min="0" max="10000" step="1"
+                                                       inputmode="numeric" th:value="${visitor.discountedCount != null ? visitor.discountedCount : 0}"
+                                                       th:attr="data-price-centavos=${admission.discounted()}">
                                             </div>
-
-                                            <textarea id="companionInput" class="form-control" th:field="*{companionNames}" rows="4"
-                                                      aria-describedby="companionHelp" placeholder="Dela Cruz, Juan P.&#10;Santos, Maria L."></textarea>
-                                            <div class="form-text" id="companionHelp">
-                                                <i class="bi bi-shield-lock"></i> Military base protocol: list every guest besides yourself, exactly as named on their valid ID.
-                                                <span id="companionCount"></span>
+                                            <div class="vp-admission-row">
+                                                <label for="regularCountInput">
+                                                    <b>Private Individuals</b>
+                                                    <small>Regular &middot; <span th:text="${admission.regularText()}">PHP 150.00</span> each</small>
+                                                </label>
+                                                <input type="number" class="form-control vp-count" id="regularCountInput" name="regularCount" min="0" max="10000" step="1"
+                                                       inputmode="numeric" th:value="${visitor.regularCount != null ? visitor.regularCount : 0}"
+                                                       th:attr="data-price-centavos=${admission.regular()}">
                                             </div>
-                                        </div>
+                                            <div class="vp-admission-row">
+                                                <label for="freeCountInput">
+                                                    <b>Active Military / AFP CivHR / Dependents of Active Military</b>
+                                                    <small>Free</small>
+                                                </label>
+                                                <input type="number" class="form-control vp-count" id="freeCountInput" name="freeCount" min="0" max="10000" step="1"
+                                                       inputmode="numeric" data-price-centavos="0" th:value="${visitor.freeCount != null ? visitor.freeCount : 0}">
+                                            </div>
+                                            <div class="vp-admission-total">
+                                                <span>Estimated Total</span>
+                                                <strong id="admissionTotal" class="av-mono" aria-live="polite">PHP 0.00</strong>
+                                            </div>
+                                            <div class="form-text" id="admissionHelp">
+                                                The total excludes the free category. Count everyone in your group, including yourself:
+                                                <span id="admissionPeople">0</span> visitor(s). Only your own details and ID are needed for the whole group.
+                                            </div>
+                                            <small class="vp-field-warning d-none" id="capacityWarning">Exceeds limits!</small>
+                                        </fieldset>
 
-                                        <!-- MASTER BOOKING JUSTIFICATION (shown and required only in Master Booking mode) -->
-                                        <div class="vp-field d-none" id="justificationField">
-                                            <label for="justificationInput" class="form-label">Official Event Purpose / Justification <span class="req">*</span></label>
-                                            <textarea id="justificationInput" class="form-control" th:field="*{eventJustification}" maxlength="1000" rows="4"
-                                                      placeholder="State the official purpose of the event, the organizing institution, and why exclusive use of the facility is needed."></textarea>
-                                        </div>
-
-                                        <!-- LIVE CAPTURE FIELD -->
-                                        <div class="vp-upload">
-                                            <label for="livenessStartBtn" class="form-label" id="idPhotosLabel"><i class="bi bi-person-bounding-box me-1"></i>Your Valid ID + Selfie Holding It</label>
-                                            <!-- TWO-STEP LIVE CAPTURE (camera only, no upload fallback).
-                                                 Step 1 (ID alone, close up) goes into #idCardImageInput = "highResIdImage";
-                                                 step 2 (liveness selfie holding the ID) goes into #idImageInput = "livenessImage". -->
-                                            <div class="vp-liveness" id="livenessBox">
-                                                <!-- 🛑 Shown instead of any fallback when the live camera cannot be used (script: hardStop) -->
-                                                <div class="vp-alert d-none" id="livenessBlocked" role="alert">
-                                                    <i class="bi bi-camera-video-off-fill" aria-hidden="true"></i> <span id="livenessBlockedText"></span>
-                                                </div>
-                                                <div class="vp-liveness-inline">
-                                                    <div class="vp-liveness-thumbs">
-                                                        <img id="idCardPreview" class="vp-liveness-thumb d-none" alt="Your captured ID">
-                                                        <img id="livenessPreview" class="vp-liveness-thumb d-none" alt="Your captured selfie with your ID">
-                                                    </div>
-                                                    <div class="vp-liveness-copy">
-                                                        <p class="vp-liveness-status" id="livenessStatus" role="status">Tap <b>Start camera</b>: first a scan of your ID placed flat on a table, then a selfie holding it with two quick face moves.</p>
-                                                        <div class="vp-liveness-actions">
-                                                            <button type="button" class="vp-btn vp-btn--ghost" id="livenessStartBtn"><i class="bi bi-camera-video"></i> Start camera</button>
-                                                            <button type="button" class="vp-btn vp-btn--ghost d-none" id="livenessRetakeBtn"><i class="bi bi-arrow-counterclockwise"></i> Retake</button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <canvas id="livenessCanvas" class="d-none"></canvas>
-                                                <!-- FULL-SCREEN CAMERA. The script moves it to <body>: .vp-console is its own stacking context,
-                                                     so a fixed overlay left in here would sit under the navbar. -->
-                                                <div class="vp-cam" id="livenessModal" role="dialog" aria-modal="true" aria-label="Selfie camera">
-                                                    <div class="vp-cam-stage">
-                                                        <video id="livenessVideo" class="vp-cam-video" playsinline muted autoplay></video>
-                                                        <!-- Alignment guide, drawn in camera-frame pixels by the script; "meet" lines it up with the video's object-fit: contain -->
-                                                        <svg class="vp-cam-guide" id="livenessGuide" viewBox="0 0 1280 720" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-                                                            <ellipse class="vp-cam-guide-shade" id="guideFaceShade"></ellipse>
-                                                            <ellipse class="vp-cam-guide-line" id="guideFace"></ellipse>
-                                                            <rect class="vp-cam-guide-shade" id="guideCardShade"></rect>
-                                                            <rect class="vp-cam-guide-line" id="guideCard"></rect>
-                                                            <text class="vp-cam-guide-label" id="guideFaceLabel">FACE</text>
-                                                            <text class="vp-cam-guide-label" id="guideCardLabel">ID CARD</text>
-                                                        </svg>
-                                                    </div>
-                                                    <button type="button" class="vp-cam-close" id="livenessCloseBtn"><i class="bi bi-x-lg"></i> Cancel</button>
-                                                    <p class="vp-cam-prompt" id="livenessPrompt" aria-live="polite">Starting camera…</p>
-                                                    <!-- Pre-selfie tip: the camera stays off until "Start selfie" (Cancel stays above it) -->
-                                                    <div class="vp-cam-intro" id="livenessIntro" hidden>
-                                                        <i class="bi bi-phone vp-cam-intro-icon" aria-hidden="true"></i>
-                                                        <p class="vp-cam-intro-text">For best results, please lift your phone to eye level like taking a selfie.</p>
-                                                        <button type="button" class="vp-btn vp-btn--gold" id="livenessIntroBtn"><i class="bi bi-camera-video"></i> Start selfie</button>
+                                        <!-- 🪪 PHOTO OF THE VALID ID (advance bookings and walk-ins alike; no selfie). "Take a photo" opens
+                                             the camera on phones, "Upload a photo" the gallery or files. The script below downscales the
+                                             picture to at most 2000 px and converts it to JPEG (HEIC too, where the browser can read it),
+                                             then puts it in the form's "highResIdImage" input. -->
+                                        <div class="vp-upload" id="idPhotoBlock">
+                                            <span class="form-label" id="idPhotoLabel"><i class="bi bi-person-vcard me-1"></i>Photo of your valid ID <span class="req">*</span></span>
+                                            <div class="vp-idphoto" id="idPhotoBox">
+                                                <img id="idPhotoPreview" class="vp-idphoto-preview d-none" alt="Your ID photo">
+                                                <div class="vp-idphoto-copy">
+                                                    <p class="vp-idphoto-status" id="idPhotoStatus" role="status">Take a photo of your ID, or upload one you already have.</p>
+                                                    <div class="vp-idphoto-actions">
+                                                        <button type="button" class="vp-btn vp-btn--ghost" id="idPhotoTakeBtn"><i class="bi bi-camera"></i> <span>Take a photo</span></button>
+                                                        <button type="button" class="vp-btn vp-btn--ghost" id="idPhotoUploadBtn"><i class="bi bi-image"></i> <span>Upload a photo</span></button>
                                                     </div>
                                                 </div>
                                             </div>
-                                            <!-- Selfie tip, shown with the camera box -->
-                                            <div class="vp-note vp-cam-tip" role="note">
-                                                <span class="vp-cam-tip-icon" aria-hidden="true">💡</span>
-                                                <div><strong>Pro Tip:</strong> For the fastest verification, hold your device slightly above eye level in a well-lit area.</div>
-                                            </div>
-                                            <!-- The camera's two photos travel in these inputs (/save reads them as normal uploads). They are never
-                                                 shown, focused or labelled: only the live capture can fill them (attach() in the script below). -->
-                                            <input type="file" id="idCardImageInput" class="vp-liveness-input" name="highResIdImage" accept="image/jpeg" tabindex="-1" aria-hidden="true" required>
-                                            <input type="file" id="idImageInput" class="vp-liveness-input" name="livenessImage" accept="image/jpeg" tabindex="-1" aria-hidden="true" required>
-                                            <ul class="vp-selfie-tips form-text">
-                                                <li>ID photo: place your ID flat on a table and align it within the frame for a clear scan, in good light and without glare.</li>
-                                                <li>Selfie: hold your ID <b>beside</b> your face, not covering it, with the printed side facing the camera.</li>
-                                                <li><i class="bi bi-lock"></i> Both photos are taken live by the camera; uploaded files are not accepted. Every booking is reviewed by museum personnel before your entry pass is sent.</li>
+                                            <!-- The two pickers have no name (never sent); the converted photo travels in the named input below -->
+                                            <input type="file" id="idPhotoCamera" class="vp-idphoto-input" accept="image/jpeg,image/png,image/webp" capture="environment" tabindex="-1" aria-hidden="true">
+                                            <input type="file" id="idPhotoGallery" class="vp-idphoto-input" accept="image/jpeg,image/png,image/webp" tabindex="-1" aria-hidden="true">
+                                            <input type="file" id="idCardImageInput" class="vp-idphoto-input" name="highResIdImage" accept="image/jpeg,image/png,image/webp" tabindex="-1" aria-hidden="true" required>
+                                            <ul class="vp-idphoto-tips form-text">
+                                                <li>Show the whole card, flat and in good light.</li>
+                                                <li>Avoid glare over the photo and the name.</li>
+                                                <li>Make sure your name on the ID is readable.</li>
+                                                <li><i class="bi bi-lock"></i> JPG, PNG or WEBP. Only museum staff see it, and it is deleted 30 days after your visit.</li>
                                             </ul>
                                         </div>
 
                                         <!-- SECURITY ACKNOWLEDGEMENT BLOCK -->
                                         <div class="vp-ack">
-                                            <strong>Museum Guidelines Acknowledgment</strong><br>
-                                            <span class="text-muted">Note: Admission is free until further notice.</span>
+                                            <strong>Museum Guidelines</strong>
                                             <ul>
                                                 <li>I will dress appropriately.</li>
                                                 <li>I will not bring food and drinks inside.</li>
                                                 <li>I will not bring large baggages or backpacks.</li>
                                             </ul>
-                                            <!-- ONE consent for the guidelines above, the Terms and the Privacy Policy (R.A. 10173).
-                                                 Browser-only check (no name): the server never needed these boxes. -->
-                                            <div class="form-check">
-                                                <input class="form-check-input" type="checkbox" id="rulesAgree" required>
-                                                <label class="form-check-label" for="rulesAgree">
-                                                    I have read and agree to the museum guidelines above and the
-                                                    <a href="#vpTermsModal" role="button" data-bs-toggle="modal" data-bs-target="#vpTermsModal">Terms of Entry &amp; Base Regulations</a>,
-                                                    and I consent to the processing of my personal data for museum security and entry purposes as described in the
-                                                    <a href="#vpPrivacyModal" role="button" data-bs-toggle="modal" data-bs-target="#vpPrivacyModal">Privacy Policy</a>,
-                                                    in accordance with the Data Privacy Act of 2012 (R.A. 10173).
-                                                </label>
-                                            </div>
+                                            <!-- 📝 The ONE consent is the Terms and Conditions popup (it covers these guidelines, the Terms of
+                                                 Entry and the Privacy Policy, R.A. 10173). It sets termsAccepted; /save refuses a booking without it. -->
+                                            <input type="hidden" name="termsAccepted" id="termsAcceptedInput" value="">
+                                            <p class="vp-terms-status">
+                                                <i class="bi bi-check-circle-fill" aria-hidden="true"></i>
+                                                You agreed to the Terms and Conditions, which include the guidelines above, the
+                                                <a href="#vpTermsModal" role="button" data-bs-toggle="modal" data-bs-target="#vpTermsModal">Terms of Entry &amp; Base Regulations</a>
+                                                and the
+                                                <a href="#vpPrivacyModal" role="button" data-bs-toggle="modal" data-bs-target="#vpPrivacyModal">Privacy Policy</a>.
+                                                <button type="button" class="vp-link-btn" data-terms-open>Review</button>
+                                            </p>
                                         </div>
 
                                     </div>
@@ -459,6 +477,8 @@
                         </div>
                         </div>
                     </div>
+                    </div>
+                    </div>
                 </div>
 
                 <!-- TAB 2: MANAGE BOOKING (sign-in; the dashboard lives at /manage-booking) -->
@@ -467,7 +487,7 @@
                         <div class="col-lg-7">
                             <span class="vp-eyebrow"><span class="dot"></span>Already booked?</span>
                             <h2 class="vp-section-title">Manage Your Reservation</h2>
-                            <p class="text-muted">Access your reservation at the PAF Aerospace Museum at any time. Review its approval status, reschedule to another open time slot, update your party details, or release your seats if your plans change.</p>
+                            <p class="text-muted">Access your reservation at the PAF Aerospace Museum at any time. Review its approval status, attach your payment receipt, or reschedule to another open time slot if your plans change.</p>
                             <div class="vp-rules">
                                 <div class="vp-rule">
                                     <div class="ico"><i class="bi bi-patch-check"></i></div>
@@ -480,14 +500,9 @@
                                     <p>Move your visit to any open date and time with enough seats for your group.</p>
                                 </div>
                                 <div class="vp-rule">
-                                    <div class="ico"><i class="bi bi-people"></i></div>
-                                    <h3>Update Details</h3>
-                                    <p>Adjust your party size or the contact number the museum can reach you on.</p>
-                                </div>
-                                <div class="vp-rule">
-                                    <div class="ico"><i class="bi bi-calendar-x"></i></div>
-                                    <h3>Cancel Anytime</h3>
-                                    <p>Release your seats online so other visitors can take the slot.</p>
+                                    <div class="ico"><i class="bi bi-receipt"></i></div>
+                                    <h3>Attach Payment Receipt</h3>
+                                    <p>Upload your LANDBANK payment receipt before the payment deadline.</p>
                                 </div>
                             </div>
                         </div>
@@ -528,6 +543,7 @@
                         </div>
                     </div>
                     <p class="text-muted" th:if="${#lists.isEmpty(guidelines)}">Visitor guidelines will be posted here soon.</p>
+                    <th:block th:replace="~{fragments/visitor :: admissionList(${admission})}"></th:block>
                 </div>
 
                 <!-- TAB 4: EXHIBITS -->
@@ -573,15 +589,30 @@
     </div>
 </main>
 
+<!-- NEWS: full-screen photo viewer (outside the animated booking console, so position: fixed works) -->
+<div class="modal fade vp-news-viewer" id="vpNewsViewer" tabindex="-1" aria-label="Photo viewer" aria-hidden="true">
+    <div class="modal-dialog modal-fullscreen">
+        <div class="modal-content">
+            <button type="button" class="vp-news-viewer-close" data-bs-dismiss="modal" aria-label="Close photo viewer"><i class="bi bi-x-lg" aria-hidden="true"></i></button>
+            <div class="vp-news-viewer-track" id="vpNewsViewerTrack" tabindex="0" aria-roledescription="carousel" aria-label="Photos"></div>
+            <button type="button" class="vp-news-arrow vp-news-arrow--prev" id="vpNewsViewerPrev" aria-label="Previous photo"><i class="bi bi-chevron-left" aria-hidden="true"></i></button>
+            <button type="button" class="vp-news-arrow vp-news-arrow--next" id="vpNewsViewerNext" aria-label="Next photo"><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+            <p class="vp-news-viewer-count" id="vpNewsViewerCount" aria-live="polite"></p>
+        </div>
+    </div>
+</div>
+
 <th:block th:replace="~{fragments/visitor :: footer}"></th:block>
 <th:block th:replace="~{fragments/visitor :: scripts}"></th:block>
+<script src="/js/news.js"></script>
 
 <script th:inline="javascript">
     var maxAllowedForSelectedDate = 0;
-    var isMasterMode = false;
 
     document.addEventListener('DOMContentLoaded', function() {
         var rawSlots = /*[[${calendarSlots}]]*/ [];
+        // 🎌 Listed holidays ("2026-11-30" -> "Closed: Bonifacio Day"): shown in the day cell, never pickable
+        var closedDays = /*[[${closedDays}]]*/ {};
         // Windows per day ("2026-10-16" -> [slot, ...]); a day's dot is its best window: open / 15 or fewer / full
         var slotsByDate = {};
         rawSlots.forEach(function (slot) { (slotsByDate[slot.date] = slotsByDate[slot.date] || []).push(slot); });
@@ -601,7 +632,6 @@
 
         // Step 1a: a day. Highlights it, clears any earlier time choice and lists that day's windows below the calendar.
         function pickDay(date, cell) {
-            if (isMasterMode) return;
             pickedDate = date;
             calendarEl.querySelectorAll('.is-picked').forEach(function (c) { c.classList.remove('is-picked'); c.setAttribute('aria-pressed', 'false'); });
             cell.classList.add('is-picked');
@@ -643,41 +673,48 @@
             document.getElementById('formTimeWindow').value = slot.timeWindow || "Standard Shift";
 
             var badge = document.getElementById('selectedDateBadge');
-            badge.classList.remove('d-none', 'bg-warning', 'bg-danger', 'text-dark');
+            badge.classList.remove('d-none', 'bg-warning', 'text-dark');
             badge.classList.add('bg-success', 'text-white');
             badge.innerText = "Selected: " + slot.date;
 
             maxAllowedForSelectedDate = slot.remaining;
-            document.getElementById('groupSizeInput').setAttribute('max', slot.remaining);
+            syncAdmission();
         }
 
         // A day without a time yet: relock the form, as on first load (visitor.js resets the summary and Continue)
         function clearSelection() {
-            if (isMasterMode) return;
             document.getElementById('registrationFormWrapper').classList.add('locked-form');
             document.getElementById('formVisitDate').value = '';
             document.getElementById('formTimeWindow').value = '';
             var badge = document.getElementById('selectedDateBadge');
-            badge.classList.remove('bg-success', 'bg-danger', 'text-white');
+            badge.classList.remove('bg-success', 'text-white');
             badge.classList.add('bg-warning', 'text-dark');
             badge.innerText = "No Date Selected";
             maxAllowedForSelectedDate = 0;
         }
-
-        // Master Booking hides the picker (it sets its own date)
-        window.resetTimePicker = function () {
-            pickedDate = null;
-            timePicker.classList.add('d-none');
-            timeList.textContent = '';
-            if (calendarEl) calendarEl.querySelectorAll('.is-picked').forEach(function (c) { c.classList.remove('is-picked'); c.setAttribute('aria-pressed', 'false'); });
-        };
 
         if (calendarEl) {
             calendar = new FullCalendar.Calendar(calendarEl, {
                 initialView: 'dayGridMonth',
                 headerToolbar: { left: 'prev,next', center: 'title', right: 'today' },
                 height: 'auto',
-                validRange: { start: new Date().toISOString().split('T')[0] },
+                // 🎌 After every month change: list that month's closed days in full under the calendar
+                datesSet: function (info) {
+                    var note = document.getElementById('closedDaysNote');
+                    if (!note) return;
+                    note.innerHTML = '';
+                    Object.keys(closedDays).sort().forEach(function (date) {
+                        var d = new Date(date + 'T00:00:00');
+                        if (d < info.start || d >= info.end) return;
+                        var li = document.createElement('li');
+                        li.textContent = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' · ' + closedDays[date];
+                        note.appendChild(li);
+                    });
+                    note.hidden = !note.children.length;
+                },
+                // 📅 Today (and any day before the Director's minimum) is greyed out and can't be picked: advance bookings
+                // start at the server's date (Manila time), never the browser's or UTC's
+                validRange: { start: document.getElementById('advancePicker').getAttribute('data-earliest') },
 
                 // 🗓️ The pickable / picked look comes from here, not from dayCellDidMount: when you go to the next
                 // month, FullCalendar keeps the cells the two months share (e.g. Nov 2-6 seen at the bottom of
@@ -685,6 +722,7 @@
                 // never showed as chosen. These class names are re-applied on every redraw.
                 dayCellClassNames: function (arg) {
                     var date = ymd(arg.date);
+                    if (closedDays[date]) return ['vp-day-closed'];
                     var slots = slotsByDate[date];
                     if (!slots || arg.isDisabled || dayStatus(slots) === 'full') return [];
                     return date === pickedDate ? ['vp-day-pick', 'is-picked'] : ['vp-day-pick'];
@@ -693,6 +731,21 @@
                 // Only a dot in each cell; full days get a red dot and can't be picked. Runs again after prev/next.
                 dayCellDidMount: function (arg) {
                     var date = ymd(arg.date);
+                    if (closedDays[date]) {
+                        // "Closed" under the day number, then the holiday's name (hidden on a phone, where the
+                        // list under the calendar gives the full text)
+                        var closed = document.createElement('span');
+                        closed.className = 'vp-day-closed-label';
+                        closed.textContent = 'Closed';
+                        var closedName = document.createElement('span');
+                        closedName.className = 'vp-day-closed-name';
+                        closedName.textContent = closedDays[date].replace(/^Closed:\s*/, '');
+                        closed.appendChild(closedName);
+                        (arg.el.querySelector('.fc-daygrid-day-frame') || arg.el).appendChild(closed);
+                        arg.el.setAttribute('aria-label', date + ': ' + closedDays[date]);
+                        arg.el.title = closedDays[date];
+                        return;
+                    }
                     var slots = slotsByDate[date];
                     if (!slots || arg.isDisabled) return;
                     var status = dayStatus(slots);
@@ -726,13 +779,27 @@
             });
         }
 
-        document.getElementById('groupSizeInput').addEventListener('input', function(e) {
-            if(isMasterMode) return;
-            var val = parseInt(e.target.value);
+        // 💱 The three counts: people = their sum (checked against the seats left), estimated total = discounted and
+        // regular counts times their prices, in whole centavos. The server recomputes both; this is only a preview.
+        var countInputs = Array.prototype.slice.call(document.querySelectorAll('.vp-count'));
+        function syncAdmission() {
+            var people = 0, centavos = 0;
+            countInputs.forEach(function (input) {
+                var n = Math.max(0, parseInt(input.value, 10) || 0);
+                people += n;
+                centavos += n * (parseInt(input.getAttribute('data-price-centavos'), 10) || 0);
+            });
+            document.getElementById('admissionPeople').textContent = people;
+            document.getElementById('admissionTotal').textContent = 'PHP ' + (centavos / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            countInputs[0].setCustomValidity(people >= 1 ? '' : 'Please enter at least 1 visitor.');
+
             var warning = document.getElementById('capacityWarning');
             var btn = document.getElementById('submitBtn');
-
-            if (val > maxAllowedForSelectedDate) {
+            if (walkInMode && walkInMaxPax > 0 && people > walkInMaxPax) {
+                warning.innerText = "Walk-in reservations must not exceed " + walkInMaxPax + " persons (pax).";
+                warning.classList.remove('d-none');
+                btn.disabled = true;
+            } else if (maxAllowedForSelectedDate > 0 && people > maxAllowedForSelectedDate) {
                 warning.innerText = "Only " + maxAllowedForSelectedDate + " slots left!";
                 warning.classList.remove('d-none');
                 btn.disabled = true;
@@ -740,267 +807,73 @@
                 warning.classList.add('d-none');
                 btn.disabled = false;
             }
-        });
-    });
-
-    function toggleMasterBooking() {
-        let toggleBtn = document.getElementById('masterToggleBtn');
-        let formWrapper = document.getElementById('registrationFormWrapper');
-        let dateInput = document.getElementById('formVisitDate');
-        let timeInput = document.getElementById('formTimeWindow');
-        let sizeInput = document.getElementById('groupSizeInput');
-        let purposeSelect = document.getElementById('purposeSelect');
-        let badge = document.getElementById('selectedDateBadge');
-        let warning = document.getElementById('capacityWarning');
-        let submitBtn = document.getElementById('submitBtn');
-
-        if (!isMasterMode) {
-            if (window.resetTimePicker) window.resetTimePicker();
-            isMasterMode = true;
-            toggleBtn.innerHTML = "<i class='bi bi-x-circle me-1'></i> Cancel Master Booking";
-            toggleBtn.classList.replace('btn-dark', 'btn-danger');
-            formWrapper.classList.remove('locked-form');
-
-            dateInput.removeAttribute('readonly');
-            dateInput.value = '';
-            dateInput.classList.replace('bg-light', 'bg-warning');
-
-            timeInput.value = "Master Booking Bypass";
-            sizeInput.removeAttribute('max');
-            sizeInput.value = 50;
-            warning.classList.add('d-none');
-            submitBtn.disabled = false;
-            purposeSelect.value = 'Educational Tour';
-            document.getElementById('justificationField').classList.remove('d-none');
-            document.getElementById('justificationInput').setAttribute('required', 'true');
-
-            let hiddenInput = document.createElement('input');
-            hiddenInput.type = 'hidden';
-            hiddenInput.name = 'isMasterBooking';
-            hiddenInput.id = 'hiddenMasterInput';
-            hiddenInput.value = 'true';
-            document.getElementById('mainRegForm').appendChild(hiddenInput);
-
-            badge.classList.remove('bg-warning', 'bg-success');
-            badge.classList.add('bg-danger', 'text-white');
-            badge.innerText = "🚨 MASTER BOOKING UNLOCKED";
-        } else {
-            isMasterMode = false;
-            toggleBtn.innerText = "Unlock Master Booking";
-            toggleBtn.classList.replace('btn-danger', 'btn-dark');
-            formWrapper.classList.add('locked-form');
-
-            dateInput.setAttribute('readonly', 'true');
-            dateInput.value = '';
-            dateInput.classList.replace('bg-warning', 'bg-light');
-
-            timeInput.value = "";
-            sizeInput.value = 1;
-            document.getElementById('justificationField').classList.add('d-none');
-            let justificationInput = document.getElementById('justificationInput');
-            justificationInput.removeAttribute('required');
-            justificationInput.value = '';
-
-            let hiddenInput = document.getElementById('hiddenMasterInput');
-            if (hiddenInput) { hiddenInput.remove(); }
-
-            badge.classList.remove('bg-danger', 'bg-success');
-            badge.classList.add('bg-warning', 'text-dark');
-            badge.innerText = "No Date Selected";
         }
-        syncCompanionField(); // the toggle sets Total Visitors in code, which fires no 'input' event
-    }
+        countInputs.forEach(function (input) { input.addEventListener('input', syncAdmission); });
 
-    // 🪖 GROUP MANIFEST: show + require companion names only when the party has 2 or more visitors
-    function syncCompanionField() {
-        var size = parseInt(document.getElementById('groupSizeInput').value, 10) || 1;
-        var field = document.getElementById('companionField');
-        var input = document.getElementById('companionInput');
-        var needed = size - 1;
-        syncManifestModes(needed > 0 && isMasterMode);
-        if (needed > 0 && isMasterMode) {
-            field.classList.remove('d-none');
-            checkMasterManifest(needed);
-            return;
+        // 🚶 ADVANCE BOOKING / WALK-IN (TODAY). Walk-in: today's windows replace the calendar, the date is today (the server
+        // sets it too and refuses any other), the two ID photos are switched off (disabled inputs are neither checked nor
+        // sent) and the form posts bookingType=WALK_IN. Switching back restores the advance form exactly as it was.
+        var walkInPicker = document.getElementById('walkInPicker');
+        var walkInMode = false;
+        var walkInMaxPax = walkInPicker ? (parseInt(walkInPicker.getAttribute('data-max-pax'), 10) || 0) : 0;
+        var typeInput = document.getElementById('bookingTypeInput');
+        var advancePicker = document.getElementById('advancePicker');
+        var windowBtns = Array.prototype.slice.call(document.querySelectorAll('.vp-walkin-window'));
+
+        function pickWindow(btn) {
+            windowBtns.forEach(function (b) { b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'); });
+            selectSlot({ date: walkInPicker.getAttribute('data-today'), timeWindow: btn.getAttribute('data-window'),
+                         remaining: parseInt(btn.getAttribute('data-remaining'), 10) || 0 });
         }
-        if (needed > 0) {
-            field.classList.remove('d-none');
-            input.setAttribute('required', 'true');
-            var listed = input.value.split('\n').filter(function (n) { return n.trim() !== ''; }).length;
-            input.setCustomValidity(listed === needed ? '' : 'Enter exactly ' + needed + ' name(s), one per line.');
-            document.getElementById('companionCount').innerText = listed + ' of ' + needed + ' listed.';
-        } else {
-            // A hidden required field would block submit, so drop the requirement (the server ignores leftovers)
-            field.classList.add('d-none');
-            input.removeAttribute('required');
-            input.setCustomValidity('');
-        }
-    }
-    // 🚌 MASTER BOOKING guest list: Manual rows / Bulk Paste (the textarea above) / CSV Upload. Only the chosen option
-    // is enabled, so only it is sent; the server merges whatever arrives and checks the exact count again.
-    var manifestMode = 'manual';
-    var csvNames = [];
-    var MANIFEST_HEADERS = ['name', 'names', 'full name', 'fullname', 'companion', 'companion name', 'companion names', 'guest', 'guest name', 'guest names', 'guest name (last, first mi)'];
+        windowBtns.forEach(function (btn) { btn.addEventListener('click', function () { pickWindow(btn); }); });
 
-    function syncManifestModes(masterOn) {
-        var textarea = document.getElementById('companionInput');
-        var csvInput = document.getElementById('companionCsvInput');
-        if (masterOn && !document.querySelector('#manualRows input')) addManualRow();
-        document.getElementById('manifestModes').classList.toggle('d-none', !masterOn);
-        document.getElementById('manifestManual').classList.toggle('d-none', !(masterOn && manifestMode === 'manual'));
-        document.getElementById('manifestCsv').classList.toggle('d-none', !(masterOn && manifestMode === 'csv'));
-        // Standard booking (or Bulk Paste): the textarea, exactly as before
-        var showPaste = !masterOn || manifestMode === 'paste';
-        textarea.classList.toggle('d-none', !showPaste);
-        textarea.disabled = !showPaste;
-        document.querySelectorAll('#manualRows input').forEach(function (i) { i.disabled = !(masterOn && manifestMode === 'manual'); i.setCustomValidity(''); });
-        csvInput.disabled = !(masterOn && manifestMode === 'csv');
-        csvInput.setCustomValidity('');
-        if (!masterOn) { csvInput.value = ''; csvNames = []; document.getElementById('csvSummary').innerText = ''; }
-        document.querySelectorAll('[data-manifest-mode]').forEach(function (b) {
-            var on = b.dataset.manifestMode === manifestMode;
-            b.classList.toggle('active', on);
-            b.setAttribute('aria-selected', on ? 'true' : 'false');
-        });
-        document.getElementById('companionLabel').firstChild.textContent = masterOn ? 'Guest List ' : 'Companion Names (one per line) ';
-    }
-
-    // Same exact-count rule as the server: every guest besides the lead booker, counted from the chosen option
-    function checkMasterManifest(needed) {
-        var textarea = document.getElementById('companionInput');
-        var listed, target;
-        if (manifestMode === 'manual') {
-            var inputs = Array.prototype.slice.call(document.querySelectorAll('#manualRows input'));
-            listed = inputs.filter(function (i) { return i.value.trim() !== ''; }).length;
-            target = inputs[0];
-        } else if (manifestMode === 'paste') {
-            listed = textarea.value.split('\n').filter(function (n) { return n.trim() !== ''; }).length;
-            target = textarea;
-        } else {
-            listed = csvNames.length;
-            target = document.getElementById('companionCsvInput');
-        }
-        textarea.removeAttribute('required');
-        target.setCustomValidity(listed === needed ? '' : 'List exactly ' + needed + ' guest name(s) besides yourself (now ' + listed + ').');
-        document.getElementById('companionCount').innerText = listed + ' of ' + needed + ' listed.';
-    }
-
-    function addManualRow() {
-        var row = document.createElement('div');
-        row.className = 'input-group';
-        var input = document.createElement('input');
-        input.type = 'text';
-        input.name = 'companionManual';
-        input.className = 'form-control';
-        input.maxLength = 100;
-        input.placeholder = 'Last Name, First Name MI';
-        input.setAttribute('aria-label', 'Guest name');
-        input.addEventListener('input', syncCompanionField);
-        var remove = document.createElement('button');
-        remove.type = 'button';
-        remove.className = 'btn btn-outline-secondary';
-        remove.setAttribute('aria-label', 'Remove this guest');
-        remove.innerHTML = '<i class="bi bi-x-lg"></i>';
-        remove.addEventListener('click', function () {
-            row.remove();
-            if (!document.querySelector('#manualRows input')) addManualRow();
-            syncCompanionField();
-        });
-        row.appendChild(input);
-        row.appendChild(remove);
-        document.getElementById('manualRows').appendChild(row);
-        return input;
-    }
-
-    // First field of one CSV row, the same rule as the server: "quoted, with commas" or everything up to the first comma
-    function firstCsvField(line) {
-        var row = line.trim();
-        if (row.charAt(0) === '"') {
-            var field = '';
-            for (var i = 1; i < row.length; i++) {
-                var c = row.charAt(i);
-                if (c === '"') {
-                    if (row.charAt(i + 1) === '"') { field += '"'; i++; } else break;
-                } else {
-                    field += c;
-                }
-            }
-            return field.trim();
-        }
-        var comma = row.indexOf(',');
-        return (comma < 0 ? row : row.substring(0, comma)).trim();
-    }
-
-    // Every field of one CSV row, the same rule as the server: commas separate fields, "quoted, with commas" keeps them
-    function csvFields(line) {
-        var fields = [], field = '', quoted = false;
-        for (var i = 0; i < line.length; i++) {
-            var c = line.charAt(i);
-            if (quoted) {
-                if (c !== '"') field += c;
-                else if (line.charAt(i + 1) === '"') { field += '"'; i++; }
-                else quoted = false;
-            } else if (c === '"') quoted = true;
-            else if (c === ',') { fields.push(field.trim()); field = ''; }
-            else field += c;
-        }
-        fields.push(field.trim());
-        return fields;
-    }
-
-    document.getElementById('addManualRow').addEventListener('click', function () { addManualRow().focus(); syncCompanionField(); });
-    document.querySelectorAll('[data-manifest-mode]').forEach(function (b) {
-        b.addEventListener('click', function () { manifestMode = b.dataset.manifestMode; syncCompanionField(); });
-    });
-    document.getElementById('companionCsvInput').addEventListener('change', function () {
-        var csvInput = this;
-        var file = csvInput.files[0];
-        var summary = document.getElementById('csvSummary');
-        csvNames = [];
-        if (!file) { summary.innerText = ''; syncCompanionField(); return; }
-        file.arrayBuffer().then(function (buf) {
-            if (csvInput.files[0] !== file) return;   // a newer pick replaced this file while it was being read
-            var text;
-            try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
-            catch (e) { text = new TextDecoder('windows-1252').decode(buf); }   // Excel's default CSV on Windows
-            if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-            var isCsv = /\.csv$/i.test(file.name);
-            var names = [], nameParts = false, badRow = 0;
-            text.split(/\r\n|\n|\r/).forEach(function (line, i) {
-                // The template's Last Name / First Name / Middle Name header: rows are name parts, joined like the server does
-                if (i === 0 && isCsv) {
-                    var h = csvFields(line);
-                    if (h[0].toLowerCase() === 'last name' && (h[1] || '').toLowerCase() === 'first name') { nameParts = true; return; }
-                }
-                var name;
-                if (nameParts) {
-                    var p = csvFields(line), last = p[0] || '', first = p[1] || '', middle = p[2] || '';
-                    if (!last && !first && !middle) return;
-                    if (!last || !first) { if (!badRow) badRow = i + 1; return; }
-                    name = last + ', ' + first + (middle ? ' ' + middle : '');
-                } else {
-                    name = isCsv ? firstCsvField(line) : line.trim();
-                    if (i === 0 && MANIFEST_HEADERS.indexOf(name.toLowerCase()) >= 0) return;
-                }
-                if (name) names.push(name);
+        function setMode(walkIn) {
+            walkInMode = walkIn;
+            document.querySelectorAll('[data-booking-type]').forEach(function (card) {
+                var on = (card.getAttribute('data-booking-type') === 'WALK_IN') === walkIn;
+                card.classList.toggle('is-picked', on);
+                card.setAttribute('aria-pressed', on ? 'true' : 'false');
             });
-            // replaced in one step, so reading the same file twice never doubles the count; a bad row blocks Continue,
-            // as the server would refuse the file
-            csvNames = badRow ? [] : names;
-            summary.innerText = badRow ? 'Row ' + badRow + ': Last Name and First Name are both required.'
-                                       : names.length + ' name(s) found in ' + file.name + '.';
-            syncCompanionField();
+            if (typeInput) typeInput.value = walkIn ? 'WALK_IN' : '';
+            if (advancePicker) advancePicker.classList.toggle('d-none', walkIn);
+            if (walkInPicker) walkInPicker.classList.toggle('d-none', !walkIn);
+            if (timePicker) timePicker.classList.add('d-none');
+            pickedDate = null;
+            calendarEl && calendarEl.querySelectorAll('.is-picked').forEach(function (c) { c.classList.remove('is-picked'); c.setAttribute('aria-pressed', 'false'); });
+            clearSelection();
+            if (walkIn) {
+                var current = windowBtns.filter(function (b) { return b.getAttribute('data-current') === 'true'; })[0] || windowBtns[0];
+                if (current) pickWindow(current);
+            } else {
+                windowBtns.forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
+                if (calendar) calendar.render();
+            }
+            syncAdmission();
+        }
+        document.querySelectorAll('[data-booking-type]').forEach(function (card) {
+            card.addEventListener('click', function () {
+                if (!card.disabled) setMode(card.getAttribute('data-booking-type') === 'WALK_IN');
+            });
         });
+        // 📅 "Visiting today?" under the calendar: the same as picking the Walk-in (Today) card
+        var switchWalkIn = document.querySelector('[data-switch-walkin]');
+        var walkInCard = document.querySelector('[data-booking-type="WALK_IN"]');
+        if (switchWalkIn && walkInCard && !walkInCard.disabled) {
+            switchWalkIn.addEventListener('click', function () {
+                setMode(true);
+                document.getElementById('bookingTypeChoice').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            });
+        }
+        syncAdmission();
     });
-
-    document.getElementById('groupSizeInput').addEventListener('input', syncCompanionField);
-    document.getElementById('companionInput').addEventListener('input', syncCompanionField);
-    syncCompanionField();
 </script>
 
 <!-- CHATBOT FRAGMENT -->
 <!-- 🤖 Sgt. Aero only while the AI features are on (Settings) -->
 <th:block th:if="${aiEnabled}"><div th:replace="~{chatbot-ui :: chatbotFragment}"></div></th:block>
+
+<!-- 📝 TERMS AND CONDITIONS popup (the one booking consent); after the steps it unlocks -->
+<th:block th:replace="~{fragments/visitor :: bookingTerms}"></th:block>
 
 <!-- WELCOME ENTRY MODAL (first visit per session) -->
 <th:block th:replace="~{fragments/visitor :: welcome}"></th:block>
@@ -1014,6 +887,14 @@
         bootstrap.Tab.getOrCreateInstance(tabBtn).show();
         var target = document.getElementById('booking');
         if (target) target.scrollIntoView({ block: 'start' });
+    })();
+</script>
+<script th:if="${error}">
+    // 📰 The page opens on News; after a refused booking it opens on Book a Visit instead, so the visitor sees the form
+    (function () {
+        if (location.hash === '#manage' || !window.bootstrap) return;
+        var tabBtn = document.getElementById('book-tab');
+        if (tabBtn) bootstrap.Tab.getOrCreateInstance(tabBtn).show();
     })();
 </script>
 
@@ -1133,885 +1014,127 @@
 })();
 </script>
 
-<!-- 👁️ TWO-STEP CAPTURE.
-     Step 1: a close-up of the ID alone in a large CR80 frame (back camera on phones), taken automatically once OpenCV.js
-     has seen the card steadily for 1 s (ID_STEADY_MS) -> "highResIdImage".
-     Step 2: the liveness selfie: face oval + a smaller ID box, two random moves (blink / open mouth / turn left / right),
-     paused while the ID is out of its box -> "livenessImage".
-     Each frame is put into its own file input, so /save receives two ordinary JPEG uploads. Plain script, not th:inline. -->
+<!-- 🪪 ID PHOTO: either picker -> decoded into a canvas (Safari also reads HEIC) -> at most 2000 px on the long side ->
+     JPEG -> the form's own "highResIdImage" input. A file the browser can't read is refused with a clear message; the
+     server checks the bytes again. Plain script, not th:inline. -->
 <script>
 (function () {
-    var box = document.getElementById('livenessBox');
-    var input = document.getElementById('idImageInput');          // step 2: liveness selfie ("livenessImage")
-    var cardInput = document.getElementById('idCardImageInput');  // step 1: ID close-up ("highResIdImage")
-    if (!box || !input || !cardInput) return;
-    var video = document.getElementById('livenessVideo');
-    var preview = document.getElementById('livenessPreview');
-    var cardPreview = document.getElementById('idCardPreview');
-    var prompt = document.getElementById('livenessPrompt');
-    var canvas = document.getElementById('livenessCanvas');
-    var startBtn = document.getElementById('livenessStartBtn');
-    var retakeBtn = document.getElementById('livenessRetakeBtn');
-    var blocked = document.getElementById('livenessBlocked');
-    var blockedText = document.getElementById('livenessBlockedText');
-    var status = document.getElementById('livenessStatus');
-    var modal = document.getElementById('livenessModal');
-    var closeBtn = document.getElementById('livenessCloseBtn');
-    var intro = document.getElementById('livenessIntro');
-    var introBtn = document.getElementById('livenessIntroBtn');
-    var introDone = false; // set by "Start selfie", used up by the next step-2 start
-    var guide = document.getElementById('livenessGuide');
+    var MAX_SIDE = 2000, QUALITY = 0.9;
+    var NEEDS_PHOTO = 'Please take or upload a photo of your valid ID.';
+    var HEIC = "This photo is in HEIC format, which can't be read here. Please choose a JPG, PNG or WEBP photo"
+             + ' (on iPhone: Settings > Camera > Formats > Most Compatible), or take the photo with "Take a photo".';
+    var UNREADABLE = "This file can't be read as a photo. Please choose a JPG, PNG or WEBP photo of your ID.";
+    var target = document.getElementById('idCardImageInput');
+    var camera = document.getElementById('idPhotoCamera');
+    var gallery = document.getElementById('idPhotoGallery');
+    var takeBtn = document.getElementById('idPhotoTakeBtn');
+    var uploadBtn = document.getElementById('idPhotoUploadBtn');
+    var preview = document.getElementById('idPhotoPreview');
+    var status = document.getElementById('idPhotoStatus');
+    var box = document.getElementById('idPhotoBox');
+    if (!target || !camera || !gallery) return;
+    var previewUrl = null;
 
-    // MediaPipe Face Landmarker (478-point face mesh), downloaded only when the visitor starts the camera
-    var MP_VERSION = '1.1.0';
-    var MP_BUNDLE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@' + MP_VERSION + '/vision_bundle.mjs';
-    var MP_WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@' + MP_VERSION + '/wasm';
-    var MP_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
-    var LOAD_TIMEOUT_MS = 20000;
-
-    // Face-mesh points for the 6-point EAR, ordered [corner, top, top, corner, bottom, bottom]
-    var RIGHT_EYE = [33, 160, 158, 133, 153, 144];
-    var LEFT_EYE = [362, 385, 387, 263, 373, 380];
-    // Inner lips: top, bottom, corner, corner
-    var MOUTH = [13, 14, 78, 308];
-    var NOSE_TIP = 1;
-    // 234 is the visitor's right cheek edge (left side of the raw, un-mirrored frame), 454 their left cheek edge
-    var FACE_TOP = 10, FACE_CHIN = 152, FACE_LEFT = 234, FACE_RIGHT = 454;
-
-    var NEEDS_LIVENESS = 'Please start the camera: take a close-up of your ID, then complete the two face challenges.';
-    var CAMERA_REQUIRED = 'A live camera is required for identity verification. Please grant camera permissions or switch to a smartphone to continue.';
-    // Step 1 instruction follows the camera: a phone's back camera can look down at an ID lying on a table (steadier than
-    // holding it), but a laptop webcam faces the visitor and can't see the table
-    var ID_STEP_PROMPT_TABLE = 'Step 1 of 2: Place your ID flat on a table and align it within the frame for a clear scan.';
-    var ID_STEP_PROMPT_WEBCAM = 'Step 1 of 2: Hold your ID up to the camera and align it within the frame for a clear scan.';
-    function idStepPrompt() { return mirrored ? ID_STEP_PROMPT_WEBCAM : ID_STEP_PROMPT_TABLE; }
-    var SELFIE_STEP_PROMPT = 'Step 2 of 2: Hold your ID and complete the face challenge.';
-
-    var stream = null, landmarker = null, loading = null, rafId = 0, lastVideoTime = -1, session = 0, guideSize = '';
-    var previewUrl = null, cardPreviewUrl = null;
-    var step = 1;          // 1 = ID close-up, 2 = liveness selfie
-    var mirrored = true;   // front cameras are shown like a mirror; a back camera is shown as is
-
-    // The pill on the camera. Only touch the DOM on a change: it is aria-live and tick() runs every frame.
-    function say(text) {
-        if (prompt.textContent === text) return;
-        prompt.textContent = text;
-        prompt.classList.toggle('is-warn', /^(Wrong move|Time is up|No face|Please keep your ID)/.test(text));
-        prompt.classList.toggle('is-ok', /^(Good!|✓)/.test(text));
-        prompt.classList.remove('is-new');
-        void prompt.offsetWidth; // restart the pop animation
-        prompt.classList.add('is-new');
+    function tell(text, tone) {
+        status.textContent = text;
+        box.classList.toggle('is-captured', tone === 'ok');
+        box.classList.toggle('is-error', tone === 'error');
     }
 
-    // The line next to Start / Retake in the form
-    function tell(text) { status.textContent = text; }
-
-    /* ---------- Full-screen camera ---------- */
-
-    var returnFocus = null;
-
-    function openModal() {
-        if (!modal.classList.contains('is-open')) returnFocus = document.activeElement; // not the Cancel button between steps
-        modal.classList.remove('is-done');
-        modal.classList.add('is-open');
-        document.documentElement.classList.add('vp-cam-open');
-        closeBtn.focus({ preventScroll: true });
+    function isHeic(file) {
+        return /hei[cf]/i.test(file.type || '') || /\.hei[cf]$/i.test(file.name || '');
     }
 
-    function closeModal(focusTarget) {
-        if (!modal.classList.contains('is-open')) return;
-        hideIntro();
-        modal.classList.remove('is-open');
-        document.documentElement.classList.remove('vp-cam-open');
-        var target = focusTarget || returnFocus;
-        if (target && target.focus && !target.classList.contains('d-none')) target.focus({ preventScroll: true });
-    }
-
-    // Before the selfie: full-screen eye-level tip; the camera stays off until the visitor taps "Start selfie"
-    function showIntro() {
-        stopCamera(); // the step-1 back camera, if it is still running
-        openModal();
-        modal.classList.add('is-intro');
-        intro.hidden = false;
-        tell('Lift your phone to eye level, then tap Start selfie.');
-        introBtn.focus({ preventScroll: true });
-    }
-    function hideIntro() { intro.hidden = true; modal.classList.remove('is-intro'); }
-
-    function cancel() {
-        if (modal.classList.contains('is-done')) { closeModal(retakeBtn); return; } // photo already taken
-        stopCamera();
-        startBtn.disabled = false; // enabled before closeModal() focuses it
-        startBtn.classList.remove('d-none');
-        closeModal(startBtn);
-        tell(hasFile(cardInput) ? 'Camera closed. Your ID photo is kept: tap Start camera for the selfie.'
-                                : 'Camera closed. Tap Start camera when you are ready.');
-    }
-
-    function hasFile(el) { return !!(el.files && el.files.length === 1); }
-
-    function setStep(n) {
-        step = n;
-        guideSize = ''; // redraw for the new step
-        modal.classList.toggle('is-step-id', n === 1);
-    }
-
-    // Step 1: one large ID-1 frame in the middle (the face oval is hidden by CSS). Step 2: face oval and ID-card outline
-    // in camera-frame pixels. Portrait (phones): face top centre, card below it. Landscape (laptops): face left of
-    // centre, card beside it. The card always keeps the ID-1 / CR80 shape (85.6 x 54 mm).
-    function drawGuide(w, h) {
-        var size = step + ':' + w + 'x' + h;
-        if (!w || !h || size === guideSize) return;
-        guideSize = size;
-        guide.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
-        var face, card, s = Math.min(w, h);
-        if (step === 1) {
-            var bw = h >= w * 1.1 ? 0.86 * w : Math.min(0.8 * w, 0.62 * h * 1.586);
-            card = { x: (w - bw) / 2, y: (h - bw / 1.586) / 2, w: bw, h: bw / 1.586 };
-            face = { cx: w / 2, cy: h / 2, rx: 1, ry: 1 }; // hidden in this step
-        } else if (h >= w * 1.1) {
-            var rx = 0.27 * w, cw = 0.66 * w;
-            face = { cx: 0.5 * w, cy: 0.32 * h, rx: rx, ry: rx * 1.3 };
-            card = { x: 0.5 * w - cw / 2, y: face.cy + face.ry + 0.04 * h, w: cw, h: cw / 1.586 };
-        } else {
-            var ry = 0.30 * h, ch = 0.30 * h;
-            face = { cx: 0.36 * w, cy: 0.45 * h, rx: ry / 1.3, ry: ry };
-            card = { x: 0.74 * w - ch * 0.793, y: 0.55 * h - ch / 2, w: ch * 1.586, h: ch };
+    // Decode with the browser (createImageBitmap honours the EXIF rotation; <img> is the fallback)
+    function decode(file) {
+        if (window.createImageBitmap) {
+            return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(function () { return viaImg(file); });
         }
-        cardRect = card;
-        var line = Math.max(2, s * 0.006), dash = s * 0.026 + ' ' + s * 0.018;
-        ['guideFace', 'guideFaceShade'].forEach(function (id) {
-            var e = document.getElementById(id);
-            e.setAttribute('cx', face.cx); e.setAttribute('cy', face.cy); e.setAttribute('rx', face.rx); e.setAttribute('ry', face.ry);
+        return viaImg(file);
+    }
+    function viaImg(file) {
+        return new Promise(function (resolve, reject) {
+            var url = URL.createObjectURL(file), img = new Image();
+            img.onload = function () { URL.revokeObjectURL(url); resolve(img); };
+            img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('unreadable')); };
+            img.src = url;
         });
-        ['guideCard', 'guideCardShade'].forEach(function (id) {
-            var e = document.getElementById(id);
-            e.setAttribute('x', card.x); e.setAttribute('y', card.y); e.setAttribute('width', card.w); e.setAttribute('height', card.h);
-            e.setAttribute('rx', card.h * 0.07);
-        });
-        Array.prototype.forEach.call(guide.querySelectorAll('.vp-cam-guide-line'), function (e) {
-            e.setAttribute('stroke-width', line); e.setAttribute('stroke-dasharray', dash);
-        });
-        Array.prototype.forEach.call(guide.querySelectorAll('.vp-cam-guide-shade'), function (e) {
-            e.setAttribute('stroke-width', line * 2.6);
-        });
-        var font = s * 0.04;
-        var faceLabel = document.getElementById('guideFaceLabel'), cardLabel = document.getElementById('guideCardLabel');
-        [faceLabel, cardLabel].forEach(function (e) { e.setAttribute('font-size', font); e.setAttribute('stroke-width', font * 0.18); });
-        // Labels sit just outside each shape (inside only when there is no room above), so they never cover the ID text
-        var faceTop = face.cy - face.ry - font * 0.6;
-        faceLabel.setAttribute('x', face.cx); faceLabel.setAttribute('y', faceTop > font ? faceTop : face.cy - face.ry + font * 1.6);
-        cardLabel.setAttribute('x', card.x + card.w / 2); cardLabel.setAttribute('y', card.y - font * 0.6);
     }
 
-    function supported() {
-        if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
-        if (!window.HTMLCanvasElement || !HTMLCanvasElement.prototype.toBlob || typeof File !== 'function') return false;
+    function toJpeg(image) {
+        var w = image.width, h = image.height, scale = Math.min(1, MAX_SIDE / Math.max(w, h));
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.round(w * scale);
+        canvas.height = Math.round(h * scale);
+        canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+        if (image.close) image.close();
+        return new Promise(function (resolve, reject) {
+            canvas.toBlob(function (blob) { blob ? resolve(blob) : reject(new Error('encode')); }, 'image/jpeg', QUALITY);
+        });
+    }
+
+    // The JPEG into the form's input; where DataTransfer is missing, the picker itself is sent instead
+    function attach(blob, picker) {
         try {
             var dt = new DataTransfer();
-            dt.items.add(new File(['x'], 'probe.jpg', { type: 'image/jpeg' }));
-            return dt.files.length === 1;
-        } catch (e) {
-            return false; // Safari < 14.1 cannot build a FileList, so the photos could not reach the form: hard stop
-        }
-    }
-
-    /* ---------- Face measurements ---------- */
-
-    // Landmarks are normalised 0..1 on both axes, so scale to pixels before measuring or a 16:9 frame skews the ratio
-    function dist(a, b, w, h) { return Math.hypot((a.x - b.x) * w, (a.y - b.y) * h); }
-
-    // EAR = (|p2-p6| + |p3-p5|) / (2 |p1-p4|): eyelid gaps over eye width. Open ≈ 0.25-0.35, closed ≈ 0.1
-    function eyeAspectRatio(lm, eye, w, h) {
-        var width = dist(lm[eye[0]], lm[eye[3]], w, h);
-        if (!width) return 0;
-        return (dist(lm[eye[1]], lm[eye[5]], w, h) + dist(lm[eye[2]], lm[eye[4]], w, h)) / (2 * width);
-    }
-
-    // MAR = inner-lip gap over mouth width. Closed ≈ 0-0.1, clearly open ≥ 0.35
-    function mouthAspectRatio(lm, w, h) {
-        var width = dist(lm[MOUTH[2]], lm[MOUTH[3]], w, h);
-        return width ? dist(lm[MOUTH[0]], lm[MOUTH[1]], w, h) / width : 0;
-    }
-
-    // Where the nose tip sits between the two cheek edges, 0..1 (≈0.5 facing the camera). In the raw frame,
-    // turning to the visitor's own LEFT moves the nose towards 454 and raises it; turning RIGHT lowers it.
-    function headYaw(lm, w) {
-        var right = lm[FACE_LEFT].x * w, left = lm[FACE_RIGHT].x * w;
-        return left !== right ? (lm[NOSE_TIP].x * w - right) / (left - right) : 0.5;
-    }
-
-    // Face height / width. A blink leaves it alone; tilting a printed photo backwards squashes it together with the EAR.
-    function faceAspect(lm, w, h) {
-        var width = dist(lm[FACE_LEFT], lm[FACE_RIGHT], w, h);
-        return width ? dist(lm[FACE_TOP], lm[FACE_CHIN], w, h) / width : 0;
-    }
-
-    // The ID card's own photo can be detected as a second face: measure the biggest one (the visitor)
-    function largestFace(faces, w, h) {
-        var best = faces[0], bestWidth = -1;
-        faces.forEach(function (lm) {
-            var width = dist(lm[FACE_LEFT], lm[FACE_RIGHT], w, h);
-            if (width > bestWidth) { best = lm; bestWidth = width; }
-        });
-        return best;
-    }
-
-    function measure(lm, w, h) {
-        return {
-            ear: (eyeAspectRatio(lm, LEFT_EYE, w, h) + eyeAspectRatio(lm, RIGHT_EYE, w, h)) / 2,
-            mar: mouthAspectRatio(lm, w, h),
-            yaw: headYaw(lm, w),
-            aspect: faceAspect(lm, w, h)
-        };
-    }
-
-    /* ---------- Randomised challenge-response ---------- */
-
-    var CHALLENGES = {
-        blink: 'Please Blink',
-        mouth: 'Please Open Your Mouth',
-        left: 'Please Turn Your Head Left',
-        right: 'Please Turn Your Head Right'
-    };
-
-    function randomBelow(n) {
-        if (window.crypto && window.crypto.getRandomValues) {
-            var a = new Uint32Array(1);
-            window.crypto.getRandomValues(a);
-            return a[0] % n;
-        }
-        return Math.floor(Math.random() * n);
-    }
-
-    // Two different challenges in a random order (12 possible pairs)
-    function pickChallenges() {
-        var pool = Object.keys(CHALLENGES);
-        for (var i = pool.length - 1; i > 0; i--) {
-            var j = randomBelow(i + 1), t = pool[i];
-            pool[i] = pool[j];
-            pool[j] = t;
-        }
-        return pool.slice(0, 2);
-    }
-
-    // A recorded video can't know which two moves will be asked. Doing a different deliberate move (mouth or a head
-    // turn) or running out of time restarts with a new pair, so a clip that cycles through every move doesn't pass by luck.
-    // A printed photo swung or tipped on command fakes head turns and even mouth opening in the face mesh; only a blink
-    // can't be faked, so a blink must be seen at some point (asked or natural) or "Last step: Please Blink" is added.
-    // Every threshold is relative to the visitor's own neutral face (learned while they look at the camera), and a move
-    // must be held for HOLD_MS, so dim-light landmark jitter can't complete or fail a challenge on its own.
-    function createChallengeEngine(pick) {
-        var EAR_CLOSED = 0.20, CLOSED_RATIO = 0.75, OPEN_RATIO = 0.9, MAX_ASPECT_DRIFT = 0.1;
-        var MAR_CLOSED = 0.25, MAR_OPEN = 0.35, MAR_OPEN_GAIN = 0.20;   // open = at least 0.35 and 0.20 above their rest
-        var YAW_ARM = 0.15, YAW_TURN = 0.12, YAW_NEUTRAL = 0.06;         // 0.12 ≈ a 15° turn
-        var ARM_FRAMES = 8, NEUTRAL_FRAMES = 4, HOLD_MS = 300, CHALLENGE_MS = 12000, MAX_ROUNDS = 3;
-        var RELEASE = 0.7;
-
-        var state, seq, index, base, frames, stepStart, pose, poseSince, closed, notice, rounds, blinkSeen, heldAt;
-
-        function reset() {
-            state = 'arming'; seq = pick(); index = -1; base = null; frames = 0;
-            pose = null; poseSince = 0; closed = false; notice = ''; rounds = 1; blinkSeen = false; heldAt = 0;
-        }
-
-        function learn(m) {
-            if (!base) { base = { ear: m.ear, mar: m.mar, yaw: m.yaw, aspect: m.aspect }; return; }
-            ['ear', 'mar', 'yaw', 'aspect'].forEach(function (k) { base[k] = base[k] * 0.9 + m[k] * 0.1; });
-        }
-
-        function closeLine() { return Math.min(EAR_CLOSED, base.ear * CLOSED_RATIO); }
-        function openLine() { return Math.min(EAR_CLOSED + 0.03, base.ear * OPEN_RATIO); }
-
-        function isNeutral(m) {
-            return m.ear >= openLine() && m.mar < Math.max(MAR_CLOSED, base.mar + 0.1) && Math.abs(m.yaw - base.yaw) < YAW_NEUTRAL;
-        }
-
-        // The deliberate move on screen right now (blinks are tracked separately: people blink without being asked).
-        // A move that has started only ends below RELEASE x its threshold, so one jittery frame doesn't restart the hold.
-        function currentPose(m, wanted) {
-            var turn = m.yaw - base.yaw;
-            var mouthLine = Math.max(MAR_OPEN, base.mar + MAR_OPEN_GAIN);
-            if (pose === 'mouth' && m.mar >= mouthLine * RELEASE) return pose;
-            if (pose === 'left' && turn >= YAW_TURN * RELEASE) return pose;
-            if (pose === 'right' && turn <= -YAW_TURN * RELEASE) return pose;
-            var poses = { mouth: m.mar >= mouthLine, left: turn >= YAW_TURN, right: turn <= -YAW_TURN };
-            if (poses[wanted]) return wanted;
-            return poses.mouth ? 'mouth' : poses.left ? 'left' : poses.right ? 'right' : null;
-        }
-
-        function wait(now) { state = 'neutral'; frames = 0; stepStart = now; pose = null; }
-
-        function restart(why, now) {
-            if (++rounds > MAX_ROUNDS) { state = 'failed'; return; }
-            seq = pick(); index = -1; notice = why + ' New challenge: ';
-            wait(now);
-        }
-
-        function passed(now) { notice = ''; wait(now); }
-
-        function blinked(m) {
-            if (Math.abs(m.aspect / base.aspect - 1) > MAX_ASPECT_DRIFT) { closed = false; return false; } // head turn or tilted photo
-            if (m.ear < closeLine()) { closed = true; return false; }
-            if (closed && m.ear >= openLine()) { closed = false; return true; }
-            return false;
-        }
-
-        // ID out of the box: freeze the challenge clock and drop any half-done move, so nothing counts while it's missing
-        function hold(now) {
-            if (heldAt) return;
-            heldAt = now; pose = null; closed = false; frames = 0;
-        }
-
-        function resume(now) {
-            if (!heldAt) return;
-            if (stepStart) stepStart += now - heldAt;
-            heldAt = 0;
-        }
-
-        function update(m, now) {
-            if (state === 'done' || state === 'failed') return state;
-            if (state === 'arming') {
-                // Settle first: mouth closed and roughly facing the camera for a few frames
-                if (m.mar < MAR_CLOSED && Math.abs(m.yaw - 0.5) < YAW_ARM) {
-                    learn(m);
-                    if (++frames >= ARM_FRAMES) wait(now);
-                } else {
-                    frames = 0;
-                }
-                return state;
-            }
-            if (now - stepStart > CHALLENGE_MS) { restart('Time is up.', now); return state; }
-            var blink = blinked(m);
-            if (blink) blinkSeen = true;
-
-            if (state === 'neutral') {
-                // Between moves (and before the photo): back to a still, straight face
-                if (isNeutral(m)) {
-                    learn(m);
-                    if (++frames >= NEUTRAL_FRAMES) {
-                        if (index + 1 >= seq.length && !blinkSeen) seq.push('blink');
-                        if (index + 1 < seq.length) { index++; state = 'challenge'; stepStart = now; pose = null; closed = false; }
-                        else state = 'done';
-                    }
-                } else {
-                    frames = 0;
-                }
-                return state;
-            }
-
-            var wanted = seq[index];
-            if (wanted === 'blink' && blink) { passed(now); return state; }
-            var p = currentPose(m, wanted);
-            if (p !== pose) { pose = p; poseSince = now; }
-            if (pose && now - poseSince >= HOLD_MS) {
-                if (pose === wanted) passed(now);
-                else restart('Wrong move.', now);
-            }
-            return state;
-        }
-
-        function text() {
-            if (state === 'arming') return SELFIE_STEP_PROMPT;
-            if (state === 'challenge') return notice + (index < 2 ? 'Challenge ' + (index + 1) + '/2: ' : 'Last step: ') + CHALLENGES[seq[index]];
-            if (state === 'neutral') {
-                if (index >= 1 && blinkSeen) return '✓ Challenges passed. Look straight at the camera and hold still…';
-                return notice + (index < 0 ? '' : 'Good! ') + 'Look straight at the camera.';
-            }
-            return '';
-        }
-
-        reset();
-        return { update: update, reset: reset, prompt: text, hold: hold, resume: resume };
-    }
-    var engine = createChallengeEngine(pickChallenges);
-
-    /* ---------- Camera + face landmarker ---------- */
-
-    function loadLandmarker() {
-        if (landmarker) return Promise.resolve(landmarker);
-        if (!loading) {
-            loading = import(MP_BUNDLE).then(function (mp) {
-                return mp.FilesetResolver.forVisionTasks(MP_WASM).then(function (fileset) {
-                    function options(delegate) {
-                        return { baseOptions: { modelAssetPath: MP_MODEL, delegate: delegate }, runningMode: 'VIDEO', numFaces: 2 };
-                    }
-                    return mp.FaceLandmarker.createFromOptions(fileset, options('GPU')).catch(function () {
-                        return mp.FaceLandmarker.createFromOptions(fileset, options('CPU'));
-                    });
-                });
-            }).then(function (fl) { landmarker = fl; return fl; });
-            loading.catch(function () { loading = null; });
-        }
-        var timeout = new Promise(function (resolve, reject) {
-            setTimeout(function () { reject(new Error('Face detector took too long to load')); }, LOAD_TIMEOUT_MS);
-        });
-        return Promise.race([loading, timeout]);
-    }
-
-    function stopCamera() {
-        session++; // cancels a start that is still waiting for permission or the model
-        cancelAnimationFrame(rafId);
-        rafId = 0;
-        clearTimeout(idTimer);
-        idTimer = 0;
-        idPresent = false;
-        steadySince = 0;
-        modal.classList.remove('is-id-ok', 'is-no-id', 'is-no-face');
-        if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
-        stream = null;
-        video.srcObject = null;
-        lastVideoTime = -1;
-    }
-
-    // Step 1 if the ID close-up is still missing, otherwise straight to the selfie (e.g. after Cancel in step 2)
-    function startCamera() {
-        if (hasFile(cardInput) && !introDone) { showIntro(); return; } // step 2: eye-level tip first
-        introDone = false;
-        stopCamera();
-        var mine = session;
-        var stale = new Error('stale');
-        var idStep = !hasFile(cardInput);
-        setStep(idStep ? 1 : 2);
-        startBtn.disabled = true;
-        blocked.classList.add('d-none'); // a retry clears the previous hard-stop message
-        tell('Camera open: follow the instructions on screen.');
-        say('Waiting for camera permission…');
-        openModal();
-        var cvReady = loadOpenCv(); // in parallel: never blocks the camera or MediaPipe
-        cvReady.catch(function () {});
-        if (idStep) loadLandmarker().catch(function () {}); // warm up step 2's face detector during step 1
-        navigator.mediaDevices.getUserMedia({
-            audio: false,
-            // ID text needs pixels: ask for HD, the browser falls back to what the camera has.
-            // Step 1 prefers the back camera (autofocus at close range); laptops just use their webcam.
-            video: { facingMode: idStep ? { ideal: 'environment' } : 'user', width: { ideal: 1920 }, height: { ideal: 1080 } }
-        }).then(function (s) {
-            if (mine !== session) { s.getTracks().forEach(function (t) { t.stop(); }); throw stale; }
-            stream = s;
-            var track = s.getVideoTracks()[0];
-            var facing = track && track.getSettings ? track.getSettings().facingMode : '';
-            mirrored = facing !== 'environment';
-            modal.classList.toggle('is-rear', !mirrored);
-            video.srcObject = s;
-            return video.play();
-        }).then(function () {
-            if (mine !== session) throw stale;
-            return idStep ? beginIdStep(mine, stale, cvReady) : beginSelfieStep(mine, stale, cvReady);
-        }).catch(function (err) {
-            if (err === stale) return;
-            if (window.console) console.warn('Live challenge check unavailable:', err);
-            hardStop(reasonFor(err));
-        });
-    }
-
-    // Step 1 needs only OpenCV.js; its own loop takes the photo (captureIdCard), which then starts step 2
-    function beginIdStep(mine, stale, cvReady) {
-        say('Loading ID detector…');
-        return cvReady.then(function () {
-            if (mine !== session) throw stale;
-            drawGuide(video.videoWidth, video.videoHeight);
-            say(idStepPrompt());
-            idStepLoop();
-        });
-    }
-
-    function beginSelfieStep(mine, stale, cvReady) {
-        say('Loading face detector…');
-        return loadLandmarker().then(function () {
-            if (mine !== session) throw stale;
-            drawGuide(video.videoWidth, video.videoHeight);
-            engine.reset(); // a fresh random pair every time the camera starts
-            say(engine.prompt());
-            rafId = requestAnimationFrame(tick);
-            return cvReady;
-        }).then(function () {
-            if (mine !== session) throw stale;
-            idLoop();
-        });
-    }
-
-    function reasonFor(err) {
-        var name = err && err.name;
-        if (name === 'NotAllowedError' || name === 'SecurityError') return 'Camera access was blocked.';
-        if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'No camera was found on this device.';
-        if (name === 'NotReadableError') return 'The camera is being used by another app.';
-        if (err && /ID detector|OpenCV/.test(err.message)) return 'The ID detector could not load.';
-        return 'The live challenge check could not start.';
-    }
-
-    function tick() {
-        rafId = requestAnimationFrame(tick);
-        if (!stream || video.readyState < 2 || video.currentTime === lastVideoTime) return;
-        lastVideoTime = video.currentTime;
-        var now = performance.now();
-        var result;
-        try {
-            result = landmarker.detectForVideo(video, now);
-        } catch (e) {
-            if (window.console) console.warn('Face detection failed:', e);
-            hardStop('The live challenge check stopped working.');
-            return;
-        }
-        var faces = (result && result.faceLandmarks) || [];
-        // Strict AND, same as the ID: no face = red face oval, and the challenge clock and any half-done move freeze
-        setFacePresent(faces.length > 0);
-        if (!faces.length) {
-            engine.hold(now);
-            say('No face detected: move into the frame.');
-            return;
-        }
-        var w = video.videoWidth, h = video.videoHeight;
-        drawGuide(w, h); // phones can rotate mid-session
-        // Strict AND: the face challenge only moves while the ID is in its box
-        if (!idPresent) {
-            engine.hold(now);
-            say(cardDetector ? ID_MESSAGE : 'Loading ID detector…');
-            return;
-        }
-        engine.resume(now);
-        var state = engine.update(measure(largestFace(faces, w, h), w, h), now);
-        if (state === 'done') { capture(); return; }
-        if (state === 'failed') {
-            pause('Too many missed challenges. Tap Start camera to try again with new ones.');
-            return;
-        }
-        say(engine.prompt());
-    }
-
-    /* ---------- ID card presence (OpenCV.js) ---------- */
-
-    // About 3 MB compressed (11 MB unpacked), so it downloads in parallel with the camera and MediaPipe, only on Start camera
-    var CV_URL = 'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.12.0-release.1/dist/opencv.js';
-    var CV_TIMEOUT_MS = 60000;
-    var ID_INTERVAL_MS = 500; // throttled: edge detection twice a second keeps phones cool
-    var ID_MESSAGE = 'Please keep your ID inside the box to continue.';
-    // Step 1: checked 4 times a second; the card must cover at least 35% of the big frame (still ~550 px wide on a
-    // 1080p phone, enough for OCR and the ID portrait) and stay found for 1 s in a row before the photo is taken.
-    // Loosened from 50% / 1.5 s after a real-phone test: holding the ID that close and that still was too fiddly.
-    // Step 2: the ID is held at arm's length beside the face on the front camera, so it only has to cover 10% of its box.
-    // Step 1's close-up already supplies the ID pixels; here the card just has to be there.
-    var ID_STEP_INTERVAL_MS = 250, ID_STEADY_MS = 1000, ID_STEP_FILL = 0.35, SELFIE_ID_FILL = 0.10;
-
-    var cvLib = null, cvLoading = null, cardDetector = null, cardRect = null, idPresent = false, idTimer = 0, steadySince = 0;
-
-    function loadOpenCv() {
-        // Never resolve a promise WITH the cv module: it is promise-like itself, and the endless unwrapping freezes the page
-        if (cvLib) return Promise.resolve(true);
-        if (!cvLoading) {
-            cvLoading = new Promise(function (resolve, reject) {
-                var script = document.createElement('script');
-                script.src = CV_URL;
-                script.async = true;
-                script.crossOrigin = 'anonymous';
-                script.onerror = function () { reject(new Error('OpenCV.js could not be downloaded')); };
-                script.onload = function () {
-                    var lib = window.cv;
-                    if (!lib) { reject(new Error('OpenCV.js did not start')); return; }
-                    // The build exposes a promise-like module; wrap it so the Promise doesn't try to unwrap it again
-                    if (lib.Mat) resolve({ cv: lib });
-                    else if (typeof lib.then === 'function') lib.then(function (ready) { resolve({ cv: ready }); });
-                    else lib.onRuntimeInitialized = function () { resolve({ cv: window.cv }); };
-                };
-                document.head.appendChild(script);
-            }).then(function (box) {
-                cvLib = box.cv;
-                cardDetector = createCardDetector(cvLib);
+            dt.items.add(new File([blob], 'id-photo.jpg', { type: 'image/jpeg', lastModified: Date.now() }));
+            target.files = dt.files;
+            if (target.files && target.files.length === 1) {
+                target.disabled = false;
+                [camera, gallery].forEach(function (p) { p.removeAttribute('name'); });
                 return true;
-            });
-            cvLoading.catch(function () { cvLoading = null; });
-        }
-        var timeout = new Promise(function (resolve, reject) {
-            setTimeout(function () { reject(new Error('ID detector took too long to load')); }, CV_TIMEOUT_MS);
-        });
-        return Promise.race([cvLoading, timeout]);
-    }
-
-    // Is there a card-shaped quadrilateral (CR80 / ID-1, 85.6 x 54 mm = 1.586) inside the ID box?
-    // rect is the box as drawn on screen; when the video is shown mirrored (front camera), x is flipped back to the raw
-    // frame. minFill: the share of the drawn box the card must cover (not a tiny far-away card).
-    // Every cv.Mat is deleted in a finally block: WebAssembly memory is never garbage-collected.
-    function createCardDetector(cv) {
-        // Search the box grown 15% each side first, then 25%: the tight crop keeps busy backgrounds from merging into
-        // the card outline, the wide one catches a card held at an angle with its corners outside the line
-        var PADS = [0.15, 0.25];
-        var WORK_W = 320;               // the box is scaled down to 320 px wide before edge detection
-        var RATIO_MIN = 1.25, RATIO_MAX = 2.0; // 1.586 flat; a card tilted ~35° towards the camera still passes
-        var MIN_RECTANGULARITY = 0.8;   // contour area / its rotated bounding box, for outlines broken up by fingers
-        var work = document.createElement('canvas');
-        var ctx = work.getContext('2d', { willReadFrequently: true });
-
-        function roiOf(rect, w, h, pad, mirror) {
-            var padX = rect.w * pad, padY = rect.h * pad;
-            // mirror: what is on the right of the screen is on the left of the frame
-            var rawX = mirror ? w - (rect.x + rect.w) : rect.x;
-            var x0 = Math.max(0, Math.floor(rawX - padX)), y0 = Math.max(0, Math.floor(rect.y - padY));
-            var x1 = Math.min(w, Math.ceil(rawX + rect.w + padX)), y1 = Math.min(h, Math.ceil(rect.y + rect.h + padY));
-            return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, guideArea: rect.w * rect.h };
-        }
-
-        function detect(source, w, h, rect, mirror, minFill) {
-            if (!rect || !w || !h) return false;
-            for (var p = 0; p < PADS.length; p++) {
-                if (detectAt(source, w, h, rect, PADS[p], mirror, minFill)) return true;
             }
-            return false;
-        }
-
-        function detectAt(source, w, h, rect, pad, mirror, minFill) {
-            var roi = roiOf(rect, w, h, pad, mirror);
-            if (roi.w < 20 || roi.h < 20) return false;
-            var scale = Math.min(1, WORK_W / roi.w);
-            var cw = Math.max(1, Math.round(roi.w * scale)), ch = Math.max(1, Math.round(roi.h * scale));
-            work.width = cw;
-            work.height = ch;
-            ctx.drawImage(source, roi.x, roi.y, roi.w, roi.h, 0, 0, cw, ch); // crop to the ROI and scale in one step
-            var minArea = roi.guideArea * scale * scale * minFill;
-
-            var src = null, gray = null, edges = null, kernel = null, contours = null, hierarchy = null;
-            try {
-                src = cv.imread(work);
-                gray = new cv.Mat();
-                edges = new cv.Mat();
-                contours = new cv.MatVector();
-                hierarchy = new cv.Mat();
-                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
-                cv.Canny(gray, edges, 50, 150);
-                kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
-                cv.dilate(edges, edges, kernel); // closes small gaps in the outline (fingers, glare)
-                cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-                for (var i = 0; i < contours.size(); i++) {
-                    var cnt = contours.get(i), approx = new cv.Mat();
-                    try {
-                        var area = cv.contourArea(cnt);
-                        if (area < minArea) continue;
-                        var box = cv.minAreaRect(cnt);
-                        var bw = box.size.width, bh = box.size.height;
-                        if (!bw || !bh) continue;
-                        var ratio = Math.max(bw, bh) / Math.min(bw, bh);
-                        if (ratio < RATIO_MIN || ratio > RATIO_MAX) continue;
-                        cv.approxPolyDP(cnt, approx, 0.03 * cv.arcLength(cnt, true), true);
-                        var quad = approx.rows === 4 && cv.isContourConvex(approx);
-                        if (quad || area / (bw * bh) >= MIN_RECTANGULARITY) return true;
-                    } finally {
-                        cnt.delete();
-                        approx.delete();
-                    }
-                }
-                return false;
-            } finally {
-                [src, gray, edges, kernel, contours, hierarchy].forEach(function (m) { if (m) m.delete(); });
-            }
-        }
-
-        return { detect: detect };
-    }
-
-    function setIdPresent(found) {
-        idPresent = found;
-        modal.classList.toggle('is-id-ok', found);
-        modal.classList.toggle('is-no-id', !found);
-    }
-
-    function setFacePresent(found) {
-        modal.classList.toggle('is-no-face', !found);
-    }
-
-    // Twice a second: is the card in the box? (setTimeout chain, so a slow phone never stacks up runs)
-    function idLoop() {
-        idTimer = 0;
-        if (!stream || !cardDetector) return;
-        var found = false;
-        if (video.readyState >= 2) {
-            try {
-                found = cardDetector.detect(video, video.videoWidth, video.videoHeight, cardRect, mirrored, SELFIE_ID_FILL);
-            } catch (e) {
-                if (window.console) console.warn('ID detection failed:', e);
-            }
-        }
-        setIdPresent(found);
-        idTimer = setTimeout(idLoop, ID_INTERVAL_MS);
-    }
-
-    /* ---------- Step 1: ID close-up ---------- */
-
-    // Four times a second: is the card filling the big frame? Steady for ID_STEADY_MS -> take the photo.
-    function idStepLoop() {
-        idTimer = 0;
-        if (!stream || !cardDetector || step !== 1) return;
-        var w = video.videoWidth, h = video.videoHeight, found = false;
-        if (video.readyState >= 2) {
-            drawGuide(w, h); // phones can rotate mid-session
-            try {
-                found = cardDetector.detect(video, w, h, cardRect, mirrored, ID_STEP_FILL);
-            } catch (e) {
-                if (window.console) console.warn('ID detection failed:', e);
-            }
-        }
-        setIdPresent(found);
-        var now = performance.now();
-        if (!found) {
-            steadySince = 0;
-            say(idStepPrompt());
-        } else {
-            if (!steadySince) steadySince = now;
-            if (now - steadySince >= ID_STEADY_MS) { captureIdCard(); return; }
-            say('Hold steady…');
-        }
-        idTimer = setTimeout(idStepLoop, ID_STEP_INTERVAL_MS);
-    }
-
-    // Full camera resolution, not mirrored, so the ID text reads the right way. The card must be in THIS frame too.
-    function captureIdCard() {
-        var w = video.videoWidth, h = video.videoHeight;
-        canvas.width = w;
-        canvas.height = h;
-        canvas.getContext('2d').drawImage(video, 0, 0, w, h);
-        var inFrame = false;
-        try { inFrame = cardDetector.detect(canvas, w, h, cardRect, mirrored, ID_STEP_FILL); } catch (e) { inFrame = false; }
-        if (!inFrame) {
-            steadySince = 0;
-            setIdPresent(false);
-            idTimer = setTimeout(idStepLoop, ID_STEP_INTERVAL_MS);
-            return;
-        }
-        var mine = session;
-        say('✓ ID captured');
-        canvas.toBlob(function (blob) {
-            if (mine !== session) return; // cancelled meanwhile
-            if (!blob || !attach(cardInput, blob, 'id-card.jpg')) { hardStop('The ID photo could not be saved.'); return; }
-            cardPreviewUrl = showPreview(cardPreview, blob, cardPreviewUrl);
-            tell('✓ ID photo captured. Now the selfie holding your ID.');
-            // Let the green frame show for a moment, then switch to the front camera for step 2
-            setTimeout(function () { if (mine === session) startCamera(); }, 700);
-        }, 'image/jpeg', 0.95);
-    }
-
-    // blob -> File -> the form's own file input (a FileList can only be built through DataTransfer)
-    function attach(target, blob, name) {
-        var dt = new DataTransfer();
-        dt.items.add(new File([blob], name, { type: 'image/jpeg', lastModified: Date.now() }));
-        target.files = dt.files;
-        if (!target.files || target.files.length !== 1) return false;
-        target.setCustomValidity('');
-        target.dispatchEvent(new Event('change', { bubbles: true }));
+        } catch (e) { /* older browser: fall through */ }
+        target.disabled = true; // not sent, not validated
+        [camera, gallery].forEach(function (p) { p.removeAttribute('name'); });
+        picker.setAttribute('name', 'highResIdImage');
         return true;
     }
 
-    function showPreview(img, blob, oldUrl) {
-        if (oldUrl) URL.revokeObjectURL(oldUrl);
-        var url = URL.createObjectURL(blob);
-        img.src = url;
-        img.classList.remove('d-none');
-        return url;
-    }
-
-    /* ---------- Silent handoff: frame -> canvas -> Blob -> File -> the form's own file input ---------- */
-
-    function capture() {
-        var w = video.videoWidth, h = video.videoHeight;
-        canvas.width = w;
-        canvas.height = h;
-        canvas.getContext('2d').drawImage(video, 0, 0, w, h); // not mirrored, so the ID text reads the right way
-        // The ID must be in the box in THIS frame, not just in the last 500 ms sample
-        var idInFrame = false;
-        try { idInFrame = cardDetector.detect(canvas, w, h, cardRect, mirrored, SELFIE_ID_FILL); } catch (e) { idInFrame = false; }
-        if (!idInFrame) {
-            setIdPresent(false); // the loop re-checks in up to 500 ms; the engine stays 'done' until then
-            say(ID_MESSAGE);
-            return;
-        }
-        stopCamera(); // the frame is on the canvas: release the camera (and its light) straight away
-        say('Saving photo…');
-        canvas.toBlob(function (blob) {
-            if (!blob || !attach(input, blob, 'selfie-with-id.jpg')) { hardStop('The photo could not be saved.'); return; }
-            previewUrl = showPreview(preview, blob, previewUrl);
-            box.classList.add('is-captured');
-            startBtn.classList.add('d-none');
-            retakeBtn.classList.remove('d-none');
-            tell('✓ ID photo and selfie captured. Tap Retake if your face or ID is not clear.');
-            // Let the green guide and "Photo captured" show for a moment, then fade back to the form
-            modal.classList.add('is-done');
-            say('✓ Photo captured');
-            setTimeout(function () { if (!stream) closeModal(retakeBtn); }, 700);
-        }, 'image/jpeg', 0.92);
-    }
-
-    // Retake starts again from step 1: both photos are dropped
-    function clearCapture() {
-        [input, cardInput].forEach(function (el) {
-            el.value = '';
-            el.setCustomValidity(NEEDS_LIVENESS);
-        });
+    function clear() {
+        target.value = '';
+        target.disabled = false;
+        target.setCustomValidity(NEEDS_PHOTO);
+        [camera, gallery].forEach(function (p) { p.removeAttribute('name'); });
         if (previewUrl) URL.revokeObjectURL(previewUrl);
-        if (cardPreviewUrl) URL.revokeObjectURL(cardPreviewUrl);
-        previewUrl = cardPreviewUrl = null;
-        [preview, cardPreview].forEach(function (img) {
-            img.removeAttribute('src');
-            img.classList.add('d-none');
+        previewUrl = null;
+        preview.classList.add('d-none');
+        preview.removeAttribute('src');
+        takeBtn.querySelector('span').textContent = 'Take a photo';
+        uploadBtn.querySelector('span').textContent = 'Upload a photo';
+    }
+
+    function show(blob) {
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        previewUrl = URL.createObjectURL(blob);
+        preview.src = previewUrl;
+        preview.classList.remove('d-none');
+        target.setCustomValidity('');
+        takeBtn.querySelector('span').textContent = 'Retake';
+        uploadBtn.querySelector('span').textContent = 'Choose another';
+        tell('✓ ID photo ready. Check that the whole card and your name are clear.', 'ok');
+    }
+
+    function picked(picker) {
+        var file = picker.files && picker.files[0];
+        if (!file) return;
+        clear();
+        tell('Preparing your photo…');
+        decode(file).then(toJpeg).then(function (blob) {
+            attach(blob, picker);
+            show(blob);
+        }).catch(function () {
+            picker.value = '';
+            tell(isHeic(file) ? HEIC : UNREADABLE, 'error');
         });
-        box.classList.remove('is-captured');
-        retakeBtn.classList.add('d-none');
     }
 
-    function pause(message) {
-        stopCamera();
-        startBtn.disabled = false;
-        startBtn.classList.remove('d-none');
-        closeModal(startBtn);
-        tell(message || 'Camera paused. Tap Start camera to continue.');
-    }
-
-    // 🛑 LIVE CAMERA ONLY: no upload fallback (it would skip the liveness check). No camera, permission denied, or the
-    // check could not run: stop, drop any half-taken photo, keep both inputs invalid (so the form cannot be submitted)
-    // and say why inside the camera box. Start camera stays available as a retry after the visitor grants permission.
-    function hardStop(reason, canRetry) {
-        stopCamera();
-        clearCapture(); // both inputs empty again and still carrying NEEDS_LIVENESS
-        startBtn.disabled = false;
-        startBtn.classList.toggle('d-none', canRetry === false);
-        closeModal(startBtn);
-        blockedText.textContent = reason + ' ' + CAMERA_REQUIRED;
-        blocked.classList.remove('d-none');
-        tell('Identity verification cannot continue without a live camera.');
-    }
-
-    // Both photos stay empty, and the form unsubmittable, until the camera fills them
-    [cardInput, input].forEach(function (el) {
-        el.setCustomValidity(NEEDS_LIVENESS);
-        el.addEventListener('invalid', function () {
-            if (!stream && blocked.classList.contains('d-none')) tell(NEEDS_LIVENESS); // a hard-stop message stays as it is
-        });
-    });
-
-    // Plain http, old browser, no camera API: nothing to retry on this page
-    if (!supported()) {
-        hardStop('This browser cannot open a live camera on this page.', false);
-        return;
-    }
-
-    document.body.appendChild(modal); // out of .vp-console's stacking context, so it covers the navbar too
-
-    startBtn.addEventListener('click', startCamera);
-    closeBtn.addEventListener('click', cancel);
-    introBtn.addEventListener('click', function () { hideIntro(); introDone = true; startCamera(); });
-    // Escape backs out; Tab stays inside the dialog (Cancel, plus "Start selfie" while the tip shows)
-    modal.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-        else if (e.key === 'Tab') { e.preventDefault(); (intro.hidden || document.activeElement === introBtn ? closeBtn : introBtn).focus(); }
-    });
-    retakeBtn.addEventListener('click', function () { clearCapture(); startCamera(); });
-
-    // Save battery: stop the camera when the tab is hidden, the visitor leaves this step, or the page unloads
-    document.addEventListener('visibilitychange', function () { if (document.hidden && stream) pause(); });
-    window.addEventListener('pagehide', stopCamera);
-    var formStep = box.closest('.vp-step'); // not "step": that is the camera's 1/2 above
-    if (formStep && window.MutationObserver) {
-        new MutationObserver(function () {
-            if (formStep.getAttribute('aria-hidden') === 'true' && stream) pause();
-        }).observe(formStep, { attributes: true, attributeFilter: ['aria-hidden'] });
-    }
+    takeBtn.addEventListener('click', function () { camera.click(); });
+    uploadBtn.addEventListener('click', function () { gallery.click(); });
+    camera.addEventListener('change', function () { picked(camera); });
+    gallery.addEventListener('change', function () { picked(gallery); });
+    target.addEventListener('invalid', function () { if (!target.value) tell(NEEDS_PHOTO, 'error'); });
+    clear();
 })();
 </script>
 </body>

@@ -126,8 +126,7 @@
     text-wrap: balance;                              /* even lines: "Discover / Aviation History", not a lone last word */
     text-shadow: 0 2px 24px rgba(0, 10, 35, 0.45);   /* stays readable over any slideshow photo */
 }
-/* One colour, no full stop; the gold accent is a short rule under the title instead of a two-tone word */
-.vp-hero h1::after { content: ''; display: block; width: 72px; height: 4px; margin-top: 22px; border-radius: 999px; background: var(--paf-gold); }
+/* One colour, no full stop, no rule under the title */
 .vp-hero-lead { max-width: 34rem; font-size: clamp(1rem, 0.9rem + 0.4vw, 1.1875rem); line-height: 1.6; color: rgba(255,255,255,0.8); margin: 0 0 32px; }
 .vp-hero-ctas { display: flex; flex-wrap: wrap; gap: 12px; }
 
@@ -181,6 +180,12 @@
 .vp-btn--sm { height: 40px; padding: 0 18px; font-size: 0.8125rem; }
 .vp-btn--block { width: 100%; }
 .vp-btn--leading { padding: 0 24px 0 8px; }
+/* Centred labels: the uneven padding above only makes room for the trailing icon chip. A button without the chip gets even
+   padding, and a full-width button keeps its label in the middle with the chip pinned to the right edge. */
+.vp-btn:not(:has(.vp-btn-icon)) { padding-left: 24px; padding-right: 24px; }
+.vp-btn--sm:not(:has(.vp-btn-icon)) { padding-left: 18px; padding-right: 18px; }
+.vp-btn--block:has(.vp-btn-icon) { padding-left: 54px; padding-right: 54px; text-align: center; }
+.vp-btn--block .vp-btn-icon { position: absolute; right: 7px; top: 50%; margin-top: -19px; }
 
 /* --------------------------------------------------------------------------
    4. Double-bezel containers
@@ -315,7 +320,6 @@
 .vp-date-badge.badge { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px !important; border-radius: 999px; font-family: var(--font-public); font-size: 0.8125rem; font-weight: 700; letter-spacing: 0; }
 .vp .vp-date-badge.bg-warning { background: var(--gold-tint) !important; color: var(--gold-ink) !important; border: 1px solid color-mix(in srgb, var(--paf-gold) 45%, transparent); }
 .vp .vp-date-badge.bg-success { background: var(--success-tint) !important; color: var(--success-ink) !important; border: 1px solid color-mix(in srgb, var(--success) 40%, transparent); }
-.vp .vp-date-badge.bg-danger { background: var(--danger) !important; color: #FFFFFF !important; }
 
 /* Calendar well */
 .vp-calendar-well { border-radius: var(--vp-radius-lg); border: 1px solid var(--border-subtle); background: var(--bg-raised); padding: 14px; }
@@ -323,21 +327,6 @@
 .vp-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .vp-legend span::before { content: ''; width: 10px; height: 10px; border-radius: 3px; background: var(--sw); }
 .vp-legend .sw-open { --sw: #15803D; } .vp-legend .sw-low { --sw: #B45309; } .vp-legend .sw-full { --sw: var(--paf-red); }
-
-.vp-master {
-    display: grid; grid-template-columns: 44px 1fr; gap: 14px;
-    margin-top: 16px; padding: 18px;
-    border-radius: var(--vp-radius-lg);
-    background: var(--gold-tint);
-    border: 1px solid color-mix(in srgb, var(--paf-gold) 40%, transparent);
-}
-.vp-master .ico { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--paf-gold); color: var(--paf-ultramarine-900); font-size: 1.2rem; }
-.vp-master h3 { font-size: 1rem; font-weight: 700; margin: 0 0 4px; }
-.vp-master p { font-size: 0.8125rem; color: var(--text-secondary); margin: 0 0 12px; }
-/* #masterToggleBtn keeps its Bootstrap classes (btn-dark ↔ btn-danger are swapped by JS) */
-.vp #masterToggleBtn { height: 40px; padding: 0 18px; border-radius: 999px; font-family: var(--font-public); font-weight: 700; font-size: 0.8125rem; border: 0; }
-.vp #masterToggleBtn.btn-dark { background: var(--paf-ultramarine); color: #FFFFFF; }
-.vp #masterToggleBtn.btn-danger { background: var(--danger); color: #FFFFFF; }
 
 .vp-summary { border-radius: var(--vp-radius-lg); border: 1px solid var(--border-subtle); background: var(--bg-surface); padding: 20px; }
 .vp-summary dl { margin: 0; display: grid; gap: 12px; }
@@ -401,119 +390,34 @@
 .vp .vp-otp-ok { color: var(--success-ink); font-weight: 700; }
 .vp .vp-otp-error { color: var(--danger-ink); font-weight: 700; }
 .vp-otp.is-verified .vp-otp-code { border-color: var(--success-ink); }
-.vp-selfie-tips { margin: 10px 0 0; padding-left: 18px; }
-.vp-selfie-tips li + li { margin-top: 2px; }
-/* Live challenge check (camera selfie). Inline: status, Start/Retake and, after capture, a small preview. */
+.vp-idphoto-tips { margin: 10px 0 0; padding-left: 18px; }
+.vp-idphoto-tips li + li { margin-top: 2px; }
+/* 🪪 ID photo: a preview beside the status and the Take / Upload (Retake / Choose another) buttons */
 .vp-upload { position: relative; }
-.vp-liveness-inline {
+.vp-idphoto {
     display: flex; align-items: center; gap: 16px;
     padding: 14px;
     border-radius: var(--vp-radius-lg);
     border: 1px dashed var(--border);
     background: var(--bg-surface);
 }
-.vp-liveness.is-captured .vp-liveness-inline { border-style: solid; border-color: var(--success-ink); }
-.vp-liveness-thumb {
+.vp-idphoto.is-captured { border-style: solid; border-color: var(--success-ink); }
+.vp-idphoto.is-error { border-color: var(--danger-ink); }
+.vp-idphoto-preview {
     flex: 0 0 auto;
-    width: 120px; height: 90px; object-fit: cover;
+    width: 160px; height: 101px; object-fit: contain;
     border-radius: var(--vp-radius-md);
     border: 1px solid var(--border-subtle);
-    animation: vp-rise 320ms var(--ease-premium) both;
+    background: var(--bg-raised);
 }
-.vp-liveness-thumbs { flex: 0 0 auto; display: flex; gap: 8px; }
-.vp-liveness-thumbs:not(:has(.vp-liveness-thumb:not(.d-none))) { display: none; }
-.vp-liveness-copy { flex: 1 1 auto; min-width: 0; }
-.vp .vp-liveness-status { margin: 0; font-size: 0.875rem; color: var(--text-secondary); }
-.vp .vp-liveness.is-captured .vp-liveness-status { color: var(--success-ink); font-weight: 700; }
-.vp-liveness-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
-@media (max-width: 420px) {
-    .vp-liveness-inline { align-items: flex-start; gap: 12px; padding: 12px; }
-    .vp-liveness-thumb { width: 72px; height: 54px; }
-    .vp-liveness-thumbs { gap: 6px; }
-}
+.vp-idphoto-copy { flex: 1 1 auto; min-width: 0; }
+.vp .vp-idphoto-status { margin: 0; font-size: 0.875rem; color: var(--text-secondary); }
+.vp .vp-idphoto.is-captured .vp-idphoto-status { color: var(--success-ink); font-weight: 700; }
+.vp .vp-idphoto.is-error .vp-idphoto-status { color: var(--danger-ink); font-weight: 700; }
+.vp-idphoto-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
 
-/* Full-screen camera (moved to <body> by the script). The video is mirrored like a mirror;
-   the captured file is not, so the ID text stays readable. */
-.vp-cam {
-    position: fixed; top: 0; left: 0;
-    width: 100vw; height: 100vh; height: 100dvh;
-    z-index: 9999;
-    background: #000000;
-    opacity: 0; visibility: hidden; pointer-events: none;
-    transition: opacity 220ms var(--ease-out), visibility 0s linear 220ms;
-}
-.vp-cam.is-open { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity 220ms var(--ease-out), visibility 0s; }
-/* Scroll lock. Dropping theme.css's stable gutter lets the black overlay reach the right edge on desktops. */
-html.vp-cam-open { overflow: hidden; scrollbar-gutter: auto; }
-.vp-cam-stage { position: absolute; inset: 0; }
-.vp-cam-video, .vp-cam-guide { position: absolute; inset: 0; width: 100%; height: 100%; }
-.vp-cam-video { object-fit: contain; transform: scaleX(-1); }
-.vp-cam-guide { pointer-events: none; }
-.vp-cam-guide-shade { fill: none; stroke: rgba(0, 0, 0, 0.55); }
-.vp-cam-guide-line { fill: none; stroke: #FFFFFF; stroke-linecap: round; }
-.vp-cam-guide-label { fill: #FFFFFF; font-family: var(--font-display); font-weight: 700; letter-spacing: 0.12em; text-anchor: middle; paint-order: stroke; stroke: rgba(0, 0, 0, 0.6); }
-.vp-cam.is-done .vp-cam-guide-line { stroke: #5EDB8F; }
-/* ID card box: red while no card is found in it, green once one is */
-.vp-cam.is-no-id #guideCard { stroke: #FF7473; }
-.vp-cam.is-no-id #guideCardLabel { fill: #FF7473; }
-.vp-cam.is-id-ok #guideCard { stroke: #5EDB8F; }
-/* Face oval: red while MediaPipe finds no face (the challenge is paused) */
-.vp-cam.is-no-face #guideFace { stroke: #FF7473; }
-.vp-cam.is-no-face #guideFaceLabel { fill: #FF7473; }
-/* Two-step capture. Step 1 (ID close-up): only the big card frame. A back camera is shown as is, not mirrored. */
-.vp-cam.is-step-id #guideFace, .vp-cam.is-step-id #guideFaceShade, .vp-cam.is-step-id #guideFaceLabel { display: none; }
-.vp-cam.is-rear .vp-cam-video { transform: none; }
-.vp-cam-close {
-    position: absolute; z-index: 2;
-    top: calc(env(safe-area-inset-top, 0px) + 16px); right: calc(env(safe-area-inset-right, 0px) + 16px);
-    display: inline-flex; align-items: center; gap: 8px;
-    min-height: 44px; padding: 0 18px;
-    border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 999px;
-    background: rgba(0, 0, 0, 0.55);
-    color: #FFFFFF; font-weight: 600; font-size: 0.9375rem;
-    cursor: pointer;
-}
-.vp-cam-close:hover { background: rgba(0, 0, 0, 0.75); }
-.vp-cam-close:focus-visible { outline: 3px solid var(--paf-gold); outline-offset: 2px; }
-/* The instruction: a floating pill, top centre under the Cancel button (16px + 44px + 12px gap) */
-.vp-cam-prompt {
-    position: absolute; z-index: 2; left: 50%;
-    top: calc(env(safe-area-inset-top, 0px) + 72px);
-    transform: translateX(-50%);
-    width: max-content; max-width: calc(100vw - 32px);
-    margin: 0; padding: 14px 24px;
-    border-radius: 999px;
-    border: 2px solid var(--paf-gold);
-    background: rgba(0, 31, 92, 0.88);
-    box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.7);
-    color: #FFFFFF; text-align: center;
-    font-family: var(--font-display); font-size: clamp(1rem, 2.6vw, 1.375rem); font-weight: 700; line-height: 1.3;
-}
-.vp-cam-prompt.is-ok { border-color: #5EDB8F; background: rgba(10, 80, 45, 0.9); }
-.vp-cam-prompt.is-warn { border-color: #FF7473; background: rgba(110, 18, 18, 0.9); }
-.vp-cam-prompt.is-new { animation: vp-cam-pop 260ms var(--ease-premium); }
-@keyframes vp-cam-pop { from { transform: translateX(-50%) scale(0.92); } to { transform: translateX(-50%) scale(1); } }
-@media (prefers-reduced-motion: reduce) {
-    .vp-cam, .vp-cam.is-open { transition: none; }
-    .vp-cam-prompt.is-new, .vp-liveness-thumb { animation: none; }
-}
-/* Pre-selfie tip: covers the stage, sits under the Cancel button (z-index 2) so Cancel still works */
-.vp-cam-intro {
-    position: absolute; inset: 0; z-index: 1;
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
-    padding: 24px; text-align: center;
-    background: rgba(0, 20, 60, 0.94); color: #FFFFFF;
-}
-.vp-cam-intro[hidden] { display: none; }
-.vp-cam-intro-icon { font-size: 3rem; color: var(--paf-gold); }
-.vp-cam-intro-text { max-width: 28ch; margin: 0; font-family: var(--font-display); font-size: clamp(1.125rem, 4.5vw, 1.5rem); font-weight: 700; line-height: 1.35; }
-.vp-cam.is-intro .vp-cam-prompt { display: none; }
-/* Selfie tip under the camera box: the portal's gold note, tighter so it stays with the capture controls */
-.vp .vp-upload .vp-cam-tip { margin: 12px 0; padding: 12px 14px; gap: 10px; }
-.vp-cam-tip-icon { font-size: 1.1rem; line-height: 1.3; }
-
-/* The real file inputs stay in the form (and in native validation) but are never shown: only the camera fills them */
-.vp-liveness-input {
+/* The real file inputs stay in the form (and in native validation) but are never shown: the buttons open them */
+.vp-idphoto-input {
     position: absolute;
     width: 1px; height: 1px; padding: 0; margin: 0;
     opacity: 0; overflow: hidden; clip-path: inset(50%); pointer-events: none;
@@ -570,6 +474,17 @@ html.vp-cam-open { overflow: hidden; scrollbar-gutter: auto; }
 .vp-day-dot { display: block; width: 8px; height: 8px; margin: 2px auto 6px; border-radius: 50%; background: var(--sw); }
 .vp-day-dot.is-open { --sw: #15803D; } .vp-day-dot.is-low { --sw: #B45309; } .vp-day-dot.is-full { --sw: var(--paf-red); }
 .vp .vp-day-pick.is-picked .vp-day-dot { box-shadow: 0 0 0 2px #FFFFFF; }
+/* 🎌 A listed holiday: not pickable; "Closed: <name>" wraps inside the cell, small but readable on a phone */
+.vp .fc .vp-day-closed .fc-daygrid-day-frame { background: var(--danger-tint); }
+.vp-day-closed-label { display: block; padding: 0 3px 4px; font-size: 0.625rem; font-weight: 700; line-height: 1.15;
+    color: var(--danger-ink); text-align: center; white-space: normal; overflow-wrap: break-word; }
+.vp-day-closed-name { display: block; font-weight: 600; }
+@media (max-width: 575.98px) {
+    .vp-day-closed-name { display: none; }
+    .vp-day-closed-label { padding: 0 0 4px; font-size: 0.5625rem; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; }
+}
+.vp-closed-note { margin: 8px 0 0; padding: 0; list-style: none; font-size: 0.8125rem; font-weight: 600; color: var(--danger-ink); overflow-wrap: break-word; }
+.vp-closed-note li + li { margin-top: 2px; }
 
 .vp-times { margin-top: 16px; padding: 16px; border-radius: var(--vp-radius-lg); border: 1px solid var(--border-subtle); background: var(--bg-raised); }
 .vp .vp-times-title { margin: 0; font-family: var(--font-display); font-size: 1.125rem; font-weight: 800; color: var(--text); }
@@ -593,6 +508,23 @@ html.vp-cam-open { overflow: hidden; scrollbar-gutter: auto; }
 .vp-time-btn[aria-pressed="true"] small, .vp-time-btn[aria-pressed="true"] .vp-time-seats { color: rgba(255, 255, 255, 0.85); }
 .vp-time-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 @media (max-width: 575.98px) { .vp-times-grid { grid-template-columns: 1fr; } }
+
+/* 🚶 Advance Booking / Walk-in (Today): two choice cards above the steps; side by side, stacked on phones */
+.vp-booking-type { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0 0 20px; }
+.vp-type-card {
+    display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px;
+    border: 1.5px solid var(--border); border-radius: var(--vp-radius-md);
+    background: var(--bg-surface); color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.vp-type-card > i { font-size: 1.5rem; line-height: 1; color: var(--primary); }
+.vp-type-card b { display: block; font-size: 1rem; }
+.vp-type-card small { display: block; margin-top: 2px; font-size: 0.8125rem; color: var(--text-muted); }
+.vp-type-card:hover:not(:disabled) { border-color: var(--primary); }
+.vp-type-card:focus-visible { outline: 3px solid var(--paf-gold); outline-offset: 2px; }
+.vp-type-card.is-picked { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+.vp-type-card:disabled { opacity: 0.6; cursor: not-allowed; }
+.vp-walkin-picker { margin-bottom: 8px; }
+@media (max-width: 575.98px) { .vp-booking-type { grid-template-columns: 1fr; } }
 
 /* --------------------------------------------------------------------------
    9. Secondary tabs (manage, guidelines, exhibits)
@@ -1251,14 +1183,13 @@ html.vp-is-loading { overflow: hidden; }
     #formCard .row { --bs-gutter-x: 0; }
 }
 
-/* Phones: the captured ID / selfie previews sit above the text instead of beside it, and Start camera /
-   Retake become full-width buttons stacked one above the other */
+/* Phones: the ID photo preview sits above the text instead of beside it, and the two buttons become full-width,
+   stacked one above the other */
 @media (max-width: 575.98px) {
-    .vp-liveness-inline { flex-direction: column; align-items: stretch; }
-    .vp-liveness-thumbs { width: 100%; justify-content: center; }
-    .vp-liveness-thumb { width: calc(50% - 4px); max-width: 160px; height: auto; aspect-ratio: 4 / 3; }
-    .vp-liveness-actions { display: grid; grid-template-columns: 1fr; gap: 8px; }
-    .vp-liveness-actions .vp-btn { width: 100%; justify-content: center; }
+    .vp-idphoto { flex-direction: column; align-items: stretch; }
+    .vp-idphoto-preview { width: 100%; max-width: 320px; height: auto; aspect-ratio: 1.586; align-self: center; }
+    .vp-idphoto-actions { display: grid; grid-template-columns: 1fr; gap: 8px; }
+    .vp-idphoto-actions .vp-btn { width: 100%; justify-content: center; }
 }
 
 /* Touch screens: at least 44 x 44 px for every control a thumb has to hit */
@@ -1285,4 +1216,84 @@ html.vp-is-loading { overflow: hidden; }
     .vp-mcal-nav { width: 44px; height: 44px; }
     .vp-mcal-grid { gap: 2px; }
     .vp-mcal-day { aspect-ratio: auto; min-height: 44px; }
+}
+
+/* 📝 Terms gate: the booking steps stay dimmed and inert until the Terms and Conditions popup is accepted */
+.vp-terms-gate { position: relative; }
+.vp-terms-gate-card {
+    display: grid; grid-template-columns: 44px 1fr auto; gap: 14px; align-items: center;
+    margin-bottom: 16px; padding: 16px 18px;
+    border-radius: var(--vp-radius-lg);
+    background: var(--gold-tint);
+    border: 1px solid color-mix(in srgb, var(--paf-gold) 40%, transparent);
+}
+.vp-terms-gate-card > .bi { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--paf-gold); color: var(--paf-ultramarine-900); font-size: 1.2rem; }
+.vp-terms-gate-card strong { font-family: var(--font-display); }
+.vp-terms-gate-card p { margin: 2px 0 0; font-size: 0.8125rem; color: var(--text-secondary); }
+.vp-terms-gate-card[hidden] { display: none; }
+.vp-terms-locked[inert] { opacity: 0.55; pointer-events: none; user-select: none; }
+.vp-terms-gate:not(.is-agreed) { cursor: pointer; }
+@media (max-width: 575.98px) {
+    .vp-terms-gate-card { grid-template-columns: 1fr; text-align: left; }
+    .vp-terms-gate-card > .bi { display: none; }
+    .vp-terms-gate-card .vp-btn { width: 100%; justify-content: center; }
+}
+
+/* Terms and Conditions popup (shares the .vp-legal dialog look) */
+.vp-terms-list { padding-left: 1.2rem; margin-bottom: 0.75rem; }
+.vp .vp-terms-list h3, .vp-terms-list h3 { margin: 14px 0 4px; font-family: var(--font-display); font-size: 0.9375rem; font-weight: 650; }
+.vp-terms-related { font-size: 0.8125rem; color: var(--text-secondary); }
+.vp-terms-foot { justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.vp-terms-foot .form-check-label { font-weight: 700; }
+.vp-terms-foot .vp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.vp-terms-status { margin: 0; font-size: 0.8125rem; color: var(--text-secondary); }
+.vp-terms-status .bi { color: var(--success-ink); }
+.vp-link-btn { padding: 0; border: 0; background: none; color: inherit; font-weight: 700; text-decoration: underline; }
+
+/* 💱 Admission counts (booking step 3, Manage Booking) and the price list (Guidelines tab) */
+.vp-admission { border: 0; padding: 0; margin: 0 0 16px; }
+.vp-admission-row { display: grid; grid-template-columns: 1fr 96px; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border-subtle); }
+.vp-admission-row label { margin: 0; }
+.vp-admission-row label b { display: block; font-size: 0.875rem; }
+.vp-admission-row label small { color: var(--text-secondary); font-size: 0.75rem; }
+.vp-admission-row input { text-align: center; }
+.vp-admission-total { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 0 4px; font-weight: 700; }
+.vp-admission-total strong { font-size: 1.125rem; }
+.vp-admission-list { margin-top: 24px; padding: 18px; border-radius: var(--vp-radius-lg); border: 1px solid var(--border-subtle); background: var(--bg-surface); }
+.vp .vp-admission-list-title, .vp-admission-list-title { font-family: var(--font-display); font-size: 1rem; font-weight: 700; margin: 0 0 8px; }
+.vp-admission-list dl { margin: 0; }
+.vp-admission-list dl > div { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--border-subtle); font-size: 0.875rem; }
+.vp-admission-list dl > div:last-child { border-bottom: 0; }
+.vp-admission-list dt { font-weight: 600; }
+.vp-admission-list dd { margin: 0; font-weight: 700; white-space: nowrap; }
+
+/* 💳 Payment page: billing number and amount, the LANDBANK steps and the receipt upload */
+.vp-pay-billing { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin: 0 0 16px; padding: 18px; border-radius: var(--vp-radius-lg); background: var(--gold-tint); border: 1px solid color-mix(in srgb, var(--paf-gold) 40%, transparent); }
+.vp-pay-label { display: block; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); }
+.vp-pay-number { font-family: var(--font-mono, ui-monospace, monospace); font-size: 1.5rem; letter-spacing: 0.12em; }
+.vp-pay-amount { font-size: 1.5rem; }
+.vp-pay-keep { grid-column: 1 / -1; margin: 0; font-size: 0.8125rem; color: var(--text-secondary); }
+.vp-pay-steps { padding-left: 1.3rem; margin: 0 0 16px; }
+.vp-pay-steps li { margin-bottom: 10px; line-height: 1.6; overflow-wrap: anywhere; }
+/* The exact values to type (fragments/payment-steps): monospace, white on near-black in both themes, so every space
+   and capital letter is obvious; white-space: pre keeps "PHILIPPINE AIR FORCE" on one line and its spaces visible */
+.vp-pay-exact { display: inline-block; margin: 2px 0; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--paf-gold);
+    background: #111827; color: #ffffff; font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+    font-size: 1rem; font-weight: 700; letter-spacing: 0.02em; white-space: pre; }
+.vp-copy { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 64px; margin: 0 2px 0 6px;
+    padding: 0 12px; vertical-align: middle; border-radius: 999px; border: 1px solid var(--paf-gold); background: transparent;
+    color: inherit; font-size: 0.8125rem; font-weight: 700; cursor: pointer; touch-action: manipulation; }
+.vp-copy:hover { background: var(--gold-tint); }
+.vp-copy:focus-visible { outline: 3px solid var(--paf-gold); outline-offset: 2px; }
+.vp-copy.is-copied { background: var(--paf-gold); color: #111827; }
+.vp-pay-warn { display: block; margin: 0 0 4px; font-weight: 700; }
+.vp-pay-upload { margin-top: 4px; }
+/* 🚶 Walk-in gate pass (fragments/walkin-qr): a white tile in both themes so every scanner reads it; full width on phones */
+.vp-gate-pass { margin: 0 0 18px; padding: 16px; border-radius: var(--vp-radius-lg); background: #ffffff; color: #111827;
+    border: 2px solid var(--paf-gold); text-align: center; }
+.vp-gate-pass-label { margin: 0 0 10px; font-size: 1.0625rem; font-weight: 700; }
+.vp-gate-pass-qr { display: block; width: min(100%, 280px); height: auto; aspect-ratio: 1 / 1; margin: 0 auto; image-rendering: pixelated; }
+.vp-gate-pass-ref { margin: 10px 0 0; font-size: 0.875rem; }
+@media (max-width: 575.98px) {
+    .vp-pay-billing { grid-template-columns: 1fr; }
 }

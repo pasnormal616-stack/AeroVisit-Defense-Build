@@ -25,7 +25,7 @@ class RecordingMailSender extends JavaMailSenderImpl {
     /** What one sent email looked like: addresses, subject, HTML / plain-text bodies, attachments by file name and
      *  inline images by Content-ID (the "cid:" an <img> in the HTML points to). */
     record SentEmail(String to, String fromAddress, String fromName, String subject, String html, String plainText,
-                     Map<String, byte[]> attachments, Map<String, byte[]> inlineImages) {}
+                     Map<String, byte[]> attachments, Map<String, byte[]> inlineImages, String replyTo) {}
 
     final List<SentEmail> sent = new ArrayList<>();
     MailException failure;
@@ -45,7 +45,8 @@ class RecordingMailSender extends JavaMailSenderImpl {
             Map<String, byte[]> inlineImages = new LinkedHashMap<>();
             walk(message, bodies, attachments, inlineImages);
             return new SentEmail(message.getRecipients(Message.RecipientType.TO)[0].toString(), from.getAddress(),
-                    from.getPersonal(), message.getSubject(), bodies[0], bodies[1], attachments, inlineImages);
+                    from.getPersonal(), message.getSubject(), bodies[0], bodies[1], attachments, inlineImages,
+                    message.getHeader("Reply-To", ",")); // the raw header: getReplyTo() falls back to From
         } catch (Exception e) {
             throw new IllegalStateException("Could not read the email EmailService built", e);
         }

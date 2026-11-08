@@ -42,7 +42,6 @@ import com.paf.aerovisit.repository.GuidelineRepository;
 import com.paf.aerovisit.repository.PortalSettingsRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
-import com.paf.aerovisit.service.OcrService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
 /** Website Content on the public portal: announcement board, guidelines tab, exhibits slideshow and photo serving. */
@@ -72,7 +71,6 @@ class PortalContentTest {
     @MockitoBean private VisitorRepository repo;
     @MockitoBean private BookingSlotRepository bookingRepo;
     @MockitoBean private EmailService emailService;
-    @MockitoBean private OcrService ocrService;
     @MockitoBean private PredictiveAdvisorService aiService;
 
     // Website Content
@@ -214,7 +212,7 @@ class PortalContentTest {
         assertThat(flash.getFlashAttributes().get("error")).asString().startsWith("Upload too large.");
 
         // (the public booking form /save now has its own friendly redirect: DemoPolishTest)
-        MockHttpServletRequest otherUpload = new MockHttpServletRequest("POST", "/api/booking/verify-id");
+        MockHttpServletRequest otherUpload = new MockHttpServletRequest("POST", "/admin/some-other-upload");
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> advice.handleTooLarge(tooLarge, otherUpload, new RedirectAttributesModelMap()))
             .isSameAs(tooLarge);
     }
@@ -266,16 +264,23 @@ class PortalContentTest {
             "We do not sell, rent or share your personal data with third parties",
             "id=\"vpTermsModal\"", "valid government-issued photo ID", "subject to inspection", "Restricted", "decent, appropriate attire");
         assertThat(html).doesNotContain("href=\"#\">Privacy Policy");
-        // Two-step KYC: the policy must disclose the face matching and the 30-day deletion, and no longer deny it
-        assertThat(html).contains("<b>Biometric data:</b> a face template", "one-to-one verification",
-            "<b>ID photos and face templates</b> are processed temporarily and deleted automatically 30 days after the visit date",
-            "once the visit is completed, missed, rejected, cancelled or denied entry at the gate",
-            "when the face is barred from the base for a security violation");
+        // 🪪 No KYC: the policy discloses the ID photo (for staff to look at only, no OCR, no face recognition, no
+        // biometric data), the payment receipt, the contact-details ban check and the 30-day deletion; no selfie
+        assertThat(html).contains("<b>ID photo:</b> one photo of your valid ID", "(advance bookings and walk-ins alike)",
+            "<b>Payment details:</b> your billing number, the amount due and the screenshot of your LANDBANK payment receipt",
+            "no text recognition, no face recognition and no biometric",
+            "contact number are compared with the list of visitors barred",
+            "Last updated: November 2026")
+            .doesNotContain("a selfie of you holding it", "one-to-one verification", "<b>Biometric data:</b>", "face template");
+        assertThat(html).contains(
+            "<b>ID photos and payment receipts</b> are deleted automatically 30 days after the visit date",
+            "completed, missed, rejected, cancelled or denied entry at the gate");
         assertThat(html).doesNotContain("entry was denied at the gate");
         assertThat(html).doesNotContain("No face recognition or face matching is performed");
         // Human-in-the-loop: no booking is confirmed automatically, and the visitor pages must not say otherwise
-        assertThat(html).contains("every booking is reviewed and approved by authorized museum personnel before an entry pass is issued",
-            "Every booking is reviewed by museum personnel before your entry pass is sent.");
+        // (walk-ins have no approval step: the guard checks the physical ID at the gate)
+        assertThat(html).contains("approved by museum personnel before an entry pass is issued",
+            "the guard compares it with your physical ID at");
         assertThat(html).doesNotContain("confirmed automatically", "checked automatically");
         // modals sit after the footer, outside it
         assertThat(html.indexOf("id=\"vpPrivacyModal\"")).isGreaterThan(html.indexOf("</footer>"));

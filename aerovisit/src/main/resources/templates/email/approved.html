@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org" lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Visit Approved</title></head>
-<!--/* Variables: name, date, referenceId (may be null), timeWindow (may be null: Master Booking or no readable slot).
+<!--/* Variables: name, date, referenceId (may be null), timeWindow (may be null: no readable slot).
        The Entry QR Code is embedded (cid:entryQr) and attached by EmailService. */-->
 <body th:replace="~{email/layout :: layout('Visit Approved', ~{::content})}">
 <div th:fragment="content">

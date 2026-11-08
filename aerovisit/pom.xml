@@ -143,14 +143,9 @@
             <version>3.6.1</version>
         </dependency>
 
-        <!-- 🔥 Tess4J for OCR ID Verification 🔥 -->
-        <dependency>
-            <groupId>net.sourceforge.tess4j</groupId>
-            <artifactId>tess4j</artifactId>
-            <version>5.11.0</version>
-        </dependency>
+        <!-- Tess4J (OCR ID check) was removed with KYC in 2026-11: the ID photo is only stored for staff to look at -->
 
-        <!-- Helper library for Tesseract OCR to read all image formats -->
+        <!-- Extra image formats for ImageIO (ID photo, receipt and exhibit photo checks) -->
         <dependency>
             <groupId>com.github.jai-imageio</groupId>
             <artifactId>jai-imageio-core</artifactId>

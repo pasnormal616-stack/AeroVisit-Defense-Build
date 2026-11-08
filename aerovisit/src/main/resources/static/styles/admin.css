@@ -716,6 +716,37 @@ button.av-nav-link { width: 100%; background: none; border: 0; font: inherit; te
 .av-badge--pm { color: var(--gold-ink); background: var(--gold-tint); }
 .av-badge--day { color: var(--success-ink); background: var(--success-tint); }
 .av-badge--ok { color: var(--success-ink); background: var(--success-tint); }
+.av-badge--danger { color: var(--danger-ink); background: var(--danger-tint); }
+
+/* 🗂️ Compact booking cell (admin tables): 4 short lines + a collapsed "Details" that expands in place */
+.av-booking-cell { min-width: 15rem; }
+.av-booking-cell > * + * { margin-top: 3px; }
+.av-booking-window { color: var(--text-secondary); font-weight: 500; margin-left: 0.25em; }
+.av-dot-list > * + *::before { content: "\00B7"; margin: 0 0.4em; color: var(--text-muted); }
+.av-booking-pay { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 0.8125rem; }
+.av-booking-count { font-weight: 600; color: var(--text); }
+.av-booking-flags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.av-payby { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: var(--radius); font-size: 0.75rem; font-weight: 600; color: var(--gold-ink); background: var(--gold-tint); }
+.av-payby--urgent { color: var(--danger-ink); background: var(--danger-tint); }
+.av-details-toggle {
+    display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 4px 8px; margin-left: -8px;
+    border: 0; border-radius: var(--radius); background: transparent; color: var(--info-ink);
+    font-size: 0.75rem; font-weight: 600; cursor: pointer;
+}
+.av-booking-flags > * + .av-details-toggle { margin-left: 0; }
+.av-details-toggle:hover { background: var(--neutral-tint); }
+.av-details-toggle:focus-visible { outline: 2px solid var(--info-ink); outline-offset: 1px; }
+.av-details-toggle .bi { transition: transform 0.15s ease; }
+.av-details-toggle[aria-expanded="true"] .bi { transform: rotate(90deg); }
+.av-details {
+    display: grid; grid-template-columns: max-content 1fr; gap: 3px 10px; padding: 8px 10px; margin-top: 4px;
+    border-left: 2px solid var(--neutral-tint); font-size: 0.75rem; color: var(--text-secondary);
+}
+.av-details[hidden] { display: none; }
+.av-details > div { display: contents; }
+.av-details > .av-details-wide { display: block; grid-column: 1 / -1; }
+.av-details-label { color: var(--text-muted); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .av-details-toggle .bi { transition: none; } }
 .av-app .badge { font-family: var(--font-ops); font-weight: 550; border-radius: var(--radius); }
 
 .av-chip-remove {
@@ -1123,6 +1154,33 @@ button.av-nav-link { width: 100%; background: none; border: 0; font: inherit; te
 }
 #manifest-companions-row { max-height: 40vh; overflow-y: auto; }
 
+/* 📷 PHONE-FIRST SCAN CARD: the card scrolls inside the overlay (never off-screen on a phone), and the ID photo and the
+   payment sit side by side from 576px up, stacked on phones (photo first). Accept / Deny stay full-width, 48px tall. */
+#alert-overlay { justify-content: flex-start; overflow-y: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
+.alert-box { width: 720px; max-width: 100%; margin: auto; padding: 20px 16px; }
+@media (min-width: 576px) { .alert-box { padding: 28px; } }
+.av-scan-pair { display: grid; grid-template-columns: 1fr; gap: 12px; margin: 0 0 12px; text-align: left; }
+.av-scan-pair.is-paired { grid-template-columns: 1fr; }
+@media (min-width: 576px) { .av-scan-pair.is-paired { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.av-scan-side { margin: 0; padding: 10px; border-radius: var(--radius); background: rgba(0, 0, 0, 0.28); min-width: 0; }
+.av-scan-side #alert-id-photo { width: 100%; height: 200px; margin: 0 0 6px; }
+.av-scan-side-title { display: block; margin: 0 0 6px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(255, 255, 255, 0.8); }
+.av-scan-receipt { display: block; width: 100%; padding: 0; margin: 0 0 8px; border: 1px solid rgba(255, 255, 255, 0.4); border-radius: var(--radius); background: #000000; cursor: zoom-in; }
+.av-scan-receipt img { display: block; width: 100%; height: 200px; object-fit: contain; }
+.av-scan-receipt:focus-visible { outline: 3px solid #FFFFFF; outline-offset: 2px; }
+.av-scan-money { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; margin: 0; font-size: 0.9375rem; }
+.av-scan-money dt { color: rgba(255, 255, 255, 0.8); font-weight: 600; }
+.av-scan-money dd { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
+.av-scan-money .av-scan-big { font-family: var(--font-mono, ui-monospace, monospace); font-size: 1.25rem; }
+.av-scan-note { margin: 8px 0 0; padding: 6px 8px; border-radius: 6px; background: rgba(255, 255, 255, 0.14); font-weight: 700; }
+#decision-controls .btn, #alert-dismiss { min-height: 48px; }
+/* Tap a receipt: full screen above the card; tap anywhere or press Esc to close */
+.av-zoom { position: fixed; inset: 0; z-index: calc(var(--z-overlay) + 1); display: flex; align-items: center; justify-content: center;
+    padding: 12px; background: rgba(0, 0, 0, 0.92); cursor: zoom-out; }
+.av-zoom[hidden] { display: none; }
+.av-zoom img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.av-zoom-close { position: absolute; top: 10px; right: 10px; min-width: 48px; min-height: 48px; }
+
 /* --------------------------------------------------------------------------
    11. Standalone screens (login, violation form)
    -------------------------------------------------------------------------- */
@@ -1321,7 +1379,7 @@ button.av-nav-link { width: 100%; background: none; border: 0; font: inherit; te
     .av-brand-name { display: none; }
 }
 
-/* Master Booking justification note in the visitor table */
+/* Event justification note on older bookings that have one (visitor table) */
 .av-justification { margin-top: 8px; padding: 8px 10px; max-width: 360px; border-left: 3px solid var(--warning); background: var(--gold-tint); border-radius: 4px; }
 .av-justification-label { color: var(--gold-ink); font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 2px; }
 .av-justification-text { font-size: 0.8125rem; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -1485,4 +1543,81 @@ button.av-nav-link { width: 100%; background: none; border: 0; font: inherit; te
 }
 @media (prefers-reduced-motion: reduce) {
     .av-app .table > tbody > tr.av-row-flash > td { animation: none; background-color: var(--primary-tint); }
+}
+
+/* 💳 Payment: billing details in the visitor row and the receipt beside them (Awaiting Payment Verification) */
+.av-payment { margin-top: 4px; }
+.av-receipt-link { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 6px; font-size: 0.8125rem; font-weight: 600; text-decoration: none; }
+.av-receipt-thumb { display: block; width: 120px; max-height: 160px; object-fit: contain; border: 1px solid var(--border-subtle, #d1d5db); border-radius: 6px; background: #fff; }
+
+/* 🚶 Walk-ins: the badge on gate rows, a flagged walk-in's ban (name + photo) and the check-in tick beside its button */
+.av-badge--walkin { color: var(--warn-ink, #92400e); background: var(--warn-tint, #fef3c7); }
+.av-walkin-ban { display: flex; gap: 10px; align-items: flex-start; padding: 8px; border: 1px solid #fca5a5; border-radius: 6px; background: #fef2f2; max-width: 320px; }
+.av-walkin-ban-photo { width: 64px; height: 64px; object-fit: cover; border-radius: 4px; flex: none; }
+.av-walkin-checkin { display: inline-flex; flex-direction: column; align-items: flex-end; }
+.av-walkin-id { display: flex; gap: 10px; align-items: flex-start; }
+.av-walkin-id-photo { width: 96px; height: 61px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border-subtle, #d1d5db); flex: none; }
+.av-walkin-actions { flex-direction: column; align-items: flex-end; gap: 6px; }
+.av-process-open { min-height: 44px; padding-inline: 1.1rem; font-weight: 600; }
+
+/* 🚶 Process walk-in panel (Guard Dashboard): phone-first. Full screen below 576px (modal-fullscreen-sm-down), big
+   photos and amounts, ticks as large tap targets, and the main button pinned to the bottom (the modal footer). */
+.av-process .modal-body { display: flex; flex-direction: column; gap: 14px; }
+.av-process-status { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.av-process-alert { padding: 4px 10px; border-radius: 6px; font-weight: 600; font-size: var(--text-sm); color: var(--danger-ink); background: var(--danger-tint); }
+.av-process-alert--ok { color: var(--success-ink); background: var(--success-tint); }
+.av-process-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 768px) { .av-process-grid { grid-template-columns: 1fr 1fr; } }
+.av-process-card { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-raised); min-width: 0; }
+.av-process-card[hidden] { display: none; }
+.av-process-zoom { flex: 0 0 46%; max-width: 46%; display: block; }
+.av-process-zoom[hidden] { display: none; }
+.av-process-zoom img { display: block; width: 100%; max-height: 260px; object-fit: contain; border-radius: 6px; border: 1px solid var(--border-subtle); background: #fff; cursor: zoom-in; }
+.av-process-money, .av-process-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* Breaks at the space first ("PHP" / "12,650.00"), inside a number only when it can't fit at all */
+.av-process-big { font-size: 1.6rem; line-height: 1.15; letter-spacing: 0.02em; overflow-wrap: anywhere; }
+.av-process-verified { display: block; margin-top: 6px; font-weight: 700; color: var(--success-ink); }
+.av-process-ban { border-color: #fca5a5; background: var(--danger-tint); }
+.av-process-ban img { width: 96px; height: 96px; object-fit: cover; border-radius: 6px; flex: none; }
+.av-process-ban img[hidden] { display: none; }
+.av-process-ticks { display: flex; flex-direction: column; gap: 10px; margin: 0; }
+.av-process-tick { display: flex; gap: 14px; align-items: center; min-height: 56px; padding: 12px 14px; border: 2px solid var(--border); border-radius: 10px; background: var(--bg-raised); cursor: pointer; font-weight: 600; }
+.av-process-tick[hidden] { display: none; }
+.av-process-tick small { display: block; font-weight: 400; color: var(--text-muted); margin-top: 2px; }
+.av-process-tick input { flex: none; width: 1.6rem; height: 1.6rem; accent-color: var(--success); cursor: pointer; }
+.av-process-tick:has(input:checked) { border-color: var(--success); background: var(--success-tint); }
+.av-process-reject { padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+.av-process-reject fieldset { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.av-process-reject legend { grid-column: 1 / -1; }
+.av-process-choice { display: flex; gap: 8px; align-items: center; min-height: 48px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.av-process-choice:has(input:checked) { border-color: var(--danger); background: var(--danger-tint); }
+/* Specific enough to beat ".av-app .btn:not(.btn-sm):not(.p-0):not(.p-1)" (32px, 44px on touch), which used to win */
+.av-app .av-process .btn.av-process-btn:not(.btn-sm):not(.p-0):not(.p-1) { min-height: 52px; font-weight: 700; }
+.av-process-footer { position: sticky; bottom: 0; flex-direction: column; align-items: stretch; gap: 8px; background: var(--bg-raised); }
+.av-process-footer > * { margin: 0; }
+.av-process-more { display: flex; flex-wrap: wrap; gap: 8px; }
+.av-app .av-process .av-process-more .btn:not(.btn-sm):not(.p-0):not(.p-1) { flex: 1 1 auto; min-height: 48px; }
+.av-process-more .btn[hidden], .av-process-footer .btn[hidden] { display: none; }
+
+/* ⌛ Pending Approval: section heading ("Ready for approval · N") and the review-only "Waiting for payment receipt" rows,
+   muted so they read as not actionable yet (the chip and the red Pay-by stay in full colour) */
+.av-app .table-custom tbody > tr.av-section-row > th {
+    background: var(--bg-sunken) !important; color: var(--text) !important;
+    font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.av-section-note { margin-left: 8px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-muted); }
+.av-app .table-custom tbody > tr.av-group-row--awaiting > th { border-left-color: var(--text-muted); }
+.av-app .table-custom tbody > tr.av-row--waiting > td { background: var(--neutral-tint); color: var(--text-secondary); }
+.av-row--waiting .av-person-name, .av-row--waiting .av-cell-strong { color: var(--text-secondary); }
+.av-tab-count { font-weight: 500; color: var(--text-muted); }
+
+/* 🔘 Compact row actions: one main button, square icon buttons, the ⋮ menu */
+.av-icon-btn { width: 36px; height: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.av-main-btn { white-space: nowrap; }
+.av-app .btn.av-main-btn--waiting, .av-app .btn.av-main-btn--waiting:disabled {
+    background: var(--neutral-tint); border: 1px dashed var(--border); color: var(--text-secondary); opacity: 1;
+}
+.av-row-menu { min-width: 220px; }
+@media (max-width: 991.98px) {
+    .av-app .btn.av-icon-btn { width: 44px; height: 44px; min-height: 44px; }
 }

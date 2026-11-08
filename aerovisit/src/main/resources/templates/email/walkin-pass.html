@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Your Walk-in Pass</title></head>
+<!--/* Variables: name, referenceId, timeWindow. A FREE walk-in (nothing to pay): the gate QR is embedded (cid:entryQr)
+       and attached by EmailService.sendWalkInPass. */-->
+<body th:replace="~{email/layout :: layout('Your Walk-in Pass', ~{::content})}">
+<div th:fragment="content">
+  <p style="margin:0 0 14px;">Dear <span th:text="${name}">Juan Dela Cruz</span>,</p>
+  <p style="margin:0 0 16px;">Your walk-in seats for today are reserved and there is nothing to pay. Please go to the gate with a valid ID for everyone in your group who needs one.</p>
+  <div th:replace="~{fragments/walkin-qr :: pass('cid:entryQr', ${referenceId}, 'email')}"></div>
+  <p th:if="${timeWindow != null}" style="margin:0 0 14px;">Your time window: <strong th:text="${timeWindow}">Walk-in Window (01:00 PM - 03:00 PM)</strong></p>
+  <p style="margin:0;">Show this QR and your ID to the guard at the gate. The pass is valid today only.</p>
+</div>
+</body>
+</html>

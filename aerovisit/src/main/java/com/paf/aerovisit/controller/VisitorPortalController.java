@@ -6,9 +6,9 @@ import com.paf.aerovisit.model.Visitor;
 import com.paf.aerovisit.repository.BookingSlotRepository;
 import com.paf.aerovisit.repository.MuseumZoneRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
+import com.paf.aerovisit.service.AdmissionPricing;
 import com.paf.aerovisit.service.EmailService;
-import com.paf.aerovisit.service.FaceEncodings;
-import com.paf.aerovisit.service.KycService;
+import com.paf.aerovisit.service.IdentityBans;
 import com.paf.aerovisit.service.NotificationService;
 import com.paf.aerovisit.service.OtpService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
@@ -64,12 +64,8 @@ public class VisitorPortalController {
     @Autowired(required = false)
     private OtpService otpService;
 
-    // 🪪 Selfie-with-ID check (Python OpenCV + existing Tesseract OCR). Optional; when missing, bookings go to manual review.
-    @Autowired(required = false)
-    private KycService kycService;
-
-    // 🪪 Ban list for the identity checks that work without the AI service (IdentityBans). Optional, so web-layer test
-    // slices without it still start; the face check itself runs in KycService.
+    // 🪪 Ban list (IdentityBans: email, phone and name; no face data). Optional, so web-layer test slices without it still
+    // start.
     @Autowired(required = false)
     private com.paf.aerovisit.repository.BlacklistedFaceRepository faceBanRepo;
 
@@ -81,6 +77,62 @@ public class VisitorPortalController {
     // ☁️ Copies the ID photos to S3 (off locally). Optional, so test slices without it still start.
     @Autowired(required = false)
     private com.paf.aerovisit.service.UploadMirror uploadMirror;
+
+    // 💱 Admission prices (Settings page). Optional, so test slices without it still start; without it the defaults apply.
+    @Autowired(required = false)
+    private AdmissionPricing admissionPricing;
+
+    // 🎌 Holidays & Closed Days (Slots & Staff): not bookable, no walk-ins, no moves onto them. Optional, so test slices
+    // without a database still start (then no holidays are listed).
+    @Autowired(required = false)
+    private com.paf.aerovisit.service.Holidays holidays;
+
+    // The listed holiday on that date, or null
+    private com.paf.aerovisit.model.Holiday holidayOn(LocalDate date) {
+        return holidays == null || date == null ? null : holidays.on(date).orElse(null);
+    }
+
+    // 🚶 Walk-in (today) rules and the walk-in payment step. Optional, so test slices without them still start; without
+    // them walk-ins are refused and advance bookings work as before.
+    @Autowired(required = false)
+    private com.paf.aerovisit.service.WalkInService walkInService;
+
+    @Autowired(required = false)
+    private com.paf.aerovisit.service.PaymentWorkflow paymentWorkflow;
+
+    // 📅 Advance bookings: minimum days ahead (Settings, default 1 = tomorrow; today is Walk-in only). Optional, so test
+    // slices without it still start; without it the default rule applies.
+    @Autowired(required = false)
+    private com.paf.aerovisit.service.AdvanceBookingRules advanceBookingRules;
+
+    // ⏱️ "Today" and "now" for bookings and Manage Booking (ClockConfig; null in test slices = the system clock)
+    @Autowired(required = false)
+    java.time.Clock clock;
+
+    private java.time.LocalDateTime now() {
+        return java.time.LocalDateTime.now(com.paf.aerovisit.config.ClockConfig.or(clock));
+    }
+
+    private LocalDate today() {
+        return now().toLocalDate();
+    }
+
+    // 📝 Version of the Terms and Conditions popup (fragments/visitor :: bookingTerms). Bump it whenever the terms text
+    // changes; each booking records the version its visitor agreed to.
+    public static final String TERMS_VERSION = "2026-11d";
+    static final String TERMS_REQUIRED_MESSAGE = "Please read and agree to the Terms and Conditions before booking.";
+
+    // 🚶 The booking form's bookingType for a walk-in (anything else is an Advance Booking)
+    static final String WALK_IN = "WALK_IN";
+    static final String WALK_IN_TODAY_ONLY = "Walk-in bookings are for today only. For another day, please choose Advance Booking.";
+    static final String WALK_IN_UNAVAILABLE = "Walk-in booking is not available right now. Please book in advance or ask the museum staff.";
+    static final String PHOTOS_REQUIRED = "Please take or upload a photo of your valid ID.";
+    static final String ID_PHOTO_NOT_IMAGE = "Security Alert: Please upload a JPG, PNG or WEBP photo of your valid ID.";
+    static final String ID_PHOTO_HEIC = "HEIC photos aren't supported. Please choose a JPG, PNG or WEBP photo of your ID"
+            + " (on iPhone: Settings > Camera > Formats > Most Compatible).";
+    // The same limit and wording as the upload-size handler (CmsUploadLimitAdvice), checked here too
+    static final long ID_PHOTO_MAX_BYTES = 15L * 1024 * 1024;
+    static final String ID_PHOTO_TOO_LARGE = "Your ID photo is larger than 15 MB. Please upload a smaller JPG, PNG or WEBP (a screenshot or a lower camera resolution works).";
 
     // Inbox for critical-feedback alerts (aerovisit.alerts.email: ALERT_EMAIL, else the system's sending address)
     @Value("${aerovisit.alerts.email:}")
@@ -95,187 +147,17 @@ public class VisitorPortalController {
 
     // 🔒 MASS-ASSIGNMENT GUARD: only the fields on the public registration form may be bound from the request.
     // Server-controlled fields (id, status, secureToken, referenceId, qrCodeUrl, check-in data, etc.) are ignored,
-    // so a crafted POST cannot self-approve, overwrite another booking, or forge a QR token.
+    // so a crafted POST cannot self-approve, overwrite another booking, or forge a QR token. Companion names and an
+    // event justification are no longer collected, so a request that still sends them has them ignored. groupSize is
+    // not bound either: the server sets it from the three admission counts, and prices and totals are never bound.
     @InitBinder("visitor")
     public void restrictVisitorFields(WebDataBinder binder) {
         binder.setAllowedFields(
             "visitDate", "timeWindow", "visitorType", "fullName", "sex", "age",
             "address", "affiliation", "email", "contactNumber", "specialConsideration",
-            "groupSize", "purpose", "eventJustification", "companionNames"
+            "discountedCount", "regularCount", "freeCount", "purpose"
         );
     }
-
-    // 🪖 GROUP MANIFEST: null when the list names exactly everyone besides the lead booker, otherwise the error to show.
-    // Letters, digits and . , ' ( ) / - only, so "Last Name, First Name MI" and AFP "Rank/Serial" formats both fit.
-    private static String manifestError(List<String> companions, int groupSize) {
-        int expected = Math.max(1, groupSize) - 1;
-        if (companions.size() != expected) {
-            return "Group Manifest: list exactly " + expected + " companion name(s), one per line (your group of "
-                    + (expected + 1) + " includes you).";
-        }
-        for (String companion : companions) {
-            if (!isValidCompanionName(companion)) {
-                return "Group Manifest: names may only contain letters, numbers, spaces and . , ' ( ) / - (max "
-                        + Visitor.MAX_COMPANION_NAME_LENGTH + " characters each).";
-            }
-        }
-        return null;
-    }
-
-    // One guest name: letters, numbers, spaces and . , ' ( ) / - only, at most MAX_COMPANION_NAME_LENGTH characters.
-    // Shared by manifestError (every booking) and the CSV import's row-by-row check, so the two can never disagree.
-    static boolean isValidCompanionName(String name) {
-        return name.length() <= Visitor.MAX_COMPANION_NAME_LENGTH && name.matches("[\\p{L}\\p{N} .,'()/-]+");
-    }
-
-    // Largest guest-list file accepted (a 2,000-name list is well under 100 KB)
-    static final int MAX_MANIFEST_CSV_BYTES = 256 * 1024;
-    // Header row of the downloadable template (static/downloads/guest-list-template.csv): one column per name part.
-    // Detected by its first two cells; Middle Name may be missing or blank. register.html's csv check mirrors it.
-    static final String NAME_PARTS_LAST = "last name", NAME_PARTS_FIRST = "first name";
-    // Header of the previous single-column template; files saved from it still import (first column = whole name).
-    // register.html's MANIFEST_HEADERS lists it too
-    static final String MANIFEST_TEMPLATE_HEADER = "guest name (last, first mi)";
-    private static final Set<String> MANIFEST_CSV_HEADERS = Set.of("name", "names", "full name", "fullname", "companion",
-            "companion name", "companion names", "guest", "guest name", "guest names", MANIFEST_TEMPLATE_HEADER);
-
-    // 🚌 MASTER BOOKING manifest: adds the Manual-row names and the names read from the CSV upload to `names`.
-    // Returns an error to show, or null. The usual manifest check (exact count, allowed characters) runs afterwards.
-    // Plain Java, no CSV library: one guest per row. A .csv whose first row is the template's Last Name / First Name /
-    // Middle Name header is read as name parts, joined as "Last, First Middle". Any other .csv uses its first column
-    // (Excel puts "Dela Cruz, Juan P." in quotes because of the comma); a .txt file uses the whole line. A first row
-    // that is a header ("Name") is skipped.
-    static final String EXCEL_WORKBOOK_MESSAGE = "Guest list upload: please choose a .csv file. Excel workbooks (.xlsx / .xls) are not read directly:"
-            + " in Excel use File > Save As > CSV UTF-8, or start from the Download Template link.";
-
-    static String addMasterManifestNames(List<String> names, List<String> manual, MultipartFile csv) {
-        if (manual != null) {
-            manual.stream().map(String::trim).filter(n -> !n.isEmpty()).forEach(names::add);
-        }
-        if (csv == null || csv.isEmpty()) return null;
-
-        String fileName = csv.getOriginalFilename() == null ? "" : csv.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);
-        boolean isCsv = fileName.endsWith(".csv");
-        if (fileName.endsWith(".xlsx") || fileName.endsWith(".xls")) {
-            return EXCEL_WORKBOOK_MESSAGE;
-        }
-        if (!isCsv && !fileName.endsWith(".txt")) {
-            return "Guest list upload: please choose a .csv (or .txt) file with one name per row.";
-        }
-        if (csv.getSize() > MAX_MANIFEST_CSV_BYTES) {
-            return "Guest list upload: the file is too large (max 256 KB).";
-        }
-        try {
-            byte[] bytes = csv.getBytes();
-            // An Excel workbook renamed to .csv: .xlsx is a ZIP ("PK"), .xls an OLE2 file. Refused before any row is read.
-            if (bytes.length >= 4 && ((bytes[0] == 'P' && bytes[1] == 'K' && bytes[2] == 3 && bytes[3] == 4)
-                    || (bytes[0] == (byte) 0xD0 && bytes[1] == (byte) 0xCF && bytes[2] == 0x11 && bytes[3] == (byte) 0xE0))) {
-                return EXCEL_WORKBOOK_MESSAGE;
-            }
-            // Row by row, all or nothing: the first bad row stops the import with its row number (as Excel numbers it,
-            // header and blank rows included), and nothing from the file is kept
-            List<String> fileNames = new ArrayList<>();
-            java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.StringReader(decodeManifest(bytes)));
-            String line;
-            int row = 0;
-            boolean nameParts = false; // row 1 was the template's Last Name / First Name / Middle Name header
-            while ((line = reader.readLine()) != null) {
-                row++;
-                if (row == 1 && isCsv) {
-                    List<String> header = csvFields(line);
-                    if (part(header, 0).equalsIgnoreCase(NAME_PARTS_LAST) && part(header, 1).equalsIgnoreCase(NAME_PARTS_FIRST)) {
-                        nameParts = true;
-                        continue;
-                    }
-                }
-                String name;
-                if (nameParts) {
-                    List<String> parts = csvFields(line);
-                    String last = part(parts, 0), first = part(parts, 1), middle = part(parts, 2); // missing cell = ""
-                    if (last.isEmpty() && first.isEmpty() && middle.isEmpty()) continue;          // blank row (Excel saves ",,")
-                    if (last.isEmpty() || first.isEmpty()) {
-                        return "Guest list upload, row " + row + ": Last Name and First Name are both required (Middle Name may be left blank).";
-                    }
-                    name = last + ", " + first + (middle.isEmpty() ? "" : " " + middle);
-                } else {
-                    name = isCsv ? firstCsvField(line) : line.trim();
-                    if (row == 1 && MANIFEST_CSV_HEADERS.contains(name.toLowerCase(java.util.Locale.ROOT))) continue;
-                }
-                if (name.isEmpty()) continue;
-                if (name.length() > Visitor.MAX_COMPANION_NAME_LENGTH) {
-                    return "Guest list upload, row " + row + ": the name is longer than " + Visitor.MAX_COMPANION_NAME_LENGTH + " characters.";
-                }
-                if (!isValidCompanionName(name)) {
-                    return "Guest list upload, row " + row + ": \"" + name + "\" may only contain letters, numbers, spaces and . , ' ( ) / -";
-                }
-                fileNames.add(name);
-            }
-            if (fileNames.isEmpty()) {
-                return "Guest list upload: no guest names were found in the file (one name per row, first column).";
-            }
-            names.addAll(fileNames);
-        } catch (java.io.IOException e) {
-            return "Guest list upload: the file could not be read. Please save it as CSV and try again.";
-        }
-        return null;
-    }
-
-    // UTF-8 (with or without Excel's byte-order mark); Excel's default "CSV" on Windows is Windows-1252, so names
-    // like "Peña" are read correctly from either
-    private static String decodeManifest(byte[] bytes) {
-        String text;
-        try {
-            text = java.nio.charset.StandardCharsets.UTF_8.newDecoder()
-                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
-                    .decode(java.nio.ByteBuffer.wrap(bytes)).toString();
-        } catch (java.nio.charset.CharacterCodingException notUtf8) {
-            text = new String(bytes, java.nio.charset.Charset.forName("windows-1252"));
-        }
-        return text.startsWith("﻿") ? text.substring(1) : text;
-    }
-
-    // First field of one CSV row: "quoted, with commas" (doubled "" = one quote) or everything up to the first comma
-    private static String firstCsvField(String line) {
-        String row = line.trim();
-        if (row.startsWith("\"")) {
-            StringBuilder field = new StringBuilder();
-            for (int i = 1; i < row.length(); i++) {
-                char c = row.charAt(i);
-                if (c == '"') {
-                    if (i + 1 < row.length() && row.charAt(i + 1) == '"') { field.append('"'); i++; }
-                    else break;
-                } else {
-                    field.append(c);
-                }
-            }
-            return field.toString().trim();
-        }
-        int comma = row.indexOf(',');
-        return (comma < 0 ? row : row.substring(0, comma)).trim();
-    }
-
-    // Every field of one CSV row: commas separate fields; "quoted, with commas" keeps them (doubled "" = one quote)
-    private static List<String> csvFields(String line) {
-        List<String> fields = new ArrayList<>();
-        StringBuilder field = new StringBuilder();
-        boolean quoted = false;
-        for (int i = 0; i < line.length(); i++) {
-            char c = line.charAt(i);
-            if (quoted) {
-                if (c != '"') field.append(c);
-                else if (i + 1 < line.length() && line.charAt(i + 1) == '"') { field.append('"'); i++; }
-                else quoted = false;
-            } else if (c == '"') quoted = true;
-            else if (c == ',') { fields.add(field.toString().trim()); field.setLength(0); }
-            else field.append(c);
-        }
-        fields.add(field.toString().trim());
-        return fields;
-    }
-
-    // Cell i of a row, "" when the row is shorter (e.g. no Middle Name cell at all)
-    private static String part(List<String> parts, int i) { return i < parts.size() ? parts.get(i) : ""; }
 
     // 🔑 ONE-TIME KYC NONCE: a fresh random value is put in the visitor's session (and in the booking form) every time
     // the booking page is rendered. /save only accepts a submission that echoes it back, and burns it on the first
@@ -292,28 +174,34 @@ public class VisitorPortalController {
         String kycNonce = java.util.UUID.randomUUID().toString();
         session.setAttribute(KYC_NONCE, kycNonce);
         model.addAttribute(KYC_NONCE, kycNonce);
+        model.addAttribute("admission", currentPrices());
 
         // ⚡ Only today's and later slots, and the seats already held on them, totalled by the database. This page is the
         // one everybody opens, so it must not load every visitor ever saved (face data included) on each view: that
         // grew heavier with every booking and could run the server out of memory when a crowd opened the site at once.
-        LocalDate today = LocalDate.now();
+        LocalDate today = today();
         List<BookingSlot> allSlots = bookingRepo.findBySlotDateGreaterThanEqualOrderBySlotDateAsc(today);
         Map<String, Integer> seatsHeld = new HashMap<>(); // "2026-11-02|Full Day (09:00 AM - 05:00 PM)" -> seats
-        for (Object[] row : repo.sumSeatsHeldFrom(today, Visitor.SEAT_HOLDING_STATUSES)) { // PENDING holds no seats
+        for (Object[] row : repo.sumSeatsHeldFrom(today, Visitor.SEAT_HOLDING_STATUSES)) { // pay-first: pending bookings hold seats too
             if (row[0] != null && row[1] != null) seatsHeld.put(row[0] + "|" + row[1], ((Number) row[2]).intValue());
         }
         List<Map<String, Object>> slotDataList = new ArrayList<>();
-        Set<LocalDate> buyoutDates = new HashSet<>(repo.findBuyoutDates());
         Set<LocalDate> closureDates = new HashSet<>(repo.findClosureDates());
+        // 🎌 Holidays from today to the last slot date: not pickable, shown on the calendar as "Closed: <name>"
+        Map<String, String> closedDays = new java.util.TreeMap<>();
+        if (holidays != null) {
+            LocalDate lastSlot = allSlots.stream().map(BookingSlot::getSlotDate).filter(Objects::nonNull).max(LocalDate::compareTo).orElse(today);
+            holidays.between(today, lastSlot.isAfter(today) ? lastSlot : today.plusMonths(1))
+                    .forEach((d, h) -> closedDays.put(d.toString(), com.paf.aerovisit.service.Holidays.closedReason(h)));
+        }
 
         for (BookingSlot slot : allSlots) {
-            if (slot.getSlotDate() != null && !slot.getSlotDate().isBefore(today)) {
+            if (slot.getSlotDate() != null && !slot.getSlotDate().isBefore(today) && !closedDays.containsKey(slot.getSlotDate().toString())) {
 
                 int bookedCount = seatsHeld.getOrDefault(slot.getSlotDate() + "|" + slot.getTimeWindow(), 0);
 
                 int remaining = slot.getMaxCapacity() - bookedCount;
                 if (remaining < 0) remaining = 0;
-                if (buyoutDates.contains(slot.getSlotDate())) remaining = 0; // 🔒 VIP buyout: reserved for an approved Master Booking
                 if (closureDates.contains(slot.getSlotDate())) remaining = 0; // 🚨 Emergency closure: museum closed that day
                 
                 Map<String, Object> map = new HashMap<>();
@@ -328,22 +216,59 @@ public class VisitorPortalController {
         }
         
         model.addAttribute("calendarSlots", slotDataList);
+        model.addAttribute("closedDays", closedDays);
+        // 🚶 Walk-in (today): the windows a walk-in may pick now, or why there are none
+        model.addAttribute("walkIn", walkInService == null
+                ? new com.paf.aerovisit.service.WalkInService.Availability(List.of(), WALK_IN_UNAVAILABLE)
+                : walkInService.today(now()));
+        model.addAttribute("walkInMaxPax", walkInService == null ? 0 : walkInService.maxPax());
+        model.addAttribute("walkInToday", today);
+        // 📅 Advance mode: the calendar greys out every day before this one (today is Walk-in only)
+        model.addAttribute("advanceEarliest", advanceEarliest().toString());
         return "register";
     }
 
     @PostMapping("/save")
     public String saveVisitor(@ModelAttribute Visitor visitor,
-                              @RequestParam("livenessImage") MultipartFile file,
-                              @RequestParam("highResIdImage") MultipartFile idCardFile,
-                              @RequestParam(name="isMasterBooking", defaultValue="false") boolean isMasterBooking,
-                              @RequestParam(name="companionCsv", required=false) MultipartFile companionCsv,
+                              @RequestParam(name="highResIdImage", required=false) MultipartFile idCardFile,
                               @RequestParam(name=KYC_NONCE, required=false) String kycNonce,
+                              @RequestParam(name="termsAccepted", required=false) String termsAccepted,
+                              @RequestParam(name="bookingType", required=false) String bookingType,
                               HttpServletRequest request,
                               RedirectAttributes redirectAttributes) {
 
         // 🔑 ONE-TIME KYC NONCE first: checked against the session's value and burned whatever the outcome
         if (!consumeKycNonce(request.getSession(false), kycNonce)) {
             redirectAttributes.addFlashAttribute("error", KYC_NONCE_MESSAGE);
+            return "redirect:/";
+        }
+
+        // 📝 TERMS AND CONDITIONS: the popup's one consent sets termsAccepted; the server refuses a booking without it
+        if (!"true".equals(termsAccepted)) {
+            redirectAttributes.addFlashAttribute("error", TERMS_REQUIRED_MESSAGE);
+            return "redirect:/";
+        }
+        visitor.setTermsAcceptedAt(now());
+        visitor.setTermsVersion(TERMS_VERSION);
+
+        // 🚶 WALK-IN (TODAY): the date is today, set here; another date sent by the browser is refused
+        boolean walkIn = WALK_IN.equals(bookingType);
+        java.time.LocalDateTime now = now();
+        if (walkIn) {
+            if (walkInService == null) {
+                redirectAttributes.addFlashAttribute("error", WALK_IN_UNAVAILABLE);
+                return "redirect:/";
+            }
+            if (visitor.getVisitDate() != null && !now.toLocalDate().equals(visitor.getVisitDate())) {
+                redirectAttributes.addFlashAttribute("error", WALK_IN_TODAY_ONLY);
+                return "redirect:/";
+            }
+            visitor.setVisitDate(now.toLocalDate());
+            visitor.setBookingCategory(Visitor.CATEGORY_WALK_IN);
+        } else if (visitor.getVisitDate() != null && visitor.getVisitDate().isBefore(advanceEarliest())) {
+            // 📅 ADVANCE: at least the Director's minimum days ahead (Manila time); today is Walk-in only. The calendar
+            // greys these days out, but this is the check that counts.
+            redirectAttributes.addFlashAttribute("error", advanceTooSoonMessage());
             return "redirect:/";
         }
 
@@ -362,9 +287,16 @@ public class VisitorPortalController {
             visitor.setSecureToken(java.util.UUID.randomUUID().toString());
         }
 
-        // 🚨 Emergency closure: nobody (Master Bookings included) may book a date the museum has closed
+        // 🚨 Emergency closure: nobody may book a date the museum has closed
         if (visitor.getVisitDate() != null && repo.findClosureDates().contains(visitor.getVisitDate())) {
             redirectAttributes.addFlashAttribute("error", "The museum is closed on this date due to an emergency. Please choose another date.");
+            return "redirect:/";
+        }
+        // 🎌 A listed holiday: no advance booking and no walk-in
+        com.paf.aerovisit.model.Holiday holiday = holidayOn(visitor.getVisitDate());
+        if (holiday != null) {
+            redirectAttributes.addFlashAttribute("error", com.paf.aerovisit.service.Holidays.closedReason(holiday)
+                    + (walkIn ? ". Please book a visit for another day." : ". Please choose another date."));
             return "redirect:/";
         }
 
@@ -374,19 +306,20 @@ public class VisitorPortalController {
             return "redirect:/";
         }
 
-        // 🪪 IDENTITY BAN (works with AI features off): the same email or phone number as an active ban is refused with
-        // the same neutral message as a banned face. A new email beats this check, so banned visitors are also stopped by
-        // their face in the two-step KYC below (AI on) and flagged by name (after the KYC).
+        // 🪪 IDENTITY BAN: the same email or phone number as an active ban is refused with a neutral message. A new email
+        // beats this check, so a banned visitor is also FLAGGED (never refused) by name, for a person to compare.
         List<com.paf.aerovisit.model.BlacklistedFace> bans = faceBanRepo == null ? List.of() : faceBanRepo.findAll();
-        if (com.paf.aerovisit.service.IdentityBans.contactBan(visitor, bans, LocalDate.now()) != null) {
+        if (IdentityBans.contactBan(visitor, bans, today()) != null) {
             if (notificationService != null) notificationService.bannedContactAttempt(visitor);
-            redirectAttributes.addFlashAttribute("error", KycService.FACE_BANNED);
+            redirectAttributes.addFlashAttribute("error", IdentityBans.BANNED_MESSAGE);
             return "redirect:/";
         }
 
         List<Visitor> existingBookings = repo.findByEmailAndVisitDate(visitor.getEmail(), visitor.getVisitDate());
-        // Visitors displaced by a VIP buyout or an emergency closure (once reopened), or who cancelled themselves, may re-book the same date
-        existingBookings.removeIf(b -> "CANCELLED_OVERRIDE".equals(b.getStatus()) || "CANCELLED_BY_VISITOR".equals(b.getStatus()) || "CANCELLED".equals(b.getStatus()));
+        // Visitors whose booking the museum cancelled (an emergency closure, once reopened, or an older cancellation) or who
+        // cancelled themselves may re-book the same date
+        existingBookings.removeIf(b -> "CANCELLED_OVERRIDE".equals(b.getStatus()) || "CANCELLED_BY_VISITOR".equals(b.getStatus()) || "CANCELLED".equals(b.getStatus())
+                || Visitor.STATUS_PAYMENT_EXPIRED.equals(b.getStatus()));
         // ⏳ A REJECTED application no longer blocks the date for good: the visitor may re-apply after the cooldown (below)
         List<Visitor> rejectedBookings = existingBookings.stream().filter(b -> "REJECTED".equals(b.getStatus())).toList();
         existingBookings.removeIf(b -> "REJECTED".equals(b.getStatus()));
@@ -394,15 +327,38 @@ public class VisitorPortalController {
             redirectAttributes.addFlashAttribute("error", "Registration Denied: Duplicate booking detected for this date.");
             return "redirect:/";
         }
-        if (inRejectedCooldown(rejectedBookings, java.time.LocalDateTime.now())) {
+        if (inRejectedCooldown(rejectedBookings, now())) {
             redirectAttributes.addFlashAttribute("error", REJECTED_COOLDOWN_MESSAGE);
             return "redirect:/";
         }
 
-        // 🔒 VIP buyout: dates reserved by an approved Master Booking are closed to regular bookings
-        if (!isMasterBooking && repo.findBuyoutDates().contains(visitor.getVisitDate())) {
-            redirectAttributes.addFlashAttribute("error", "This date has been reserved for a private group tour. Please choose another date.");
+        // 💱 ADMISSION: groupSize is the three counts added up, and the total is priced here at today's prices, before the
+        // capacity check below runs on that sum. A total or groupSize sent by the browser is never read.
+        int discounted = orZero(visitor.getDiscountedCount()), regular = orZero(visitor.getRegularCount()), free = orZero(visitor.getFreeCount());
+        String countsError = AdmissionPricing.countsError(discounted, regular, free);
+        if (countsError != null) {
+            redirectAttributes.addFlashAttribute("error", countsError);
             return "redirect:/";
+        }
+        applyAdmission(visitor, AdmissionPricing.quote(discounted, regular, free, currentPrices()));
+
+        // 🚶 A walk-in picks one of today's windows with at least 20 minutes left, and a group of at most the Director's
+        // maximum (Settings, default 20)
+        if (walkIn) {
+            String windowError = walkInService.windowError(visitor.getTimeWindow(), now);
+            if (windowError != null) {
+                redirectAttributes.addFlashAttribute("error", windowError);
+                return "redirect:/";
+            }
+            int maxPax = walkInService.maxPax();
+            if (visitor.getGroupSize() > maxPax) {
+                redirectAttributes.addFlashAttribute("error", com.paf.aerovisit.service.WalkInService.tooManyMessage(maxPax));
+                return "redirect:/";
+            }
+            if (visitor.paymentRequired() && paymentWorkflow == null) {
+                redirectAttributes.addFlashAttribute("error", WALK_IN_UNAVAILABLE);
+                return "redirect:/";
+            }
         }
 
         List<Visitor> visitorsOnDate = repo.findByVisitDate(visitor.getVisitDate());
@@ -415,137 +371,78 @@ public class VisitorPortalController {
         
         int actualMaxCapacity = bookableSlotCapacity(visitor.getVisitDate(), visitor.getTimeWindow());
         // 👻 GHOST SLOTS: no default capacity. A date/time window with no slot (never created, deleted, already past or
-        // made up in a hand-made request) is refused. Master Bookings may take a day with no public slots (VIP buyout).
-        if (!isMasterBooking && actualMaxCapacity <= 0) {
+        // made up in a hand-made request) is refused.
+        if (actualMaxCapacity <= 0) {
             redirectAttributes.addFlashAttribute("error", "Invalid or unavailable time slot. Please choose an open date and time from the calendar.");
             return "redirect:/";
         }
 
         int incomingGroupSize = Math.max(1, visitor.getGroupSize());
         
-        if (!isMasterBooking && (currentBooked + incomingGroupSize > actualMaxCapacity)) {
+        if (currentBooked + incomingGroupSize > actualMaxCapacity) {
             redirectAttributes.addFlashAttribute("error", "Insufficient slots available for this specific shift! Please choose another slot.");
             return "redirect:/";
         }
 
-        if (isMasterBooking) {
-            if (visitor.getEventJustification() == null || visitor.getEventJustification().isBlank()) {
-                redirectAttributes.addFlashAttribute("error", "Master Booking requests require an Official Event Purpose / Justification.");
-                return "redirect:/";
-            }
-            visitor.setPurpose(Visitor.MASTER_BOOKING_PURPOSE);
-        } else if (Visitor.MASTER_BOOKING_PURPOSE.equals(visitor.getPurpose())) {
-            // 🔒 Only the Master Booking flow may carry this purpose, otherwise a regular booking could lock a whole date
-            visitor.setPurpose("Educational Tour");
-        }
-
-        // 🪖 GROUP MANIFEST: every guest besides the lead booker must be named so the gate can check each ID
-        if (Math.max(1, visitor.getGroupSize()) == 1) {
-            visitor.setCompanionNames(null); // leftover text from the hidden field is ignored
-        } else {
-            List<String> companions = Visitor.parseCompanionNames(visitor.getCompanionNames());
-            if (isMasterBooking) {
-                // 🚌 MASTER BOOKING ONLY: names from the Manual rows and the CSV upload join the pasted list.
-                // A standard booking never reads these two inputs.
-                companions = new ArrayList<>(companions);
-                // Raw values, not @RequestParam List<String>: Spring would split a single "Dela Cruz, Juan P." at the comma
-                String[] manualRows = request.getParameterValues("companionManual");
-                String importError = addMasterManifestNames(companions, manualRows == null ? null : List.of(manualRows), companionCsv);
-                if (importError != null) {
-                    redirectAttributes.addFlashAttribute("error", importError);
-                    return "redirect:/";
-                }
-            }
-            String manifestError = manifestError(companions, visitor.getGroupSize());
-            if (manifestError != null) {
-                redirectAttributes.addFlashAttribute("error", manifestError);
-                return "redirect:/";
-            }
-            visitor.setCompanionNames(String.join("\n", companions)); // store the cleaned list
-        }
+        // 🪖 GROUP BOOKING: the representative gives only the group size; only their own details and ID are collected
+        visitor.setCompanionNames(null);
+        visitor.setEventJustification(null);
 
         if (visitor.getStatus() == null) visitor.setStatus("PENDING");
 
-        if (!file.isEmpty() || !idCardFile.isEmpty()) {
-            for (MultipartFile photo : List.of(file, idCardFile)) {
-                String type = photo.getContentType();
-                if (!photo.isEmpty() && (type == null || (!type.equals("image/jpeg") && !type.equals("image/png")))) {
-                    redirectAttributes.addFlashAttribute("error", "Security Alert: System only accepts standard .JPG or .PNG formats for ID verification.");
-                    return "redirect:/";
-                }
-            }
-
-            try {
-                Path uploadPath = Paths.get("uploads");
-                if (!Files.exists(uploadPath)) Files.createDirectories(uploadPath);
-                // 🔒 PRIVACY: anonymous UUID names, so the visitor's name never appears in the file system or /uploads URLs.
-                // The liveness selfie stays in idImageUrl (admin "View Document", gate scanner); the ID close-up is separate.
-                if (!file.isEmpty()) {
-                    String fileName = anonymousIdPhotoName(file.getOriginalFilename(), file.getContentType());
-                    Files.copy(file.getInputStream(), uploadPath.resolve(fileName), StandardCopyOption.REPLACE_EXISTING);
-                    visitor.setIdImageUrl(fileName);
-                    if (uploadMirror != null) uploadMirror.pushUpload(fileName);
-                }
-                if (!idCardFile.isEmpty()) {
-                    String cardName = anonymousIdPhotoName(idCardFile.getOriginalFilename(), idCardFile.getContentType());
-                    Files.copy(idCardFile.getInputStream(), uploadPath.resolve(cardName), StandardCopyOption.REPLACE_EXISTING);
-                    visitor.setIdCardImageUrl(cardName);
-                    if (uploadMirror != null) uploadMirror.pushUpload(cardName);
-                }
-
-                // 🪪 TWO-STEP KYC (ZERO TRUST: Master Bookings included, their lead booker is screened like anyone else):
-                // ID portrait vs live face (1:1), the biometric blacklist, then the OCR name match on the ID close-up.
-                // Both photos are needed; a missing one, the AI service being offline or a name mismatch =
-                // PENDING_MANUAL_REVIEW (so is a blurry photo or a score just under the match line). A banned face is
-                // refused outright; a clear face mismatch is stored as REJECTED (saveRejectedAttempt).
-                KycService.KycResult kyc = (kycService == null || file.isEmpty() || idCardFile.isEmpty())
-                        ? new KycService.KycResult(KycService.MANUAL_REVIEW, "INCOMPLETE")
-                        : kycService.screen(idCardFile.getBytes(), file.getBytes(), visitor.getFirstName(), visitor.getLastName());
-                if (kyc.refused()) {
-                    // Nothing is saved and the email code stays valid, so the visitor can retake the photos and resubmit
-                    if (notificationService != null && "FACE_BANNED".equals(kyc.reason())) notificationService.bannedFaceAttempt(visitor);
-                    discardIdPhoto(visitor.getIdImageUrl());
-                    discardIdPhoto(visitor.getIdCardImageUrl());
-                    redirectAttributes.addFlashAttribute("error", kyc.message());
-                    return "redirect:/";
-                }
-                if (kyc.rejected()) {
-                    return saveRejectedAttempt(visitor, kyc, redirectAttributes);
-                }
-                // 🧬 ONE PERSON, ONE BOOKING PER DATE: the same face under another email. A near-certain match is refused
-                // (nothing saved, the email code stays valid); a borderline one is saved for the Director, tagged with the
-                // other booking, so a look-alike (sibling, parent and child) is never turned away automatically.
-                DuplicateFace duplicate = duplicateFace(FaceEncodings.parse(kyc.faceEncoding()), repo.findByVisitDate(visitor.getVisitDate()));
-                if (duplicate != null && duplicate.refuse()) {
-                    discardIdPhoto(visitor.getIdImageUrl());
-                    discardIdPhoto(visitor.getIdCardImageUrl());
-                    redirectAttributes.addFlashAttribute("error", DUPLICATE_FACE_MESSAGE);
-                    return "redirect:/";
-                }
-                visitor.setStatus(kyc.status());
-                visitor.setFaceEncoding(kyc.faceEncoding());
-                visitor.setOcrNameMatch(kyc.ocrNameMatch());
-                if (duplicate != null) {
-                    visitor.setStatus(KycService.MANUAL_REVIEW);
-                    visitor.setPossibleDuplicateOf(duplicate.referenceId());
-                }
-            } catch (Exception e) {
-                System.out.println("File or OCR Processing failed: " + e.getMessage());
-                visitor.setStatus("PENDING_MANUAL_REVIEW");
-            }
-        } else {
-            // Zero trust: a request with no photos at all (only possible by bypassing the form) never looks like a passed check
-            visitor.setStatus(KycService.MANUAL_REVIEW);
+        // 🪪 ONE PHOTO OF THE VALID ID (taken or uploaded), required for advance bookings and walk-ins alike. No selfie.
+        // 🔒 The ID photo: the real file type is read from the bytes (signature + full decode, ReceiptStorage), never from
+        // the name or the browser's declared type, so a renamed document or script is refused. HEIC (an iPhone setting) is
+        // refused with its own message; the booking page converts photos to JPEG before upload whenever the browser can.
+        String photoError = idPhotoError(idCardFile);
+        if (photoError != null) {
+            redirectAttributes.addFlashAttribute("error", photoError);
+            return "redirect:/";
         }
 
-        // 🪪 NAME FLAG (works with AI features off): the lead booker's or a companion's name resembles a banned name.
-        // Never refused (people share names): the booking waits for staff, tagged with the ban to compare photos against.
-        com.paf.aerovisit.model.BlacklistedFace nameBan = com.paf.aerovisit.service.IdentityBans.nameBan(
-                com.paf.aerovisit.service.IdentityBans.namesOf(visitor), bans, LocalDate.now());
+        if (walkIn) {
+            // 🚶 No Director approval: the seats are held at once (APPROVED, saved under the seat lock below)
+            visitor.setStatus("APPROVED");
+            visitor.setCheckInDueAt(com.paf.aerovisit.service.WalkInService.checkInDeadline(visitor, now, walkInService.minutes()));
+        } else if (visitor.paymentRequired()) {
+            // 💳 PAY FIRST: a paid advance booking holds its seats from now (saved under the seat lock below) and waits
+            // for its receipt; it reaches the Pending Approval tab once the receipt is uploaded. Unpaid by the deadline =
+            // the 15-minute sweep expires it and frees the seats.
+            if (paymentWorkflow == null) {
+                redirectAttributes.addFlashAttribute("error", "Online booking is not available right now. Please try again later or contact the museum.");
+                return "redirect:/";
+            }
+            visitor.setStatus(Visitor.STATUS_AWAITING_RECEIPT);
+        } else {
+            // A free advance booking holds its seats at once and goes straight to Pending Approval
+            visitor.setStatus("PENDING");
+            visitor.setPaymentStatus(visitor.admissionCounted() ? Visitor.PAY_NOT_REQUIRED : null);
+        }
+        try {
+            Path uploadPath = Paths.get("uploads");
+            if (!Files.exists(uploadPath)) Files.createDirectories(uploadPath);
+            // 🔒 PRIVACY: anonymous UUID names, so the visitor's name never appears in the file system or /uploads URLs.
+            // The ID photo goes in idCardImageUrl; idImageUrl (the old liveness selfie) stays empty on new bookings.
+            String cardName = anonymousIdPhotoName(idCardFile.getOriginalFilename(), idCardFile.getContentType());
+            Files.copy(idCardFile.getInputStream(), uploadPath.resolve(cardName), StandardCopyOption.REPLACE_EXISTING);
+            visitor.setIdCardImageUrl(cardName);
+            if (uploadMirror != null) uploadMirror.pushUpload(cardName);
+            // 🪪 No automated identity check: the ID photo is only stored for staff to look at (Pending Approval, the
+            // guard's Walk-ins tab), and purged with the other files.
+        } catch (Exception e) {
+            System.out.println("ID photo could not be saved: " + e.getMessage());
+            redirectAttributes.addFlashAttribute("error", "Your ID photo could not be saved. Please try again.");
+            return "redirect:/";
+        }
+
+        // 🪪 NAME FLAG: the representative's name resembles a banned name. Never refused (people share names): the
+        // booking is tagged with the ban, for the Director (Pending Approval) or the guard (walk-in) to compare.
+        com.paf.aerovisit.model.BlacklistedFace nameBan = IdentityBans.nameBan(IdentityBans.namesOf(visitor), bans, today());
         if (nameBan != null) {
-            visitor.setStatus(KycService.MANUAL_REVIEW);
+            // 🚶 A walk-in keeps its seats: the guard sees the ban's name and must tick "ID checked against the ban"
             String match = "Ban #" + nameBan.getId() + ": " + nameBan.getName();
             visitor.setPossibleBanMatch(match.length() > 300 ? match.substring(0, 300) : match);
+            visitor.setPossibleBanId(nameBan.getId());
         }
 
         // Generate a unique Booking Reference ID (always server-side, never trusted from the form)
@@ -557,34 +454,82 @@ public class VisitorPortalController {
 
         Visitor savedVisitor;
         try {
-            savedVisitor = saveWithinCapacity(visitor, isMasterBooking);
+            savedVisitor = saveWithinCapacity(visitor);
         } catch (SeatReservationService.CapacityFullException full) {
             // 🔒 Another booking took the last seats between the check above and this save
-            discardIdPhoto(visitor.getIdImageUrl());
             discardIdPhoto(visitor.getIdCardImageUrl());
             redirectAttributes.addFlashAttribute("error", "Insufficient slots available for this specific shift! Please choose another slot.");
             return "redirect:/";
         } catch (org.springframework.dao.PessimisticLockingFailureException busy) {
-            discardIdPhoto(visitor.getIdImageUrl());
             discardIdPhoto(visitor.getIdCardImageUrl());
             redirectAttributes.addFlashAttribute("error", "This time slot is being booked by other visitors right now. Please try again in a moment.");
             return "redirect:/";
         }
         otpService.consume(visitor.getEmail()); // one verified code = one booking
+        if (walkIn) return walkInBooked(savedVisitor, now, request, redirectAttributes);
+        if (savedVisitor.awaitsReceipt()) return advanceAwaitingPayment(savedVisitor, now, request);
         redirectAttributes.addFlashAttribute("visitor", savedVisitor);
         if (notificationService != null) {
             notificationService.bookingRequest(savedVisitor); // only bookings waiting for approval; never throws
         }
 
-        // HUMAN-IN-THE-LOOP: every booking waits for the Director (KycService never approves), so the visitor is told
-        // it is pending; the QR code is only made and emailed at approval (GuardOperationController.approveVisitor)
+        // HUMAN-IN-THE-LOOP: every booking waits for the Director, so the visitor is told it is pending; the QR code is
+        // only made and emailed at approval (GuardOperationController.approveVisitor)
         String to = savedVisitor.getEmail(), name = savedVisitor.getName(), date = savedVisitor.getVisitDate().toString(),
                 ref = savedVisitor.getReferenceId();
-        boolean master = isMasterBooking;
         com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "booking-received email for " + ref,
-                () -> emailService.sendPendingNotification(to, name, date, master, ref), null);
+                () -> emailService.sendPendingNotification(to, name, date, ref), null);
 
         return "redirect:/success-page"; 
+    }
+
+    // 🚶 A saved walk-in. Free: "go to the gate" with the reference ID. To pay: a billing number (assigned only now, after
+    // the seats were held, so a full window never uses one up), the payment link by email, and the payment page at once
+    // through a Manage Booking sign-in, so the payment token never appears in a redirect URL.
+    private String walkInBooked(Visitor v, java.time.LocalDateTime now, HttpServletRequest request, RedirectAttributes redirectAttributes) {
+        if (!v.paymentRequired()) {
+            v.setPaymentStatus(Visitor.PAY_NOT_REQUIRED);
+            Visitor saved = repo.save(v);
+            redirectAttributes.addFlashAttribute("visitor", saved);
+            redirectAttributes.addFlashAttribute("walkInGate", true);
+            // 🚶 The gate QR on the "go to the gate" screen, and by email so it isn't lost if the page is closed
+            redirectAttributes.addFlashAttribute("walkInQr", PaymentController.walkInQr(saved, now.toLocalDate()));
+            String to = saved.getEmail(), name = saved.getName(), ref = saved.getReferenceId(), window = saved.getTimeWindow(),
+                    token = saved.getSecureToken();
+            com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "walk-in pass email for " + ref,
+                    () -> emailService.sendWalkInPass(to, name, ref, window, token), null);
+            return "redirect:/success-page";
+        }
+        paymentWorkflow.onWalkIn(v, now, walkInService.minutes());
+        Visitor saved = repo.save(v);
+        com.paf.aerovisit.service.EmailService.PaymentNotice notice = com.paf.aerovisit.service.EmailService.PaymentNotice.of(saved);
+        com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "walk-in payment email for " + saved.getReferenceId(),
+                () -> emailService.sendPaymentRequest(notice), null);
+        signIntoManageBooking(request, saved.getId());
+        return "redirect:/manage-booking/payment";
+    }
+
+    // 💳 A saved paid advance booking (its seats already held): a billing number (assigned only now, so a full window never
+    // uses one up), the payment deadline (the Director's window, never past the visit start), the payment link by email,
+    // and the payment page at once through a Manage Booking sign-in. No bell yet: the Director is told when the receipt
+    // arrives.
+    private String advanceAwaitingPayment(Visitor v, java.time.LocalDateTime now, HttpServletRequest request) {
+        paymentWorkflow.onAdvanceBooking(v, now);
+        Visitor saved = repo.save(v);
+        com.paf.aerovisit.service.EmailService.PaymentNotice notice = com.paf.aerovisit.service.EmailService.PaymentNotice.of(saved);
+        com.paf.aerovisit.service.MailOutbox.send(mailOutbox, "payment email for " + saved.getReferenceId(),
+                () -> emailService.sendPaymentRequest(notice), null);
+        signIntoManageBooking(request, saved.getId());
+        return "redirect:/manage-booking/payment";
+    }
+
+    // 🔒 Signs this browser into Manage Booking for one booking, with a new session ID first (no session fixation)
+    private static void signIntoManageBooking(HttpServletRequest request, Long visitorId) {
+        request.getSession(true);
+        request.changeSessionId();
+        HttpSession session = request.getSession(false);
+        session.setAttribute(MANAGE_VISITOR_ID, visitorId);
+        session.setAttribute(MANAGE_FORM_TOKEN, java.util.UUID.randomUUID().toString());
     }
 
     @GetMapping("/success-page")
@@ -636,65 +581,16 @@ public class VisitorPortalController {
 
     // Session keys: the signed-in booking's ID and a per-session token every portal form must echo back.
     // CSRF protection is off app-wide, so the token is what stops another site from posting a cancellation.
-    private static final String MANAGE_VISITOR_ID = "manageVisitorId";
-    private static final String MANAGE_FORM_TOKEN = "manageFormToken";
+    // Package-visible: PaymentController opens the payment page for the same signed-in booking
+    static final String MANAGE_VISITOR_ID = "manageVisitorId";
+    static final String MANAGE_FORM_TOKEN = "manageFormToken";
 
     // Statuses that no longer hold a seat (kept in step with the capacity sums in showForm and saveVisitor)
-    private static final Set<String> SEAT_FREE_STATUSES = Set.of("REJECTED", "CANCELLED_OVERRIDE", "CANCELLED_BY_VISITOR", "CANCELLED");
-
-    // 🛑 CLEAR FACE MISMATCH (likely a spoof): stored as REJECTED so the Director sees the attempt with its photos and
-    // face vector in the Entire Database (and can ban that face). No seat, no "pending" email, no success page. The
-    // email code is used up, and the usual re-apply cooldown (below) for this email and date applies.
-    private String saveRejectedAttempt(Visitor visitor, KycService.KycResult kyc, RedirectAttributes redirectAttributes) {
-        String referenceId;
-        do {
-            referenceId = ReferenceIdGenerator.generate();
-        } while (repo.existsByReferenceId(referenceId));
-        visitor.setReferenceId(referenceId);
-        visitor.setStatus("REJECTED");
-        visitor.setRejectionReason("Automatic KYC: live face does not match the ID portrait");
-        visitor.setFaceEncoding(kyc.faceEncoding());
-        visitor.setOcrNameMatch(false);
-        repo.save(visitor);
-        otpService.consume(visitor.getEmail());
-        redirectAttributes.addFlashAttribute("error", kyc.message());
-        return "redirect:/";
-    }
+    private static final Set<String> SEAT_FREE_STATUSES = Set.of("REJECTED", "CANCELLED_OVERRIDE", "CANCELLED_BY_VISITOR", "CANCELLED",
+            Visitor.STATUS_PAYMENT_EXPIRED);
 
     // Re-applying for a date after a rejection: allowed once this many hours have passed since the newest REJECTED
     // application for that email + date (timed from its createdAt, i.e. when it was submitted)
-    // 🧬 Same-face duplicate check (one person, one booking per date, whatever the email). At or above REFUSE the two faces
-    // are near-certainly one person; from FaceEncodings.SAME_PERSON_COSINE (0.363, the 1:1 ID-vs-selfie line) up to it they
-    // may only look alike, and comparing against a whole day of bookings makes such look-alikes likelier, so the Director decides.
-    static final double DUPLICATE_FACE_REFUSE_COSINE = 0.55;
-    static final String DUPLICATE_FACE_MESSAGE = "You already have a booking for this date. Please manage it with your Booking Reference ID instead of booking again.";
-    // Bookings that don't hold the date for their face, the same ones the email duplicate rule lets a visitor re-book over
-    static final Set<String> FACE_FREE_STATUSES = Set.of("CANCELLED_OVERRIDE", "CANCELLED_BY_VISITOR", "CANCELLED", "REJECTED");
-
-    record DuplicateFace(String referenceId, double score, boolean refuse) {}
-
-    // The closest booking on the same date whose face is at least SAME_PERSON_COSINE alike, or null. No face for the new
-    // booking (AI service down, no face found) or none on file for the others = no match; those go to manual review anyway.
-    static DuplicateFace duplicateFace(double[] face, List<Visitor> sameDay) {
-        if (face == null || sameDay == null) return null;
-        Visitor closest = null;
-        double best = -1;
-        for (Visitor other : sameDay) {
-            if (other.getStatus() == null || FACE_FREE_STATUSES.contains(other.getStatus())) continue;
-            double[] otherFace = FaceEncodings.parse(other.getFaceEncoding());
-            if (otherFace == null) continue;
-            double score = FaceEncodings.cosine(face, otherFace);
-            if (score > best) {
-                best = score;
-                closest = other;
-            }
-        }
-        if (closest == null || best < FaceEncodings.SAME_PERSON_COSINE) return null;
-        System.out.println("🧬 Same-face booking on this date: similarity=" + String.format(java.util.Locale.ROOT, "%.3f", best)
-                + " with " + closest.getReferenceId() + (best >= DUPLICATE_FACE_REFUSE_COSINE ? " -> refused" : " -> manual review"));
-        return new DuplicateFace(closest.getReferenceId(), best, best >= DUPLICATE_FACE_REFUSE_COSINE);
-    }
-
     static final long REJECTED_COOLDOWN_HOURS = 4;
     static final String REJECTED_COOLDOWN_MESSAGE = "Please wait " + REJECTED_COOLDOWN_HOURS + " hours before reapplying for the same date.";
 
@@ -718,15 +614,22 @@ public class VisitorPortalController {
             return "manage-booking"; // sign-in screen
         }
 
-        boolean upcoming = v.getVisitDate() != null && !v.getVisitDate().isBefore(LocalDate.now());
+        boolean upcoming = v.getVisitDate() != null && !v.getVisitDate().isBefore(today());
         model.addAttribute("booking", v);
         model.addAttribute("formToken", session.getAttribute(MANAGE_FORM_TOKEN));
         model.addAttribute("statusLabel", visitorStatusLabel(v.getStatus()));
         model.addAttribute("statusTone", visitorStatusTone(v.getStatus()));
-        model.addAttribute("editable", upcoming && isEditableByVisitor(v));
-        model.addAttribute("cancellable", upcoming && isCancellableByVisitor(v));
-        model.addAttribute("showCountdown", upcoming && isCancellableByVisitor(v));
-        if (upcoming && isEditableByVisitor(v)) {
+        // 📅 A RESCHEDULE_REQUIRED booking may still pick a new date after its old one, until its deadline
+        boolean movable = canStillMove(v);
+        model.addAttribute("reschedulable", movable && isReschedulable(v));
+        model.addAttribute("rescheduleDeadline", v.rescheduleDeadline());
+        // 💳 Payment: the deadline as text, and whether the receipt can be attached now (same rules as the payment page)
+        model.addAttribute("paymentDeadline", com.paf.aerovisit.service.PaymentWorkflow.deadlineText(v.getPaymentDueAt()));
+        model.addAttribute("canPay", v.paymentRequired() && v.getBillingNumber() != null
+                && com.paf.aerovisit.service.PaymentWorkflow.uploadBlocker(v, now()) == null);
+        model.addAttribute("showCountdown", upcoming && countdownShown(v));
+        model.addAttribute("walkInQr", PaymentController.walkInQr(v, today())); // 🚶 the gate QR, walk-ins only
+        if (movable && isReschedulable(v)) {
             model.addAttribute("openSlots", openSlotsFor(v));
         }
         return "manage-booking";
@@ -743,176 +646,135 @@ public class VisitorPortalController {
             return "redirect:/manage-booking";
         }
         // 🔒 New session ID on sign-in, so a session ID planted before login cannot be reused
-        request.getSession(true);
-        request.changeSessionId();
-        HttpSession session = request.getSession(false);
-        session.setAttribute(MANAGE_VISITOR_ID, v.getId());
-        session.setAttribute(MANAGE_FORM_TOKEN, java.util.UUID.randomUUID().toString());
+        signIntoManageBooking(request, v.getId());
         return "redirect:/manage-booking";
     }
 
-    @PostMapping("/manage-booking/update")
-    public String updateManagedBooking(@RequestParam(name = "formToken", required = false) String formToken,
-                                       @RequestParam(name = "slot", required = false) String slot,
-                                       @RequestParam(name = "visitDate", required = false) String visitDate,
-                                       @RequestParam(name = "timeWindow", required = false) String timeWindow,
-                                       @RequestParam(name = "groupSize", required = false) Integer groupSize,
-                                       @RequestParam(name = "contactNumber", required = false) String contactNumber,
-                                       @RequestParam(name = "companionNames", required = false) String companionNames,
-                                       HttpSession session, RedirectAttributes redirectAttributes) {
+    // 📅 RESCHEDULE: the only change a visitor makes online (no-refund system: no cancelling, no editing the group).
+    // The new date follows the rules of a new advance booking (minimum days ahead, so never today; no closure or holiday;
+    // an open slot with enough seats). Payment and Terms are not asked again; the group, counts and price stay as they are.
+    // An APPROVED booking goes back to the Director for approval (its QR stops working); a payment already made stays PAID.
+    @PostMapping("/manage-booking/reschedule")
+    public String rescheduleManagedBooking(@RequestParam(name = "formToken", required = false) String formToken,
+                                           @RequestParam(name = "visitDate", required = false) String visitDate,
+                                           @RequestParam(name = "timeWindow", required = false) String timeWindow,
+                                           HttpSession session, RedirectAttributes redirectAttributes) {
         Visitor v = manageSessionVisitor(session, formToken);
         if (v == null) {
             redirectAttributes.addFlashAttribute("error", "Your session has expired. Please sign in again.");
             return "redirect:/manage-booking";
         }
-        if (v.getVisitDate() == null || v.getVisitDate().isBefore(LocalDate.now()) || !isEditableByVisitor(v)) {
+        if (!canStillMove(v) || !isReschedulable(v)) {
             redirectAttributes.addFlashAttribute("error", "This booking can no longer be changed online.");
             return "redirect:/manage-booking";
         }
-
-        // Two-part form (date picker + time window dropdown); the single "date|window" slot value still works
-        if ((slot == null || slot.isBlank()) && visitDate != null && !visitDate.isBlank()) {
-            if (timeWindow == null || timeWindow.isBlank()) {
-                redirectAttributes.addFlashAttribute("error", "Please choose a time window for your selected date.");
-                return "redirect:/manage-booking";
-            }
-            slot = visitDate.trim() + "|" + timeWindow;
-        }
-
-        // Blank slot = keep the current date and time window
-        LocalDate newDate = v.getVisitDate();
-        String newWindow = v.getTimeWindow();
-        if (slot != null && !slot.isBlank()) {
-            int sep = slot.indexOf('|');
-            try {
-                if (sep < 0) throw new DateTimeParseException("missing separator", slot, 0);
-                newDate = LocalDate.parse(slot.substring(0, sep));
-                newWindow = slot.substring(sep + 1);
-            } catch (DateTimeParseException e) {
-                redirectAttributes.addFlashAttribute("error", "Please choose a valid date and time from the list.");
-                return "redirect:/manage-booking";
-            }
-        }
-        int newSize = (groupSize != null) ? groupSize : v.getGroupSize();
-        if (newSize < 1) {
-            redirectAttributes.addFlashAttribute("error", "Total visitors must be at least 1.");
+        if (visitDate == null || visitDate.isBlank()) {
+            redirectAttributes.addFlashAttribute("error", "Please choose a new date and time from the list.");
             return "redirect:/manage-booking";
         }
-        String newContact = (contactNumber == null || contactNumber.isBlank()) ? v.getContactNumber() : contactNumber.trim();
-        if (newContact != null && newContact.length() > 30) {
-            redirectAttributes.addFlashAttribute("error", "Contact number is too long.");
+        if (timeWindow == null || timeWindow.isBlank()) {
+            redirectAttributes.addFlashAttribute("error", "Please choose a time window for your selected date.");
             return "redirect:/manage-booking";
         }
-        // 🪖 GROUP MANIFEST: a bigger party (or an edited guest list) must still name every guest besides the lead booker,
-        // so a solo booking cannot be grown into an unregistered group after the fact
-        String newCompanions = v.getCompanionNames();
-        if (newSize == 1) {
-            newCompanions = null; // leftover text from the hidden field is ignored
-        } else if (companionNames != null || newSize != v.getGroupSize()) {
-            List<String> companions = Visitor.parseCompanionNames(companionNames != null ? companionNames : v.getCompanionNames());
-            String manifestError = manifestError(companions, newSize);
-            if (manifestError != null) {
-                redirectAttributes.addFlashAttribute("error", manifestError);
-                return "redirect:/manage-booking";
-            }
-            newCompanions = String.join("\n", companions);
-        }
-
-        boolean scheduleChanged = !Objects.equals(newDate, v.getVisitDate())
-                || !Objects.equals(newWindow, v.getTimeWindow())
-                || newSize != v.getGroupSize();
-        boolean contactChanged = !Objects.equals(newContact, v.getContactNumber());
-        boolean manifestChanged = !Objects.equals(newCompanions, v.getCompanionNames());
-        if (!scheduleChanged && !contactChanged && !manifestChanged) {
-            redirectAttributes.addFlashAttribute("success", "No changes to save.");
+        final LocalDate date;
+        try {
+            date = LocalDate.parse(visitDate.trim());
+        } catch (DateTimeParseException e) {
+            redirectAttributes.addFlashAttribute("error", "Please choose a valid date and time from the list.");
             return "redirect:/manage-booking";
         }
-
-        if (scheduleChanged) {
-            final LocalDate date = newDate;
-            final String window = newWindow;
-            if (date.isBefore(LocalDate.now())) {
-                redirectAttributes.addFlashAttribute("error", "Please choose a date that has not passed.");
+        final String window = timeWindow;
+        if (date.equals(v.getVisitDate()) && window.equals(v.getTimeWindow())) {
+            redirectAttributes.addFlashAttribute("error", "That is your current date and time. Please choose a different one.");
+            return "redirect:/manage-booking";
+        }
+        if (date.isBefore(today())) {
+            redirectAttributes.addFlashAttribute("error", "Please choose a date that has not passed.");
+            return "redirect:/manage-booking";
+        }
+        // 📅 Like a new advance booking: at least the minimum days ahead (today is never offered)
+        if (!date.isAfter(today()) || date.isBefore(advanceEarliest())) {
+            redirectAttributes.addFlashAttribute("error", advanceTooSoonMessage());
+            return "redirect:/manage-booking";
+        }
+        // 🚨 Emergency closure: the museum is closed that day
+        if (repo.findClosureDates().contains(date)) {
+            redirectAttributes.addFlashAttribute("error", "The museum is closed on this date due to an emergency. Please choose another date.");
+            return "redirect:/manage-booking";
+        }
+        // 🎌 Listed holiday or closed day
+        com.paf.aerovisit.model.Holiday holiday = holidayOn(date);
+        if (holiday != null) {
+            redirectAttributes.addFlashAttribute("error", com.paf.aerovisit.service.Holidays.closedReason(holiday) + ". Please choose another date.");
+            return "redirect:/manage-booking";
+        }
+        int capacity = bookingRepo.findAll().stream()
+                .filter(s -> date.equals(s.getSlotDate()) && window.equals(s.getTimeWindow()))
+                .mapToInt(BookingSlot::getMaxCapacity)
+                .sum();
+        if (capacity <= 0) {
+            redirectAttributes.addFlashAttribute("error", "The museum has no open booking slot for that date and time.");
+            return "redirect:/manage-booking";
+        }
+        int size = Math.max(1, v.getGroupSize());
+        // Own seats are left out (the booking leaves its old slot)
+        int taken = seatsTaken(repo.findByVisitDate(date), window, v.getId());
+        if (taken + size > capacity) {
+            redirectAttributes.addFlashAttribute("error", "Not enough seats: only " + Math.max(0, capacity - taken) + " left in that time slot.");
+            return "redirect:/manage-booking";
+        }
+        if (!date.equals(v.getVisitDate())) {
+            boolean duplicate = repo.findByEmailAndVisitDate(v.getEmail(), date).stream()
+                    .anyMatch(o -> !o.getId().equals(v.getId()) && !SEAT_FREE_STATUSES.contains(o.getStatus()));
+            if (duplicate) {
+                redirectAttributes.addFlashAttribute("error", "You already have another booking on that date.");
                 return "redirect:/manage-booking";
-            }
-            // 🔒 VIP buyout: dates reserved by an approved Master Booking are closed to regular bookings
-            if (repo.findBuyoutDates().contains(date)) {
-                redirectAttributes.addFlashAttribute("error", "This date has been reserved for a private group tour. Please choose another date.");
-                return "redirect:/manage-booking";
-            }
-            // 🚨 Emergency closure: the museum is closed that day
-            if (repo.findClosureDates().contains(date)) {
-                redirectAttributes.addFlashAttribute("error", "The museum is closed on this date due to an emergency. Please choose another date.");
-                return "redirect:/manage-booking";
-            }
-            int capacity = bookingRepo.findAll().stream()
-                    .filter(s -> date.equals(s.getSlotDate()) && window.equals(s.getTimeWindow()))
-                    .mapToInt(BookingSlot::getMaxCapacity)
-                    .sum();
-            if (capacity <= 0) {
-                redirectAttributes.addFlashAttribute("error", "The museum has no open booking slot for that date and time.");
-                return "redirect:/manage-booking";
-            }
-            // Own seats are left out, so keeping the same slot and changing only the group size works
-            int taken = seatsTaken(repo.findByVisitDate(date), window, v.getId());
-            if (taken + newSize > capacity) {
-                redirectAttributes.addFlashAttribute("error", "Not enough seats: only " + Math.max(0, capacity - taken) + " left in that time slot.");
-                return "redirect:/manage-booking";
-            }
-            if (!date.equals(v.getVisitDate())) {
-                boolean duplicate = repo.findByEmailAndVisitDate(v.getEmail(), date).stream()
-                        .anyMatch(o -> !o.getId().equals(v.getId()) && !SEAT_FREE_STATUSES.contains(o.getStatus()));
-                if (duplicate) {
-                    redirectAttributes.addFlashAttribute("error", "You already have another booking on that date.");
-                    return "redirect:/manage-booking";
-                }
             }
         }
 
-        boolean wasApproved = "APPROVED".equals(v.getStatus());
-        v.setVisitDate(newDate);
-        v.setTimeWindow(newWindow);
-        v.setGroupSize(newSize);
-        v.setContactNumber(newContact);
-        v.setCompanionNames(newCompanions);
-        if ((scheduleChanged || manifestChanged) && wasApproved) {
-            // The admin re-reviews the new schedule or guest list; the old QR stops working until it is approved again
+        // 🚨 A paid booking on a date the museum closed (RESCHEDULE_REQUIRED) moves like an approved one
+        boolean mustReschedule = Visitor.STATUS_RESCHEDULE_REQUIRED.equals(v.getStatus());
+        boolean wasApproved = "APPROVED".equals(v.getStatus()) || mustReschedule;
+        v.setVisitDate(date);
+        v.setTimeWindow(window);
+        if (mustReschedule && v.walkIn()) {
+            // 🚶 A walk-in moved after the museum closed on its day is an Advance Booking now (its payment is kept)
+            v.setBookingCategory(null);
+            v.setCheckInDueAt(null);
+        }
+        if (Visitor.UNREVIEWED_NOTE.equals(v.getRejectionReason())) v.setRejectionReason(null); // 📅 it has its new date now
+        if (wasApproved) {
+            // The Director re-reviews the new schedule; the old QR stops working until it is approved again.
+            // 💳 A payment already made stays PAID: the new date is approved without a new payment.
             v.setStatus("PENDING");
             v.setQrCodeUrl(null);
             v.setReminderSent(false);
         }
-        repo.save(v);
-        if (notificationService != null && (scheduleChanged || manifestChanged) && v.awaitsApproval()) {
+        // 💳 Awaiting its receipt: the payment deadline never falls after the new visit start
+        if (v.awaitsReceipt() && v.getPaymentDueAt() != null) {
+            java.time.LocalDateTime start = com.paf.aerovisit.service.PaymentWorkflow.visitStart(v);
+            if (start != null && start.isBefore(v.getPaymentDueAt())) v.setPaymentDueAt(start);
+        }
+        // 🔒 A booking that holds seats is saved under the seat lock: the new slot is held and the old one frees
+        if (v.holdsSeat()) {
+            try {
+                saveWithinCapacity(v);
+            } catch (SeatReservationService.CapacityFullException full) {
+                redirectAttributes.addFlashAttribute("error", "Not enough seats left in that time slot. Please choose another.");
+                return "redirect:/manage-booking";
+            } catch (org.springframework.dao.PessimisticLockingFailureException busy) {
+                redirectAttributes.addFlashAttribute("error", "This time slot is being booked by other visitors right now. Please try again in a moment.");
+                return "redirect:/manage-booking";
+            }
+        } else {
+            repo.save(v);
+        }
+        if (notificationService != null && v.awaitsApproval()) {
             notificationService.bookingRescheduled(v); // never throws
         }
-
-        String successMessage = "Booking updated.";
-        if (scheduleChanged && wasApproved) {
-            successMessage = "Booking updated. Your new schedule has been sent back to the museum for approval, and your previous QR code is no longer valid.";
-        } else if (manifestChanged && wasApproved) {
-            successMessage = "Booking updated. Your new guest list has been sent back to the museum for approval, and your previous QR code is no longer valid.";
-        }
-        redirectAttributes.addFlashAttribute("success", successMessage);
-        return "redirect:/manage-booking";
-    }
-
-    @PostMapping("/manage-booking/cancel")
-    public String cancelManagedBooking(@RequestParam(name = "formToken", required = false) String formToken,
-                                       HttpSession session, RedirectAttributes redirectAttributes) {
-        Visitor v = manageSessionVisitor(session, formToken);
-        if (v == null) {
-            redirectAttributes.addFlashAttribute("error", "Your session has expired. Please sign in again.");
-            return "redirect:/manage-booking";
-        }
-        if (v.getVisitDate() == null || v.getVisitDate().isBefore(LocalDate.now()) || !isCancellableByVisitor(v)) {
-            redirectAttributes.addFlashAttribute("error", "This booking can no longer be cancelled online.");
-            return "redirect:/manage-booking";
-        }
-        v.setStatus("CANCELLED_BY_VISITOR");
-        v.setQrCodeUrl(null);
-        repo.save(v);
-        if (notificationService != null) notificationService.bookingCancelled(v); // never throws
-        redirectAttributes.addFlashAttribute("success", "Your visit has been cancelled and your seats have been released. You are welcome to book again anytime.");
+        redirectAttributes.addFlashAttribute("success", wasApproved
+                ? "Booking updated. Your new schedule has been sent back to the museum for approval, and your previous QR code is no longer valid."
+                : "Booking updated.");
         return "redirect:/manage-booking";
     }
 
@@ -934,14 +796,42 @@ public class VisitorPortalController {
         return repo.findById(visitorId).orElse(null);
     }
 
-    // Visitors may change date, time, group size and contact number while PENDING or APPROVED.
-    // Master Bookings are arranged with the museum directly, so they can only be cancelled here.
-    private static boolean isEditableByVisitor(Visitor v) {
-        return ("PENDING".equals(v.getStatus()) || "APPROVED".equals(v.getStatus())) && !v.isMasterBooking();
+    // 📅 Visitors may move their booking to another date while PENDING, APPROVED or awaiting the receipt, and must pick a
+    // new date when the museum closed on a paid booking's date (RESCHEDULE_REQUIRED)
+    // 🚶 A walk-in is for today and can't be moved, unless the museum closed today (then it picks a new date)
+    private static boolean isReschedulable(Visitor v) {
+        if (v.walkIn()) return Visitor.STATUS_RESCHEDULE_REQUIRED.equals(v.getStatus());
+        return "PENDING".equals(v.getStatus()) || "APPROVED".equals(v.getStatus())
+                || Visitor.STATUS_RESCHEDULE_REQUIRED.equals(v.getStatus()) || v.awaitsReceipt();
     }
 
-    private static boolean isCancellableByVisitor(Visitor v) {
-        return Set.of("PENDING", "PENDING_MANUAL_REVIEW", "VERIFIED", "APPROVED").contains(v.getStatus());
+    // 📅 The booking's date hasn't passed, or it must be rescheduled and its deadline hasn't passed
+    private boolean canStillMove(Visitor v) {
+        if (v.getVisitDate() == null) return false;
+        if (!v.getVisitDate().isBefore(today())) return true;
+        LocalDate deadline = v.rescheduleDeadline();
+        return deadline != null && !deadline.isBefore(today());
+    }
+
+    // ⏳ The countdown to the visit is shown while the booking is still active
+    private static boolean countdownShown(Visitor v) {
+        return Set.of("PENDING", "PENDING_MANUAL_REVIEW", "VERIFIED", "APPROVED", Visitor.STATUS_RESCHEDULE_REQUIRED,
+                Visitor.STATUS_AWAITING_RECEIPT).contains(v.getStatus());
+    }
+
+    // 🔒 Why this ID photo is refused, or null: too large, HEIC, or bytes that aren't really a JPEG, PNG or WEBP image
+    // (signature + full decode), whatever its name or the type the browser declared
+    static String idPhotoError(MultipartFile photo) {
+        if (photo == null || photo.isEmpty()) return PHOTOS_REQUIRED;
+        if (photo.getSize() > ID_PHOTO_MAX_BYTES) return ID_PHOTO_TOO_LARGE;
+        try {
+            byte[] bytes = photo.getBytes();
+            if (com.paf.aerovisit.service.ReceiptStorage.isHeic(bytes)) return ID_PHOTO_HEIC;
+            return com.paf.aerovisit.service.ReceiptStorage.realImageFormat(bytes,
+                    com.paf.aerovisit.service.ReceiptStorage.ID_PHOTO_FORMATS) != null ? null : ID_PHOTO_NOT_IMAGE;
+        } catch (java.io.IOException e) {
+            return ID_PHOTO_NOT_IMAGE;
+        }
     }
 
     private static String visitorStatusLabel(String status) {
@@ -956,6 +846,9 @@ public class VisitorPortalController {
             case "CANCELLED" -> "Cancelled by Museum"; // emergency closure
             case "DENIED_ENTRY" -> "Entry Denied";
             case "NO_SHOW" -> "Missed Visit";
+            case Visitor.STATUS_PAYMENT_EXPIRED -> "Payment Expired";
+            case Visitor.STATUS_RESCHEDULE_REQUIRED -> "Reschedule Needed";
+            case Visitor.STATUS_AWAITING_RECEIPT -> "Awaiting Payment";
             default -> "Pending Review"; // PENDING, PENDING_MANUAL_REVIEW, VERIFIED
         };
     }
@@ -967,8 +860,8 @@ public class VisitorPortalController {
             case "APPROVED", "CHECKED-IN" -> "ok";
             case "REJECTED", "CANCELLED_OVERRIDE" -> "warn";
             case "CHECKED-OUT", "CANCELLED_BY_VISITOR", "NO_SHOW" -> "muted";
-            case "CANCELLED", "DENIED_ENTRY" -> "warn";
-            default -> "pending";
+            case "CANCELLED", "DENIED_ENTRY", Visitor.STATUS_PAYMENT_EXPIRED -> "warn";
+            default -> "pending"; // includes RESCHEDULE_REQUIRED: the visitor has something to do
         };
     }
 
@@ -984,14 +877,29 @@ public class VisitorPortalController {
         return taken;
     }
 
-    // Upcoming public slots with enough seats for this visitor's group, for the edit form's dropdown
+    // Upcoming public slots with enough seats for this visitor's group, for the reschedule picker
+    // 📅 The earliest date an advance booking (or a move to a new date) may be for, Manila time
+    private LocalDate advanceEarliest() {
+        return advanceBookingRules == null ? com.paf.aerovisit.service.AdvanceBookingRules.fallbackEarliest() : advanceBookingRules.earliestDate();
+    }
+
+    private String advanceTooSoonMessage() {
+        return com.paf.aerovisit.service.AdvanceBookingRules.tooSoonMessage(advanceBookingRules == null
+                ? com.paf.aerovisit.model.PortalSettings.DEFAULT_ADVANCE_MIN_DAYS : advanceBookingRules.minDays());
+    }
+
     private List<Map<String, Object>> openSlotsFor(Visitor v) {
-        LocalDate today = LocalDate.now();
-        Set<LocalDate> buyoutDates = new HashSet<>(repo.findBuyoutDates());
+        LocalDate today = today();
+        LocalDate earliest = advanceEarliest(); // 📅 the minimum days ahead, like a new advance booking (never today)
         Set<LocalDate> closureDates = new HashSet<>(repo.findClosureDates());
         Map<String, Integer> capacityBySlot = new java.util.TreeMap<>(); // "date|window", sorted by date
-        for (BookingSlot s : bookingRepo.findAll()) {
-            if (s.getSlotDate() != null && s.getTimeWindow() != null && !s.getSlotDate().isBefore(today) && !buyoutDates.contains(s.getSlotDate()) && !closureDates.contains(s.getSlotDate())) {
+        List<BookingSlot> slots = bookingRepo.findAll();
+        // 🎌 Listed holidays are not offered
+        Set<LocalDate> holidayDates = holidays == null ? Set.of() : holidays.between(today,
+                slots.stream().map(BookingSlot::getSlotDate).filter(Objects::nonNull).max(LocalDate::compareTo).orElse(today)).keySet();
+        for (BookingSlot s : slots) {
+            if (s.getSlotDate() != null && s.getTimeWindow() != null && s.getSlotDate().isAfter(today) && !closureDates.contains(s.getSlotDate())
+                    && !holidayDates.contains(s.getSlotDate()) && !s.getSlotDate().isBefore(earliest)) {
                 capacityBySlot.merge(s.getSlotDate() + "|" + s.getTimeWindow(), s.getMaxCapacity(), Integer::sum);
             }
         }
@@ -1001,7 +909,7 @@ public class VisitorPortalController {
             int sep = e.getKey().indexOf('|');
             LocalDate date = LocalDate.parse(e.getKey().substring(0, sep));
             String window = e.getKey().substring(sep + 1);
-            if (date.equals(v.getVisitDate()) && window.equals(v.getTimeWindow())) continue; // offered as "keep current"
+            if (date.equals(v.getVisitDate()) && window.equals(v.getTimeWindow())) continue; // the current slot
             int remaining = e.getValue() - seatsTaken(bookingsByDate.computeIfAbsent(date, repo::findByVisitDate), window, v.getId());
             if (remaining >= Math.max(1, v.getGroupSize())) {
                 Map<String, Object> option = new HashMap<>();
@@ -1016,10 +924,17 @@ public class VisitorPortalController {
         return open;
     }
 
+    // 📝 Feedback is open once the visit is over: checked out, or still CHECKED-IN (they left without being checked out)
+    // once their feedback email went out after the time window. Someone still inside can't review early with their QR token.
+    static boolean feedbackOpen(Visitor v) {
+        return "CHECKED-OUT".equals(v.getStatus())
+                || ("CHECKED-IN".equals(v.getStatus()) && v.getFeedbackEmailSentAt() != null);
+    }
+
     @GetMapping("/leave-feedback")
     public String showFeedbackPage(@RequestParam(name = "token", required = false) String token, Model model) {
         Visitor v = (token == null || token.isBlank()) ? null : repo.findBySecureToken(token).orElse(null);
-        if (v == null || !"CHECKED-OUT".equals(v.getStatus())) {
+        if (v == null || !feedbackOpen(v)) {
             model.addAttribute("error", "Invalid link or your visit has not been completed yet.");
             return "feedback-error"; 
         }
@@ -1036,7 +951,7 @@ public class VisitorPortalController {
                                  @RequestParam(name = "zone", required = false) String zone, Model model) {
         Visitor v = repo.findBySecureToken(token).orElse(null);
         // 🔒 Same rules as the form page, enforced on submit too (a direct POST can't skip them)
-        if (v == null || !"CHECKED-OUT".equals(v.getStatus())) {
+        if (v == null || !feedbackOpen(v)) {
             model.addAttribute("error", "Invalid link or your visit has not been completed yet.");
             return "feedback-error";
         }
@@ -1085,11 +1000,29 @@ public class VisitorPortalController {
         return "feedback-success";
     }
 
-    // 🔒 RACE-SAFE SAVE: a standard booking is saved under a row lock on its slot with the seat count re-read inside
-    // the lock (SeatReservationService), so two visitors can't both take the last seats. Master Bookings are exempt
-    // (VIP buyout). Web-layer test slices have no SeatReservationService and save directly, as before.
-    private Visitor saveWithinCapacity(Visitor visitor, boolean isMasterBooking) {
-        if (isMasterBooking || seatReservation == null) return repo.save(visitor);
+    // 💱 The admission prices in force now (the defaults in test slices without AdmissionPricing)
+    private AdmissionPricing.Prices currentPrices() {
+        return admissionPricing == null ? AdmissionPricing.Prices.DEFAULT : admissionPricing.current();
+    }
+
+    // Writes a priced set of counts onto the booking: the three counts, groupSize = their sum, the unit prices used and the total
+    private static void applyAdmission(Visitor v, AdmissionPricing.Quote quote) {
+        v.setDiscountedCount(quote.discounted());
+        v.setRegularCount(quote.regular());
+        v.setFreeCount(quote.free());
+        v.setGroupSize(quote.people());
+        v.setDiscountedPriceCentavos(quote.prices().discounted());
+        v.setRegularPriceCentavos(quote.prices().regular());
+        v.setAdmissionTotalCentavos(quote.totalCentavos());
+    }
+
+    private static int orZero(Integer count) { return count == null ? 0 : count; }
+
+    // 🔒 RACE-SAFE SAVE: every booking is saved under a row lock on its slot with the seat count re-read inside
+    // the lock (SeatReservationService), so two visitors can't both take the last seats. Web-layer test slices have no
+    // SeatReservationService and save directly, as before.
+    private Visitor saveWithinCapacity(Visitor visitor) {
+        if (seatReservation == null) return repo.save(visitor);
         return seatReservation.saveIfSeatsRemain(visitor);
     }
 
@@ -1119,21 +1052,21 @@ public class VisitorPortalController {
         if (uploadMirror != null) uploadMirror.deleteUpload(fileName); // ☁️ and its S3 copy
     }
 
-    // ID photo file name: a random UUID plus the uploaded file's own extension (.jpg, .jpeg or .png only, so nothing
+    // ID photo file name: a random UUID plus the uploaded file's own extension (.jpg, .jpeg, .png or .webp only, so nothing
     // from the browser can steer the path). An unknown extension falls back to the checked content type.
     static String anonymousIdPhotoName(String originalFilename, String contentType) {
-        String ext = "image/png".equals(contentType) ? "png" : "jpg";
+        String ext = "image/png".equals(contentType) ? "png" : "image/webp".equals(contentType) ? "webp" : "jpg";
         if (originalFilename != null) {
             int dot = originalFilename.lastIndexOf('.');
             String given = dot >= 0 ? originalFilename.substring(dot + 1).toLowerCase(java.util.Locale.ROOT) : "";
-            if (given.equals("jpg") || given.equals("jpeg") || given.equals("png")) ext = given;
+            if (given.equals("jpg") || given.equals("jpeg") || given.equals("png") || given.equals("webp")) ext = given;
         }
         return java.util.UUID.randomUUID() + "." + ext;
     }
 
     // Seats configured for a public booking on this date and time window; 0 when the slot does not exist or the date has passed
     private int bookableSlotCapacity(LocalDate date, String timeWindow) {
-        if (date == null || timeWindow == null || date.isBefore(LocalDate.now())) return 0;
+        if (date == null || timeWindow == null || date.isBefore(today())) return 0;
         return bookingRepo.findBySlotDateAndTimeWindow(date, timeWindow).stream()
                 .mapToInt(BookingSlot::getMaxCapacity)
                 .sum();

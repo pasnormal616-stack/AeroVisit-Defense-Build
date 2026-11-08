@@ -36,9 +36,9 @@ import java.util.Set;
 public class CmsWebConfig implements WebMvcConfigurer {
 
     // Views that include fragments/visitor :: footer
-    static final Set<String> FOOTER_VIEWS = Set.of("register", "manage-booking", "success");
+    static final Set<String> FOOTER_VIEWS = Set.of("register", "manage-booking", "success", "payment");
     // Views that show the hero slideshow photos: the visitor backdrop pages and the staff sign-in pages
-    static final Set<String> HERO_VIEWS = Set.of("register", "manage-booking", "success", "login", "forgot-password");
+    static final Set<String> HERO_VIEWS = Set.of("register", "manage-booking", "success", "login", "forgot-password", "payment");
 
     private final ObjectProvider<AnnouncementRepository> announcementRepo;
     private final ObjectProvider<GuidelineRepository> guidelineRepo;

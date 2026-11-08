@@ -62,6 +62,26 @@ public class AdminDashboardController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     com.paf.aerovisit.repository.VisitorTallyArchiveRepository tallyArchive;
 
+    // 💱 Admission prices for the Settings page (optional, so test slices without it still start; then the defaults show)
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.paf.aerovisit.service.AdmissionPricing admissionPricing;
+
+    // 💳 Payment settings for the Settings page (optional, like the prices above)
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.paf.aerovisit.service.PaymentWorkflow paymentWorkflow;
+
+    // 📝 Feedback email setting (Settings page). Optional, like the one below.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.paf.aerovisit.service.FeedbackEmails feedbackEmails;
+
+    // 📅 Advance booking setting (Settings page): minimum days ahead. Optional, like the others.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.paf.aerovisit.service.AdvanceBookingRules advanceBookingRules;
+
+    // 🚶 Walk-in settings (Settings page). Optional, so test slices without it still start; without it the defaults show.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.paf.aerovisit.service.WalkInService walkInService;
+
     public AdminDashboardController(VisitorRepository repo, BookingSlotRepository bookingRepo, PredictiveAdvisorService aiService) {
         this.repo = repo;
         this.bookingRepo = bookingRepo;
@@ -116,8 +136,11 @@ public class AdminDashboardController {
 
             // Manifest date filter (Pending and Entire Database tabs): only visits booked on that date. Today's Manifest is already one date.
             if (!"all".equals(filter) && !"pending".equals(filter)) dateFilter = null;
+            // 💳 The old "Awaiting Payment Verification" tab is part of Pending Approval now (pay first)
+            if ("payment".equals(filter)) return "redirect:/admin?filter=pending";
 
             List<Visitor> visitors = new ArrayList<>();
+            List<Visitor> waitingForReceipt = new ArrayList<>(); // Pending tab only: the review-only group
             if ("all".equals(filter)) {
                 List<Visitor> rawVisitors = (dateFilter != null) ? repo.findByVisitDate(dateFilter) : repo.findAll();
                 for (Visitor v : rawVisitors) {
@@ -125,13 +148,30 @@ public class AdminDashboardController {
                         visitors.add(v);
                     }
                 }
+            } else if ("walkin".equals(filter)) {
+                // 🚶 Walk-ins (every day), and above them today's verified walk-in payments to check against LANDBANK
+                visitors.addAll(repo.findByBookingCategory(Visitor.CATEGORY_WALK_IN));
+                List<Visitor> paidToday = repo.findByBookingCategoryAndVisitDate(Visitor.CATEGORY_WALK_IN, LocalDate.now()).stream()
+                        .filter(v -> Visitor.PAY_PAID.equals(v.getPaymentStatus()))
+                        .sorted(Comparator.comparing(Visitor::getPaymentVerifiedAt, Comparator.nullsLast(Comparator.<java.time.LocalDateTime>naturalOrder())))
+                        .toList();
+                model.addAttribute("walkInPaidToday", paidToday);
+                model.addAttribute("walkInPaidTotal", com.paf.aerovisit.util.Peso.format(paidToday.stream().mapToLong(Visitor::amountDueCentavos).sum()));
+                model.addAttribute("paymentReturnTo", "/admin?filter=walkin");
             } else if ("pending".equals(filter)) {
-                // Only the requests awaiting review are read (not the whole table); a picked visit date reads just that day
-                List<Visitor> rawVisitors = (dateFilter != null) ? repo.findByVisitDate(dateFilter) : repo.findByStatusIn(AWAITING_REVIEW_STATUSES);
+                // 💳 PAY FIRST, ONE TAB: requests awaiting review with their receipt in (or free), each row showing the ID
+                // photo, the receipt, the billing number and the amount. Below them, for review only, the bookings still
+                // waiting for their receipt (none yet, or a new one after a rejection). Only these two queries are read
+                // (not the whole table); a picked visit date reads just that day, for both groups.
+                List<Visitor> rawVisitors = (dateFilter != null) ? repo.findByVisitDate(dateFilter) : repo.findPendingQueue();
                 for (Visitor v : rawVisitors) {
-                    if (AWAITING_REVIEW_STATUSES.contains(v.getStatus())) {
+                    if (v.inPendingQueue()) {
                         visitors.add(v);
                     }
+                }
+                List<Visitor> rawWaiting = (dateFilter != null) ? rawVisitors : repo.findWaitingForReceipt();
+                for (Visitor v : rawWaiting) {
+                    if (v.waitingForReceipt()) waitingForReceipt.add(v);
                 }
             } else {
                 // Range picker (Today | This Week | This Month). Today is the original single-date query, untouched.
@@ -153,7 +193,7 @@ public class AdminDashboardController {
             // registrations on top). A ?sort= choice from the dropdown always wins; anything else falls back to the
             // tab's default. Rows from before createdAt existed have no timestamp: they count as the oldest and are
             // ordered by ID among themselves.
-            String sortOrder = "asc".equals(sort) || "desc".equals(sort) ? sort : ("all".equals(filter) ? "desc" : "asc");
+            String sortOrder = "asc".equals(sort) || "desc".equals(sort) ? sort : ("all".equals(filter) || "walkin".equals(filter) ? "desc" : "asc");
             Comparator<Visitor> oldestFirst = Comparator
                     .comparing(Visitor::getCreatedAt, Comparator.nullsFirst(Comparator.<java.time.LocalDateTime>naturalOrder()))
                     .thenComparing(Visitor::getId, Comparator.nullsFirst(Comparator.<Long>naturalOrder()));
@@ -162,19 +202,27 @@ public class AdminDashboardController {
             // 🗂️ Pending tab: grouped by visit date (seats left per window in each header) with triage tags for the
             // quick-filter chips. Same requests, same order inside each date; only the grouping is added.
             if ("pending".equals(filter)) {
-                PendingQueue.View queue = buildPendingQueue(visitors, dateFilter != null);
+                model.addAttribute("pendingReadyShown", visitors.size());
+                model.addAttribute("pendingWaitingShown", waitingForReceipt.size());
+                PendingQueue.View queue = buildPendingQueue(visitors, waitingForReceipt, dateFilter != null);
                 visitors = queue.rows();
                 model.addAttribute("pendingGroupStarts", queue.groupStarts());
                 model.addAttribute("pendingRows", queue.rowInfo());
                 model.addAttribute("pendingChips", queue.chips());
                 // Approve / Reject come back here instead of Today's Manifest (AdminReturnTo checks it)
-                model.addAttribute("pendingReturnTo", "/admin?filter=pending&sort=" + sortOrder
+                String pendingReturnTo = "/admin?filter=pending&sort=" + sortOrder
                         + (dateFilter != null ? "&dateFilter=" + dateFilter : "")
-                        + (capacityDate != null ? "&capacityDate=" + capacityDate : ""));
+                        + (capacityDate != null ? "&capacityDate=" + capacityDate : "");
+                model.addAttribute("pendingReturnTo", pendingReturnTo);
+                model.addAttribute("paymentReturnTo", pendingReturnTo); // Reject Receipt / Mark as Paid come back here too
             }
 
             model.addAttribute("listVisitors", visitors);
-            model.addAttribute("currentFilter", filter); 
+            // 🗂️ The Pending Approval tab's label on every tab: "(3 ready · 5 awaiting receipt)" (two COUNT queries; the
+            // bell still counts the ready ones only)
+            model.addAttribute("pendingReadyCount", repo.countPendingQueue());
+            model.addAttribute("pendingAwaitingCount", repo.countWaitingForReceipt());
+            model.addAttribute("currentFilter", filter);
             model.addAttribute("sort", sortOrder);
             model.addAttribute("dateFilter", dateFilter);
             model.addAttribute("range", manifestRange(range));
@@ -407,14 +455,14 @@ public class AdminDashboardController {
         model.addAttribute("rootCauseRows", matrixRows);
     }
 
-    // Statuses listed in the Pending Approval tab; the header bell counts the same requests
+    // Statuses a request may wait for approval in (the Pending Approval tab also needs its receipt in: Visitor.inPendingQueue)
     static final List<String> AWAITING_REVIEW_STATUSES = List.of("PENDING", "VERIFIED", "PENDING_MANUAL_REVIEW");
 
-    // Header notification bell (polled every 30 seconds by the shell script): requests waiting for approval
+    // Header notification bell (polled every 30 seconds by the shell script): the requests in the Pending Approval tab
     @GetMapping("/admin/api/pending-count")
     @ResponseBody
     public ResponseEntity<Map<String, Integer>> getPendingCount() {
-        int count = (int) repo.countByStatusIn(AWAITING_REVIEW_STATUSES);
+        int count = (int) repo.countPendingQueue();
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(Map.of("count", count));
     }
 
@@ -432,6 +480,22 @@ public class AdminDashboardController {
                 .findFirst().orElse("Staff");
         model.addAttribute("accountRole", role);
         model.addAttribute("serverDate", LocalDate.now());
+        // 💱 Admission Prices panel (Director only): the prices in force, or the defaults in test slices
+        com.paf.aerovisit.service.AdmissionPricing.Prices prices = admissionPricing == null
+                ? com.paf.aerovisit.service.AdmissionPricing.Prices.DEFAULT : admissionPricing.current();
+        model.addAttribute("regularPricePesos", java.math.BigDecimal.valueOf(prices.regular(), 2).toPlainString());
+        model.addAttribute("discountedPricePesos", java.math.BigDecimal.valueOf(prices.discounted(), 2).toPlainString());
+        // 💳 Payment panel (Director only): hours to pay and the Landbank link (empty = button hidden)
+        model.addAttribute("paymentWindowHours", paymentWorkflow == null ? com.paf.aerovisit.model.PortalSettings.DEFAULT_PAYMENT_WINDOW_HOURS : paymentWorkflow.windowHours());
+        String landbank = paymentWorkflow == null ? com.paf.aerovisit.model.PortalSettings.DEFAULT_LANDBANK_URL : paymentWorkflow.landbankUrl();
+        model.addAttribute("landbankUrl", landbank == null ? "" : landbank);
+        // 📝 Feedback email panel (Director only): minutes after the time window ends
+        model.addAttribute("feedbackDelayMinutes", feedbackEmails == null ? com.paf.aerovisit.model.PortalSettings.DEFAULT_FEEDBACK_DELAY_MINUTES : feedbackEmails.delayMinutes());
+        // 📅 Advance Bookings panel (Director only): minimum days ahead
+        model.addAttribute("advanceMinDaysAhead", advanceBookingRules == null ? com.paf.aerovisit.model.PortalSettings.DEFAULT_ADVANCE_MIN_DAYS : advanceBookingRules.minDays());
+        // 🚶 Walk-ins panel (Director only): the largest walk-in group and the minutes to pay
+        model.addAttribute("walkInMaxPax", walkInService == null ? com.paf.aerovisit.model.PortalSettings.DEFAULT_WALK_IN_MAX_PAX : walkInService.maxPax());
+        model.addAttribute("walkInPaymentMinutes", walkInService == null ? com.paf.aerovisit.model.PortalSettings.DEFAULT_WALK_IN_MINUTES : walkInService.minutes());
         return "settings";
     }
 
@@ -439,9 +503,9 @@ public class AdminDashboardController {
     // confirmed by a security code mailed to the museum inbox. The Guard's password is managed by the Director.
 
     // Seats per time window on one date, counted the same way as the public calendar: slot capacity minus
-    // seat-holding bookings (Visitor.holdsSeat), and zero when a Master Booking buyout or an emergency closure has the day
+    // seat-holding bookings (Visitor.holdsSeat), and zero when an emergency closure has the day
     private List<Map<String, Object>> buildCapacityForDate(LocalDate targetDate) {
-        boolean closed = repo.findBuyoutDates().contains(targetDate) || repo.findClosureDates().contains(targetDate);
+        boolean closed = repo.findClosureDates().contains(targetDate);
         return capacityRows(targetDate, bookingRepo.findAll(), repo.findByVisitDate(targetDate), closed);
     }
 
@@ -467,6 +531,7 @@ public class AdminDashboardController {
             row.put("window", e.getKey());
             row.put("maxCapacity", e.getValue());
             row.put("remaining", remaining);
+            row.put("booked", booked);
             rows.add(row);
         }
         // Window labels start with a name, so order by the start time inside "(hh:mm AM - ...)"
@@ -476,7 +541,7 @@ public class AdminDashboardController {
 
     // Pending tab: slots, seat-holding bookings and closed days are read once for every upcoming date in the queue
     // (not once per group); overdue and undated requests need no seat counts
-    private PendingQueue.View buildPendingQueue(List<Visitor> requests, boolean singleDay) {
+    private PendingQueue.View buildPendingQueue(List<Visitor> requests, List<Visitor> waiting, boolean singleDay) {
         LocalDate today = LocalDate.now();
         LocalDate first = null, last = null;
         for (Visitor v : requests) {
@@ -486,20 +551,20 @@ public class AdminDashboardController {
             if (last == null || d.isAfter(last)) last = d;
         }
         if (first == null) {
-            return PendingQueue.build(requests, today, d -> List.of(), java.util.Set.of(), singleDay);
+            return PendingQueue.build(requests, waiting, today, d -> List.of(), java.util.Set.of(), singleDay);
         }
         List<BookingSlot> slots = bookingRepo.findAll();
         Map<LocalDate, List<Visitor>> seatHolders = new HashMap<>();
         for (Visitor v : repo.findByVisitDateBetweenAndStatusIn(first, last, Visitor.SEAT_HOLDING_STATUSES)) {
             seatHolders.computeIfAbsent(v.getVisitDate(), k -> new ArrayList<>()).add(v);
         }
-        java.util.Set<LocalDate> closed = new java.util.HashSet<>(repo.findBuyoutDates());
-        closed.addAll(repo.findClosureDates());
-        return PendingQueue.build(requests, today, d -> {
+        java.util.Set<LocalDate> closed = new java.util.HashSet<>(repo.findClosureDates());
+        return PendingQueue.build(requests, waiting, today, d -> {
             List<PendingQueue.SeatWindow> windows = new ArrayList<>();
             for (Map<String, Object> r : capacityRows(d, slots, seatHolders.getOrDefault(d, List.of()), closed.contains(d))) {
                 String window = (String) r.get("window");
-                windows.add(new PendingQueue.SeatWindow(window, PendingQueue.windowName(window), (Integer) r.get("maxCapacity"), (Integer) r.get("remaining")));
+                windows.add(new PendingQueue.SeatWindow(window, PendingQueue.windowName(window), (Integer) r.get("maxCapacity"),
+                        (Integer) r.get("remaining"), (Integer) r.get("booked")));
             }
             return windows;
         }, closed, singleDay);
@@ -756,7 +821,8 @@ public class AdminDashboardController {
         
         for (Visitor visitor : listVisitors) {
             table.addCell(new Phrase(String.valueOf(visitor.getId()), fontData));
-            String nameAddon = (visitor.getGroupSize() > 1) ? " (x" + visitor.getGroupSize() + ")" : "";
+            String nameAddon = ((visitor.getGroupSize() > 1) ? " (x" + visitor.getGroupSize() + ")" : "")
+                    + (visitor.walkIn() ? " [Walk-in]" : ""); // 🚶
             table.addCell(new Phrase(visitor.getName() + nameAddon, fontData));
             table.addCell(new Phrase(visitor.getVisitDate() != null ? visitor.getVisitDate().toString() : "", fontData));
             table.addCell(new Phrase(visitor.getPurpose(), fontData));
@@ -883,9 +949,12 @@ public class AdminDashboardController {
         }
         List<Visitor> visitors = repo.findRealVisitorsForExport(from, to);
 
-        String[] headers = { "Registry ID", "Civilian Name", "Group Size", "Email Contact", "Phone Number", "Visit Date", "Declared Purpose",
+        // 💱 Admission columns are blank for bookings made before categories existed; the comment column stays last
+        String[] headers = { "Registry ID", "Civilian Name", "Group Size", "Discounted", "Regular", "Free", "Admission Total (PHP)",
+            "Billing Number", "Payment Status", "Paid Verified By", "Paid Verified At", "Payment Note",
+            "Email Contact", "Phone Number", "Visit Date", "Declared Purpose",
             "Live Status", "Time of Entry", "Assigned Guard", "Feedback Rating", "Time of Exit", "Feedback Zone", "Topic Category",
-            "AI Sentiment", "Feedback Comment" };
+            "AI Sentiment", "Terms Version", "Terms Accepted At", "Booking Type", "Feedback Comment" };
         int commentColumn = headers.length - 1;
 
         try (XSSFWorkbook workbook = new XSSFWorkbook()) {
@@ -903,6 +972,8 @@ public class AdminDashboardController {
             CellStyle wrapStyle = workbook.createCellStyle();
             wrapStyle.setWrapText(true);
             wrapStyle.setVerticalAlignment(VerticalAlignment.TOP);
+            CellStyle pesoStyle = workbook.createCellStyle();
+            pesoStyle.setDataFormat(workbook.createDataFormat().getFormat("#,##0.00"));
 
             Row headerRow = sheet.createRow(0);
             for (int i = 0; i < headers.length; i++) {
@@ -927,20 +998,48 @@ public class AdminDashboardController {
                 row.createCell(0).setCellValue(v.getId());
                 row.createCell(1).setCellValue(v.getName());
                 row.createCell(2).setCellValue(v.getGroupSize());
-                row.createCell(3).setCellValue(v.getEmail());
-                row.createCell(4).setCellValue(v.getPhone());
-                Cell visitDate = row.createCell(5);
+                if (v.admissionCounted()) {
+                    row.createCell(3).setCellValue(v.getDiscountedCount());
+                    row.createCell(4).setCellValue(v.getRegularCount());
+                    row.createCell(5).setCellValue(v.getFreeCount());
+                }
+                if (v.getAdmissionTotalCentavos() != null) {
+                    // Centavos to pesos for display only (exact to the centavo at any realistic amount)
+                    Cell total = row.createCell(6);
+                    total.setCellValue(java.math.BigDecimal.valueOf(v.getAdmissionTotalCentavos(), 2).doubleValue());
+                    total.setCellStyle(pesoStyle);
+                }
+                // 💳 Payment (blank for bookings from before payment existed)
+                if (v.getBillingNumber() != null) row.createCell(7).setCellValue(v.getBillingNumber());
+                if (v.getPaymentStatus() != null) row.createCell(8).setCellValue(v.paymentStatusLabel());
+                if (v.getPaymentVerifiedBy() != null) row.createCell(9).setCellValue(v.getPaymentVerifiedBy());
+                if (v.getPaymentVerifiedAt() != null) {
+                    Cell verified = row.createCell(10);
+                    verified.setCellValue(v.getPaymentVerifiedAt());
+                    verified.setCellStyle(dateTimeStyle);
+                }
+                if (v.getPaymentVerificationNote() != null) row.createCell(11).setCellValue(v.getPaymentVerificationNote());
+                row.createCell(12).setCellValue(v.getEmail());
+                row.createCell(13).setCellValue(v.getPhone());
+                Cell visitDate = row.createCell(14);
                 visitDate.setCellValue(v.getVisitDate());
                 visitDate.setCellStyle(dateStyle);
-                row.createCell(6).setCellValue(v.getPurpose());
-                row.createCell(7).setCellValue(v.getStatus());
-                timeCell(row.createCell(8), v.getCheckInTime(), dateTimeStyle);
-                row.createCell(9).setCellValue(guard);
-                row.createCell(10).setCellValue(rating);
-                timeCell(row.createCell(11), v.getCheckOutTime(), dateTimeStyle);
-                row.createCell(12).setCellValue(zone);
-                row.createCell(13).setCellValue(topic);
-                row.createCell(14).setCellValue(sentiment);
+                row.createCell(15).setCellValue(v.getPurpose());
+                row.createCell(16).setCellValue(v.getStatus());
+                timeCell(row.createCell(17), v.getCheckInTime(), dateTimeStyle);
+                row.createCell(18).setCellValue(guard);
+                row.createCell(19).setCellValue(rating);
+                timeCell(row.createCell(20), v.getCheckOutTime(), dateTimeStyle);
+                row.createCell(21).setCellValue(zone);
+                row.createCell(22).setCellValue(topic);
+                row.createCell(23).setCellValue(sentiment);
+                row.createCell(24).setCellValue(v.getTermsVersion() == null ? "" : v.getTermsVersion());
+                if (v.getTermsAcceptedAt() != null) {
+                    Cell accepted = row.createCell(25);
+                    accepted.setCellValue(v.getTermsAcceptedAt());
+                    accepted.setCellStyle(dateTimeStyle);
+                }
+                row.createCell(26).setCellValue(v.categoryLabel()); // 🚶 Advance / Walk-in
                 Cell comment = row.createCell(commentColumn);
                 comment.setCellValue(v.getFeedback());
                 comment.setCellStyle(wrapStyle);

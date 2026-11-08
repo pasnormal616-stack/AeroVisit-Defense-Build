@@ -167,11 +167,14 @@ class ConnectionPoolScalabilityTest {
         visitor("Rejected Person", "REJECTED");
 
         for (String page : new String[] {"/admin", "/admin?filter=pending", "/admin?filter=all", "/admin?range=week",
-                "/admin/analytics", "/guard/dashboard", "/admin/staff", "/admin/calendar", "/admin/scanner",
+                "/admin/analytics", "/guard/dashboard", "/admin/staff", "/admin/scanner",
                 "/admin/blacklist", "/admin/settings", "/admin/content", "/admin/api/pending-count", "/api/notifications",
                 "/api/zones"}) {
             assertThat(mvc.perform(get(page).with(DIRECTOR)).andReturn().getResponse().getStatus()).as(page).isEqualTo(200);
         }
+        // The read-only Duty Roster is the guards' page (the Director is redirected to Slots & Staff -> Duty Roster)
+        assertThat(mvc.perform(get("/admin/calendar").with(user("guard").roles("GUARD"))).andReturn().getResponse().getStatus())
+            .as("/admin/calendar").isEqualTo(200);
         for (String page : new String[] {"/", "/manage-booking"}) {
             assertThat(mvc.perform(get(page)).andReturn().getResponse().getStatus()).as(page).isEqualTo(200);
         }

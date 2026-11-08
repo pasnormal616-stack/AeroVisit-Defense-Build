@@ -55,7 +55,8 @@
 
         <div class="av-nav-group" th:if="${isGuard or isDirector}">
             <div class="av-nav-heading">Security</div>
-            <a href="/admin/calendar" class="av-nav-link" th:classappend="${active == 'roster'} ? 'is-active'" th:attr="aria-current=${active == 'roster'} ? 'page'">
+            <!-- Guards only: the Director manages the roster in Slots & Staff -> Duty Roster (/admin/calendar redirects there) -->
+            <a th:if="${isGuard}" href="/admin/calendar" class="av-nav-link" th:classappend="${active == 'roster'} ? 'is-active'" th:attr="aria-current=${active == 'roster'} ? 'page'">
                 <i class="bi bi-calendar-week"></i><span>Duty Roster</span>
             </a>
             <a href="/admin/blacklist" class="av-nav-link" th:classappend="${active == 'blacklist'} ? 'is-active'" th:attr="aria-current=${active == 'blacklist'} ? 'page'">
@@ -203,7 +204,12 @@
             // Icon and colour per type; a person gets their initials with the icon as a small badge
             var LOOK = {
                 BOOKING_REQUEST:        ['bi-calendar-plus', 'primary', true],
-                MASTER_BOOKING_REQUEST: ['bi-star-fill', 'gold', true],
+                MASTER_BOOKING_REQUEST: ['bi-star-fill', 'gold', true], // older rows only (feature removed)
+                PAYMENT_PROOF_SUBMITTED: ['bi-receipt', 'primary', true],
+                PAYMENT_EXPIRED:        ['bi-hourglass-bottom', 'neutral', true],
+                BOOKING_REINSTATED:     ['bi-arrow-counterclockwise', 'success', true],
+                UNREVIEWED_PAID:        ['bi-calendar-event', 'gold', true],
+                WALK_IN_PAYMENT_PROOF:  ['bi-receipt', 'primary', true],
                 BOOKING_RESCHEDULED:    ['bi-arrow-repeat', 'info', true],
                 BOOKING_CANCELLED:      ['bi-calendar-x', 'neutral', true],
                 SLOT_FILLING:           ['bi-hourglass-split', 'gold', false],

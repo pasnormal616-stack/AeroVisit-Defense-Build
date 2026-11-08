@@ -22,6 +22,14 @@ public class SeatReservationService {
         }
     }
 
+    // Thrown (and the transaction rolled back) when the booking is no longer PAYMENT_EXPIRED: already reinstated by
+    // another click or tab, deleted, or changed by a parallel action
+    public static class NotReinstatableException extends RuntimeException {
+        public NotReinstatableException() {
+            super("Booking is no longer payment-expired");
+        }
+    }
+
     private final BookingSlotRepository bookingRepo;
     private final VisitorRepository repo;
 
@@ -41,6 +49,24 @@ public class SeatReservationService {
         if ((held == null ? 0 : held) + Math.max(1, visitor.getGroupSize()) > capacity) {
             throw new CapacityFullException();
         }
+        return repo.save(visitor);
+    }
+
+    // ♻️ Reinstate (Director): saves a PAYMENT_EXPIRED booking as APPROVED in its (possibly new) date + time window, only
+    // if it is STILL payment-expired (conditional UPDATE, so two clicks or a parallel action can't reinstate it twice)
+    // and its group still fits. The slot lock comes first, as above; a full slot rolls the claim back too.
+    @Transactional
+    public Visitor reinstateIfSeatsRemain(Visitor visitor) {
+        List<BookingSlot> slots = bookingRepo.lockBySlotDateAndTimeWindow(visitor.getVisitDate(), visitor.getTimeWindow());
+        if (repo.claimStatus(visitor.getId(), Visitor.STATUS_PAYMENT_EXPIRED, "APPROVED") != 1) {
+            throw new NotReinstatableException();
+        }
+        int capacity = slots.stream().mapToInt(BookingSlot::getMaxCapacity).sum();
+        Long held = repo.sumSeatsHeld(visitor.getVisitDate(), visitor.getTimeWindow(), Visitor.SEAT_HOLDING_STATUSES, visitor.getId());
+        if ((held == null ? 0 : held) + Math.max(1, visitor.getGroupSize()) > capacity) {
+            throw new CapacityFullException();
+        }
+        visitor.setStatus("APPROVED");
         return repo.save(visitor);
     }
 }

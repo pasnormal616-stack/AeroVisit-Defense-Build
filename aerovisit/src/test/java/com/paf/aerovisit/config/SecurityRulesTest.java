@@ -39,7 +39,7 @@ class SecurityRulesTest {
 
     @RestController
     static class StubController {
-        @RequestMapping({"/admin/**", "/uploads/**", "/check-status", "/leave-feedback", "/guard/**", "/api/booking/**",
+        @RequestMapping({"/admin/**", "/uploads/**", "/check-status", "/leave-feedback", "/guard/**",
                          "/forgot-password", "/forgot-password/**"})
         String ok() {
             return "ok";
@@ -137,10 +137,10 @@ class SecurityRulesTest {
             .andExpect(status().isOk());
     }
 
-    // --- Least privilege: guards work the gate; booking review (approve, reject, KYC) is the Director's ---
+    // --- Least privilege: guards work the gate; booking review (approve, reject) is the Director's ---
 
     @ParameterizedTest
-    @ValueSource(strings = {"/admin/approve/5", "/admin/reject/5", "/admin/reject-visitor", "/admin/api/pending-count", "/api/booking/verify-id"})
+    @ValueSource(strings = {"/admin/approve/5", "/admin/reject/5", "/admin/reject-visitor", "/admin/api/pending-count"})
     @WithMockUser(roles = "GUARD")
     void guardIsForbiddenFromBookingReview(String path) throws Exception {
         mvc.perform(get(path)).andExpect(status().isForbidden());
@@ -148,7 +148,7 @@ class SecurityRulesTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"/admin/approve/5", "/admin/reject/5", "/admin/reject-visitor", "/admin/api/pending-count", "/api/booking/verify-id"})
+    @ValueSource(strings = {"/admin/approve/5", "/admin/reject/5", "/admin/reject-visitor", "/admin/api/pending-count"})
     @WithMockUser(roles = "DIRECTOR")
     void directorKeepsBookingReview(String path) throws Exception {
         mvc.perform(post(path).with(csrf())).andExpect(status().isOk());

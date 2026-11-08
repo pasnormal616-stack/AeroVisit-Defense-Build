@@ -43,9 +43,11 @@ import com.paf.aerovisit.service.PredictiveAdvisorService;
 @WithMockUser(username = "director", roles = "DIRECTOR")
 class ExportLogTest {
 
-    private static final List<String> HEADERS = List.of("Registry ID", "Civilian Name", "Group Size", "Email Contact", "Phone Number",
+    private static final List<String> HEADERS = List.of("Registry ID", "Civilian Name", "Group Size", "Discounted", "Regular", "Free",
+        "Admission Total (PHP)", "Billing Number", "Payment Status", "Paid Verified By", "Paid Verified At", "Payment Note",
+        "Email Contact", "Phone Number",
         "Visit Date", "Declared Purpose", "Live Status", "Time of Entry", "Assigned Guard", "Feedback Rating", "Time of Exit",
-        "Feedback Zone", "Topic Category", "AI Sentiment", "Feedback Comment");
+        "Feedback Zone", "Topic Category", "AI Sentiment", "Terms Version", "Terms Accepted At", "Booking Type", "Feedback Comment");
 
     @Autowired
     private MockMvc mvc;
@@ -91,9 +93,23 @@ class ExportLogTest {
     }
 
     @Test
-    void excelKeepsAll16ColumnsFormattedAndAsksOnlyForTheLast30Days() throws Exception {
+    void excelKeepsAll28ColumnsFormattedAndAsksOnlyForTheLast30Days() throws Exception {
         Visitor tricky = reviewed(3, "=HYPERLINK(\"http://x\")", 1, "Restrooms/Facilities", "Facilities", "NEGATIVE",
             "Mabaho ang CR, walang tubig.\nPlease fix \"agad\" 😡 ñ");
+        // 💱 admission counts and total, and the consent record (both blank on the older "pending" booking below)
+        tricky.setDiscountedCount(2);
+        tricky.setRegularCount(3);
+        tricky.setFreeCount(1);
+        tricky.setGroupSize(6);
+        tricky.setAdmissionTotalCentavos(65_000L);
+        tricky.setTermsVersion("2026-11");
+        tricky.setTermsAcceptedAt(LocalDateTime.of(2026, 9, 19, 8, 0));
+        // 💳 payment columns (blank on the older booking below)
+        tricky.setBillingNumber("000123");
+        tricky.setPaymentStatus(Visitor.PAY_PAID);
+        tricky.setPaymentVerifiedBy("director");
+        tricky.setPaymentVerifiedAt(LocalDateTime.of(2026, 9, 19, 10, 30));
+        tricky.setPaymentVerificationNote("verified in Landbank report");
         Visitor pending = visitor(2, "Santos, Ana", "PENDING", null);
         pending.setPhone(null);
         pending.setPurpose(null);
@@ -112,7 +128,7 @@ class ExportLogTest {
             Sheet sheet = book.getSheetAt(0);
             assertThat(sheet.getLastRowNum()).isEqualTo(3);
 
-            // header: the same 16 columns, bold, top row frozen
+            // header: the same 28 columns, bold, top row frozen
             assertThat(rowText(sheet.getRow(0))).isEqualTo(HEADERS);
             assertThat(book.getFontAt(sheet.getRow(0).getCell(0).getCellStyle().getFontIndex()).getBold()).isTrue();
             PaneInformation pane = sheet.getPaneInformation();
@@ -121,8 +137,8 @@ class ExportLogTest {
             assertThat(pane.getVerticalSplitLeftColumn()).isEqualTo((short) 0);
 
             // comment column: fixed width with wrap text; the other columns are auto-sized away from the default
-            assertThat(sheet.getColumnWidth(15)).isEqualTo(10_000);
-            CellStyle commentStyle = sheet.getRow(1).getCell(15).getCellStyle();
+            assertThat(sheet.getColumnWidth(27)).isEqualTo(10_000);
+            CellStyle commentStyle = sheet.getRow(1).getCell(27).getCellStyle();
             assertThat(commentStyle.getWrapText()).isTrue();
             assertThat(sheet.getColumnWidth(1)).isNotEqualTo(sheet.getDefaultColumnWidth() * 256);
 
@@ -130,16 +146,21 @@ class ExportLogTest {
             Row first = sheet.getRow(1);
             assertThat(first.getCell(0).getNumericCellValue()).isEqualTo(3);
             assertThat(first.getCell(1).getCellType()).isEqualTo(org.apache.poi.ss.usermodel.CellType.STRING);
-            assertThat(first.getCell(5).getLocalDateTimeCellValue().toLocalDate()).isEqualTo(today.minusDays(3));
-            assertThat(rowText(first)).containsExactly("3", "=HYPERLINK(\"http://x\")", "1", "v3@example.com", "+63 917-555-0103",
+            assertThat(first.getCell(14).getLocalDateTimeCellValue().toLocalDate()).isEqualTo(today.minusDays(3));
+            assertThat(first.getCell(6).getNumericCellValue()).isEqualTo(650.0); // centavos shown as pesos
+            assertThat(rowText(first)).containsExactly("3", "=HYPERLINK(\"http://x\")", "6", "2", "3", "1", "650.00",
+                "000123", "Paid", "director", "2026-09-19 10:30", "verified in Landbank report",
+                "v3@example.com", "+63 917-555-0103",
                 today.minusDays(3).toString(), "Leisure", "CHECKED-OUT", "2026-09-20 09:15", "guard", "1 Stars", "2026-09-20 11:45",
-                "Restrooms/Facilities", "Facilities", "NEGATIVE", "Mabaho ang CR, walang tubig.\nPlease fix \"agad\" 😡 ñ");
-            // not reviewed: old placeholders kept, nulls are empty (no literal "null"), feedback columns blank
-            assertThat(rowText(sheet.getRow(2))).containsExactly("2", "Santos, Ana", "1", "v2@example.com", "", "", "", "PENDING",
-                "N/A", "N/A", "No Review", "N/A", "", "", "", "");
+                "Restrooms/Facilities", "Facilities", "NEGATIVE", "2026-11", "2026-09-19 08:00", "Advance",
+                "Mabaho ang CR, walang tubig.\nPlease fix \"agad\" 😡 ñ");
+            // not reviewed and made before admission categories and the Terms popup: those columns are blank, no "null"
+            assertThat(rowText(sheet.getRow(2))).containsExactly("2", "Santos, Ana", "1", "", "", "", "", "", "", "", "", "",
+                "v2@example.com", "", "", "",
+                "PENDING", "N/A", "N/A", "No Review", "N/A", "", "", "", "", "", "Advance", "");
             // reviewed without AI result: same labels as the Analytics page
-            assertThat(rowText(sheet.getRow(3)).subList(10, 16)).containsExactly("2 Stars", "2026-09-20 11:45", "Unspecified",
-                "Unclassified", "Not Analysed", "");
+            assertThat(rowText(sheet.getRow(3)).subList(19, 28)).containsExactly("2 Stars", "2026-09-20 11:45", "Unspecified",
+                "Unclassified", "Not Analysed", "", "", "Advance", "");
         }
     }
 

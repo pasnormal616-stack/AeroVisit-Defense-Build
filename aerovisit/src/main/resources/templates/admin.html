@@ -10,7 +10,7 @@
 </head>
 <body class="av-app"
       th:with="navKey=${currentFilter == 'pending' ? 'approvals' : (currentFilter == 'all' ? 'audit' : 'manifest')},
-               pageTitle=${currentFilter == 'pending' ? 'Approvals Queue' : (currentFilter == 'all' ? 'Audit Log' : 'Active Visitors')}">
+               pageTitle=${currentFilter == 'pending' ? 'Approvals Queue' : (currentFilter == 'all' ? 'Audit Log' : (currentFilter == 'walkin' ? 'Walk-ins' : 'Active Visitors'))}">
 
 <a href="#main" class="visually-hidden-focusable">Skip to content</a>
 <th:block th:replace="~{fragments/shell :: sidebar(${navKey})}"></th:block>
@@ -35,7 +35,9 @@
     <div class="av-toolbar">
         <nav class="av-tabs" aria-label="Manifest filter">
             <a href="/admin?filter=today" class="av-tab" th:classappend="${currentFilter == 'today' || currentFilter == null} ? 'is-active'"><i class="bi bi-calendar-day"></i> Today's Manifest</a>
-            <a href="/admin?filter=pending" class="av-tab" th:classappend="${currentFilter == 'pending'} ? 'is-active'"><i class="bi bi-hourglass-split"></i> Pending Approval</a>
+            <a href="/admin?filter=pending" class="av-tab" th:classappend="${currentFilter == 'pending'} ? 'is-active'"><i class="bi bi-hourglass-split"></i> Pending Approval<span th:if="${pendingReadyCount != null}" class="av-tab-count"
+                th:text="${' (' + pendingReadyCount + ' ready · ' + pendingAwaitingCount + ' awaiting receipt)'}"> (3 ready · 5 awaiting receipt)</span></a>
+            <a href="/admin?filter=walkin" class="av-tab" th:classappend="${currentFilter == 'walkin'} ? 'is-active'"><i class="bi bi-person-walking"></i> Walk-ins</a>
             <a href="/admin?filter=all" class="av-tab" th:classappend="${currentFilter == 'all'} ? 'is-active'"><i class="bi bi-database"></i> Entire Database</a>
         </nav>
         <div class="av-toolbar-meta av-mono">
@@ -104,6 +106,29 @@
                     <p class="av-label mb-0">Current tracked personnel inside the facility</p>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- 🚶 WALK-IN PAYMENTS TODAY (Walk-ins tab): verified at the gate; check them against LANDBANK's records the same day -->
+    <div class="av-panel overflow-hidden mb-4" th:if="${walkInPaidToday != null}">
+        <div class="av-panel-head">
+            <span><i class="bi bi-cash-coin me-2"></i>Walk-in Payments Today</span>
+            <span class="av-label" th:text="${walkInPaidToday.size()} + ' payment(s) · ' + ${walkInPaidTotal}">0 payment(s)</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-custom mb-0" id="walkInPaymentsToday">
+                <thead><tr><th>Billing Number</th><th>Amount</th><th>Verified By</th><th>Verified At</th><th>Receipt</th></tr></thead>
+                <tbody>
+                    <tr th:each="p : ${walkInPaidToday}">
+                        <td class="av-mono" th:text="${p.billingNumber}"></td>
+                        <td class="av-mono" th:text="${p.amountDueText()}"></td>
+                        <td th:text="${p.paymentVerifiedBy}"></td>
+                        <td class="av-mono" th:text="${p.paymentVerifiedAt != null} ? ${#temporals.format(p.paymentVerifiedAt, 'hh:mm a')} : ''"></td>
+                        <td><a th:if="${p.receiptImageUrl != null}" th:href="@{/admin/payments/{id}/receipt(id=${p.id})}" target="_blank" rel="noopener">View receipt</a></td>
+                    </tr>
+                    <tr th:if="${walkInPaidToday.isEmpty()}"><td colspan="5" class="av-empty">No walk-in payments verified today.</td></tr>
+                </tbody>
+            </table>
         </div>
     </div>
 
@@ -201,6 +226,14 @@
                     <tr th:if="${currentFilter == 'pending' and !#lists.isEmpty(listVisitors)}" id="triageEmpty" hidden>
                         <td colspan="6" class="av-empty-row">No requests match this filter.</td>
                     </tr>
+                    <!-- 🗂️ Pending tab, section 1 of 2: the requests that can be approved (section 2, "Waiting for payment
+                         receipt", is the last group below: review only) -->
+                    <tr th:if="${currentFilter == 'pending' and !#lists.isEmpty(listVisitors)}" class="av-section-row">
+                        <th colspan="6" scope="rowgroup">
+                            <span class="av-section-title" th:text="${'Ready for approval · ' + pendingReadyShown}">Ready for approval · 3</span>
+                            <span th:if="${pendingReadyShown == 0}" class="av-section-note">No requests are ready for approval yet.</span>
+                        </th>
+                    </tr>
                     <th:block th:each="visitor : ${listVisitors}">
                     <!-- DATE GROUP HEADER (Pending tab): Overdue, Today, Tomorrow open; later dates collapsed. Seats left per
                          time window are counted like the Daily Capacity Tracker (AdminDashboardController.capacityRows). -->
@@ -212,11 +245,12 @@
                                 <button type="button" class="av-group-toggle" th:attr="data-group-toggle=${g.key},aria-expanded=${g.open}">
                                     <i class="bi bi-chevron-right av-group-chevron" aria-hidden="true"></i>
                                     <span class="av-group-title" th:text="${g.label}">Today</span>
-                                    <span class="av-group-meta" th:text="${g.requests + (g.requests == 1 ? ' request' : ' requests') + ' · ' + g.people + (g.people == 1 ? ' person' : ' people')}">1 request</span>
+                                    <span class="av-group-meta" th:if="${g.tone != 'awaiting'}" th:text="${g.requests + (g.requests == 1 ? ' request' : ' requests') + ' · ' + g.people + (g.people == 1 ? ' person' : ' people')}">1 request</span>
+                                    <span class="av-group-meta" th:if="${g.tone == 'awaiting'}" th:text="${g.requests + (g.requests == 1 ? ' booking' : ' bookings') + ' · ' + g.people + (g.people == 1 ? ' person' : ' people') + ' · review only'}">5 bookings · review only</span>
                                     <span class="av-group-match" data-group-match hidden></span>
                                 </button>
-                                <span class="av-group-seats" th:if="${g.tone != 'overdue' and g.tone != 'nodate'}">
-                                    <span th:if="${g.closed}" class="av-seat av-seat--full">Closed: buyout or emergency closure</span>
+                                <span class="av-group-seats" th:if="${g.tone != 'overdue' and g.tone != 'nodate' and g.tone != 'awaiting'}">
+                                    <span th:if="${g.closed}" class="av-seat av-seat--full">Closed: emergency closure</span>
                                     <th:block th:unless="${g.closed}">
                                         <span th:if="${#lists.isEmpty(g.windows)}" class="av-seat av-seat--none">No time slots set for this date</span>
                                         <span th:each="w : ${g.windows}" class="av-seat"
@@ -230,6 +264,7 @@
                     </tr>
                     <tr th:with="pr=${pendingRows != null ? pendingRows.get(visitor.id) : null}"
                         th:attr="data-group=${pr?.group},data-tags=${pr?.tags},data-search=${pr?.search},data-visitor-id=${visitor.id}"
+                        th:classappend="${visitor.waitingForReceipt()} ? 'av-row--waiting'"
                         th:hidden="${pr != null and pr.collapsed}">
                         <!-- Civilian Profile -->
                         <td class="ps-4">
@@ -240,19 +275,6 @@
                                         <span th:text="${visitor.name}"></span>
                                         <span class="av-badge av-badge--new ms-1" th:if="${visitor.status == 'PENDING' and visitor.createdAt != null and visitor.createdAt.isAfter(#temporals.createNow().minusHours(24))}">NEW</span>
                                         <span class="av-badge av-badge--tag ms-1" th:if="${visitor.visitorType != null}" th:text="${visitor.visitorType}"></span>
-                                        <!-- Identity: the KYC check only sets ocrNameMatch after BOTH the ID portrait matched the
-                                             live selfie (SFace) and Tesseract read both names on the ID (green), else yellow.
-                                             Shown for every booking, Master Bookings included (zero-trust KYC). -->
-                                        <span th:if="${visitor.ocrNameMatch}" class="av-badge av-badge--ok ms-1" title="Both checks passed: the face on the ID matched the live selfie, and the name on the ID matched this booking">
-                                            <i class="bi bi-patch-check-fill me-1" aria-hidden="true"></i>Identity Verified (face + name)</span>
-                                        <span th:unless="${visitor.ocrNameMatch}" class="av-badge av-badge--warn ms-1" title="Not confirmed automatically (face didn't match, photo unclear, or name not read): compare the photos in View KYC before approving">
-                                            <i class="bi bi-exclamation-triangle-fill me-1" aria-hidden="true"></i>Identity Unverified</span>
-                                        <!-- 🧬 Same face as another booking on this date (VisitorPortalController.duplicateFace): compare both in View KYC -->
-                                        <span th:if="${visitor.possibleDuplicateOf != null}" class="av-badge av-badge--warn ms-1" title="This face is close to another booking on the same date. Compare both bookings' photos in View KYC: it may be the same person under another email, or only a look-alike">
-                                            <i class="bi bi-people-fill me-1" aria-hidden="true"></i><span th:text="'Possible duplicate of ' + ${visitor.possibleDuplicateOf}">Possible duplicate</span></span>
-                                        <!-- 🪪 The name (or a companion's) resembles a banned visitor's (IdentityBans.nameBan): compare with the ban's photo -->
-                                        <a th:if="${visitor.possibleBanMatch != null}" href="/admin/blacklist" class="av-badge av-badge--warn ms-1 text-decoration-none" title="This booking's name, or a companion's, resembles a banned visitor. Compare the photos with the Banned Visitors page before approving: it may be the same person or only someone with a similar name">
-                                            <i class="bi bi-person-exclamation me-1" aria-hidden="true"></i><span th:text="'Possible banned visitor (' + ${visitor.possibleBanMatch} + ')'">Possible banned visitor</span></a>
                                     </div>
                                     <div class="av-person-meta" th:if="${visitor.age != null and visitor.sex != null}" th:text="${visitor.sex} + ', ' + ${visitor.age} + ' yrs old'"></div>
                                     <div class="av-person-meta" th:text="${visitor.email} + ' • ' + ${visitor.contactNumber != null ? visitor.contactNumber : visitor.phone}"></div>
@@ -272,36 +294,135 @@
                             <div class="av-cell-sub" th:if="${visitor.createdAt == null}">N/A</div>
                         </td>
 
-                        <!-- Clearance Details -->
-                        <td>
-                            <div class="av-cell-strong av-mono" th:text="${visitor.visitDate}"></div>
-                            <div class="av-cell-sub mb-1" th:if="${visitor.affiliation != null}">
-                                <i class="bi bi-building me-1"></i><span th:text="${visitor.affiliation}"></span>
+                        <!-- Clearance Details: at most 4 short lines; everything else is in the collapsed "Details" below
+                             (expands in place, collapsed again on every page load). Same cell on every tab. -->
+                        <td class="av-booking-cell"
+                            th:with="chip=${visitor.paymentChipLabel()},total=${visitor.totalShort()},payBy=${visitor.payByApplies()},
+                                     special=${visitor.specialConsideration != null and visitor.specialConsideration != 'Not Applicable'},
+                                     rejectNote=${visitor.paymentStatus == 'PAYMENT_REJECTED' and visitor.paymentRejectionReason != null},
+                                     hasDetails=${visitor.hasBookingDetails() or (isDirector and visitor.status == 'PAYMENT_EXPIRED')}">
+                            <!-- 1. Visit date with weekday, and the time window -->
+                            <div class="av-cell-strong av-booking-when">
+                                <span th:if="${visitor.visitDate != null}" th:text="${#temporals.format(visitor.visitDate, 'EEE, MMM d, yyyy')}"></span>
+                                <span th:if="${visitor.visitDate == null}">No date</span>
+                                <span th:unless="${#strings.isEmpty(visitor.timeWindow)}" class="av-booking-window" th:text="${'· ' + visitor.timeWindow}"></span>
                             </div>
-                            <span class="av-badge av-badge--tag" th:text="${#strings.replace(#strings.toLowerCase(visitor.purpose), '_', ' ')}"></span>
-                            <span th:if="${visitor.specialConsideration != 'Not Applicable' and visitor.specialConsideration != null}" class="av-badge av-badge--warn ms-1" th:text="${visitor.specialConsideration}"></span>
-                            <span th:if="${visitor.groupSize > 1}" class="av-badge av-badge--info ms-1" th:text="'+' + ${visitor.groupSize - 1} + ' Guests'"></span>
-                            <div th:if="${visitor.masterBooking}" class="av-justification">
-                                <div class="av-justification-label"><i class="bi bi-file-earmark-text me-1"></i>Event Justification</div>
-                                <div th:if="${not #strings.isEmpty(visitor.eventJustification)}" class="av-justification-text" th:text="${visitor.eventJustification}"></div>
-                                <div th:if="${#strings.isEmpty(visitor.eventJustification)}" class="av-justification-text av-justification-text--missing">No justification provided.</div>
+                            <!-- 2. Affiliation · purpose · special consideration, only the parts present -->
+                            <div class="av-cell-sub av-dot-list"
+                                 th:if="${not #strings.isEmpty(visitor.affiliation) or not #strings.isEmpty(visitor.purpose) or special}">
+                                <span th:unless="${#strings.isEmpty(visitor.affiliation)}" th:text="${visitor.affiliation}"></span>
+                                <span th:unless="${#strings.isEmpty(visitor.purpose)}" th:text="${#strings.replace(#strings.toLowerCase(visitor.purpose), '_', ' ')}"></span>
+                                <span th:if="${special}"><span class="av-badge av-badge--warn" th:text="${visitor.specialConsideration}"></span></span>
+                            </div>
+                            <!-- 3. Visitors and the total (shown once), plus ONE payment chip coloured by meaning -->
+                            <div class="av-booking-pay">
+                                <span class="av-booking-count" th:text="${visitor.visitorsText() + (#strings.isEmpty(total) ? '' : ' · ' + total)}">4 visitors · ₱400.00</span>
+                                <span th:if="${not #strings.isEmpty(chip) and chip != total}" class="av-badge"
+                                      th:classappend="${'av-badge--' + visitor.paymentChipTone()}" th:text="${chip}"></span>
+                            </div>
+                            <!-- 4. Flags only when they apply (ban match, Walk-in, payment deadline), then the Details toggle -->
+                            <div class="av-booking-flags" th:if="${visitor.possibleBanMatch != null or visitor.walkIn() or payBy or hasDetails}">
+                                <!-- 🪪 The name (or, on older bookings, a companion's) resembles a banned visitor's (IdentityBans.nameBan) -->
+                                <a th:if="${visitor.possibleBanMatch != null}" href="/admin/blacklist" class="av-badge av-badge--warn text-decoration-none" title="This booking's name (or a guest name on file) resembles a banned visitor. Check the ID photo against the Banned Visitors page before approving: it may be the same person or only someone with a similar name">
+                                    <i class="bi bi-person-exclamation me-1" aria-hidden="true"></i><span th:text="'Possible banned visitor (' + ${visitor.possibleBanMatch} + ')'">Possible banned visitor</span></a>
+                                <!-- 🚶 Booked at the museum for today: no approval step; the guard checks the ID in person -->
+                                <span th:if="${visitor.walkIn()}" class="av-badge av-badge--walkin" title="Walk-in: booked at the museum for today. The guard checks the ID in person at the gate">
+                                    <i class="bi bi-person-walking me-1" aria-hidden="true"></i>Walk-in</span>
+                                <!-- ⏰ Only while it applies (Awaiting receipt, or a rejected receipt waiting for a new one); red within 24 h or past -->
+                                <span th:if="${payBy}" class="av-payby"
+                                      th:classappend="${visitor.payByUrgent(#temporals.createNow())} ? 'av-payby--urgent'"
+                                      th:text="${'Pay by ' + #temporals.format(visitor.paymentDueAt, 'MMM d, hh:mm a')}"></span>
+                                <button th:if="${hasDetails}" type="button" class="av-details-toggle" aria-expanded="false"
+                                        th:attr="aria-controls=${'bookingDetails' + visitor.id}">
+                                    <i class="bi bi-chevron-right" aria-hidden="true"></i>Details</button>
+                            </div>
+                            <!-- Everything else, collapsed (nothing removed from the page) -->
+                            <div th:if="${hasDetails}" class="av-details" th:id="${'bookingDetails' + visitor.id}" hidden>
+                                <!-- 💱 Admission counts and the unit prices at booking time (none on older bookings) -->
+                                <div th:if="${visitor.admissionCounted()}" class="av-admission">
+                                    <span class="av-details-label">Admission</span>
+                                    <span><span th:text="${visitor.admissionSummary()}"></span><th:block th:if="${visitor.discountedPriceCentavos != null or visitor.regularPriceCentavos != null}">
+                                        <span class="av-cell-sub" th:text="${'(Discounted ' + visitor.discountedPriceText() + ', Regular ' + visitor.regularPriceText() + ' each)'}"></span></th:block></span>
+                                </div>
+                                <div th:if="${visitor.billingNumber != null}">
+                                    <span class="av-details-label">Billing</span><span class="av-mono" th:text="${visitor.billingNumber}"></span>
+                                </div>
+                                <!-- The deadline for the record, once it no longer affects anything -->
+                                <div th:if="${visitor.paymentDueAt != null and !payBy}">
+                                    <span class="av-details-label">Pay by</span><span class="av-mono" th:text="${#temporals.format(visitor.paymentDueAt, 'MMM d, yyyy hh:mm a')}"></span>
+                                </div>
+                                <div th:if="${visitor.paymentVerifiedAt != null}">
+                                    <span class="av-details-label">Verified</span>
+                                    <span>by <span th:text="${visitor.paymentVerifiedBy}"></span>,
+                                        <span class="av-mono" th:text="${#temporals.format(visitor.paymentVerifiedAt, 'MMM d, yyyy hh:mm a')}"></span><th:block th:if="${visitor.paymentVerificationNote != null}">
+                                        <span th:text="${' · Note: ' + visitor.paymentVerificationNote}"></span></th:block></span>
+                                </div>
+                                <div th:if="${rejectNote}" class="av-details-wide" th:text="'Receipt rejected: ' + ${visitor.paymentRejectionReason}"></div>
+                                <!-- ♻️ Reinstated by the Director after the payment deadline (paid at Landbank, receipt late) -->
+                                <div th:if="${visitor.reinstatedAt != null}" class="av-details-wide av-reinstated">
+                                    <i class="bi bi-arrow-counterclockwise me-1" aria-hidden="true"></i><span th:text="${visitor.reinstatedText()}">Reinstated by director</span>
+                                    <div th:if="${visitor.reinstatedFrom != null}" class="av-cell-sub" th:text="'Moved from ' + ${visitor.reinstatedFrom}"></div>
+                                </div>
+                                <div th:if="${isDirector and visitor.status == 'PAYMENT_EXPIRED'}" class="av-details-wide">
+                                    <button type="button" class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#reinstateModal"
+                                            th:attr="data-reinstate-id=${visitor.id}"><i class="bi bi-arrow-counterclockwise me-1" aria-hidden="true"></i>Reinstate booking</button>
+                                </div>
+                                <!-- 🛂 Gate checks the guard ticked: the Free / Discounted IDs and the ban comparison -->
+                                <div th:if="${visitor.eligibilityCheckedAt != null}" class="av-details-wide">
+                                    <i class="bi bi-person-vcard me-1" aria-hidden="true"></i>IDs of Free/Discounted visitors checked by
+                                    <span th:text="${visitor.eligibilityCheckedBy}"></span>,
+                                    <span class="av-mono" th:text="${#temporals.format(visitor.eligibilityCheckedAt, 'MMM d, yyyy hh:mm a')}"></span>
+                                </div>
+                                <div th:if="${visitor.banCheckedAt != null}" class="av-details-wide">
+                                    <i class="bi bi-shield-check me-1" aria-hidden="true"></i>ID checked against the ban by
+                                    <span th:text="${visitor.banCheckedBy}"></span>,
+                                    <span class="av-mono" th:text="${#temporals.format(visitor.banCheckedAt, 'MMM d, yyyy hh:mm a')}"></span>
+                                </div>
+                                <!-- 📝 The Terms the visitor agreed to (the version code stays stored and in the Excel export) -->
+                                <div th:if="${visitor.termsAcceptedAt != null}" class="av-details-wide av-terms">
+                                    <i class="bi bi-file-earmark-check me-1" aria-hidden="true"></i>Agreed to the Terms on
+                                    <span class="av-mono" th:text="${#temporals.format(visitor.termsAcceptedAt, 'MMM d, yyyy hh:mm a')}"></span>
+                                </div>
+                                <!-- 📝 When the one feedback email went out (window end + delay, or at check-out) -->
+                                <div th:if="${visitor.feedbackEmailSentAt != null}" class="av-details-wide">
+                                    <i class="bi bi-envelope-check me-1" aria-hidden="true"></i>Feedback email sent
+                                    <span class="av-mono" th:text="${#temporals.format(visitor.feedbackEmailSentAt, 'MMM d, yyyy hh:mm a')}"></span>
+                                </div>
+                                <!-- Older bookings only: the event justification given at the time, shown read-only -->
+                                <div th:unless="${#strings.isEmpty(visitor.eventJustification)}" class="av-justification av-details-wide">
+                                    <div class="av-justification-label"><i class="bi bi-file-earmark-text me-1"></i>Event Justification</div>
+                                    <div class="av-justification-text" th:text="${visitor.eventJustification}"></div>
+                                </div>
                             </div>
                         </td>
 
                         <td>
-                            <!-- One button: the shared #kycModal shows the ID close-up and the selfie side by side -->
+                            <!-- 🪪 The ID photo, stored only for staff to look at (no automated check). The Pending tab shows it
+                                 as a thumbnail; one button opens the shared #kycModal (and, for an older booking, its selfie). -->
                             <button th:if="${not #strings.isEmpty(visitor.idImageUrl) or not #strings.isEmpty(visitor.idCardImageUrl)}"
                                     type="button" class="av-doc-link av-doc-btn" data-bs-toggle="modal" data-bs-target="#kycModal"
                                     th:attr="data-kyc-name=${visitor.name},data-kyc-card=${visitor.idCardImageUrl},data-kyc-selfie=${visitor.idImageUrl}">
-                                <i class="bi bi-person-vcard"></i> View KYC
+                                <img th:if="${currentFilter == 'pending' and not #strings.isEmpty(visitor.idCardImageUrl)}"
+                                     th:src="@{'/uploads/' + ${visitor.idCardImageUrl}}" class="av-receipt-thumb" loading="lazy"
+                                     th:alt="'ID photo of ' + ${visitor.name}">
+                                <span><i class="bi bi-person-vcard"></i> View ID</span>
                             </button>
                             <span th:if="${#strings.isEmpty(visitor.idImageUrl) and #strings.isEmpty(visitor.idCardImageUrl)}" class="av-cell-sub">
                                 <i class="bi bi-exclamation-circle"></i> Pending ID
                             </span>
+                            <a th:if="${isDirector and visitor.receiptImageUrl != null}" th:href="@{'/admin/payments/' + ${visitor.id} + '/receipt'}"
+                               target="_blank" rel="noopener" class="av-receipt-link" th:title="'Open the receipt for billing ' + ${visitor.billingNumber}">
+                                <img th:if="${currentFilter == 'pending'}" th:src="@{'/admin/payments/' + ${visitor.id} + '/receipt'}" class="av-receipt-thumb"
+                                     loading="lazy" th:alt="'Payment receipt for billing ' + ${visitor.billingNumber}">
+                                <span><i class="bi bi-receipt"></i> View Receipt</span>
+                            </a>
                         </td>
 
                         <td>
-                            <span th:if="${visitor.awaitsApproval()}" class="badge-soft badge-pending">Pending Review</span>
+                            <span th:if="${visitor.awaitsApproval() and visitor.paymentStatus != 'PAYMENT_REJECTED'}" class="badge-soft badge-pending">Pending Review</span>
+                            <!-- 💳 Pay first: not in the Pending tab until the (new) receipt arrives; seats are held meanwhile -->
+                            <span th:if="${visitor.awaitsApproval() and visitor.paymentStatus == 'PAYMENT_REJECTED'}" class="badge-soft badge-pending">Awaiting new receipt</span>
+                            <span th:if="${visitor.awaitsReceipt()}" class="badge-soft badge-pending">Awaiting receipt</span>
                             <span th:if="${visitor.status == 'APPROVED'}" class="badge-soft badge-approved"><i class="bi bi-patch-check-fill"></i> Approved</span>
                             <span th:if="${visitor.status == 'REJECTED'}" class="badge-soft badge-rejected">Rejected</span>
                             <span th:if="${visitor.status == 'CANCELLED_OVERRIDE'}" class="badge-soft badge-rejected">Cancelled (Override)</span>
@@ -310,6 +431,8 @@
                             <span th:if="${visitor.status == 'CHECKED-IN'}" class="badge-soft badge-checked-in">Checked In</span>
                             <span th:if="${visitor.status == 'CHECKED-OUT'}" class="badge-soft badge-checked-out">Checked Out</span>
                             <span th:if="${visitor.status == 'NO_SHOW'}" class="badge-soft badge-checked-out">No-Show</span>
+                            <span th:if="${visitor.status == 'PAYMENT_EXPIRED'}" class="badge-soft badge-rejected">Payment Expired</span>
+                            <span th:if="${visitor.status == 'RESCHEDULE_REQUIRED'}" class="badge-soft badge-pending">Reschedule Needed (Closure)</span>
                             <span th:if="${visitor.status == 'DENIED_ENTRY'}" class="badge-soft badge-rejected"><i class="bi bi-shield-x"></i> Entry Denied</span>
                             <div th:if="${visitor.status == 'DENIED_ENTRY' and visitor.entryDeniedAt != null}" class="av-cell-sub av-mono mt-1">
                                 <i class="bi bi-clock"></i> <span th:text="${#temporals.format(visitor.entryDeniedAt, 'hh:mm a')} + ' by ' + ${visitor.entryDeniedBy}"></span>
@@ -319,45 +442,103 @@
                             <div th:if="${(visitor.status == 'CHECKED-IN' or visitor.status == 'CHECKED-OUT') and visitor.checkedInBy != null}" class="av-cell-sub av-mono mt-1">
                                 <i class="bi bi-clock"></i> <span th:text="${#temporals.format(visitor.checkInTime, 'hh:mm a')}"></span>
                                 <span th:if="${visitor.checkOutTime != null}" th:text="' - ' + ${#temporals.format(visitor.checkOutTime, 'hh:mm a')}"></span>
-                                <!-- Gate Guard on the duty roster when the QR was scanned (recorded at check-in) -->
+                                <!-- The signed-in staff account that scanned the QR (recorded at check-in) -->
                                 <div><i class="bi bi-person-badge"></i> <span th:text="'Scanned by ' + ${visitor.checkedInBy}"></span></div>
                             </div>
                         </td>
 
-                        <td class="text-end pe-4">
-                            <div class="av-actions">
-                                <th:block th:if="${visitor.awaitsApproval()}">
-                                    <form th:action="@{'/admin/approve/' + ${visitor.id}}" method="post" class="m-0">
-                                        <input type="hidden" name="returnTo" th:if="${pendingReturnTo != null}" th:value="${pendingReturnTo}">
-                                        <button type="submit" class="btn btn-sm btn-outline-success" title="Approve">Approve</button>
-                                    </form>
-                                    <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" th:data-bs-target="'#rejectModal' + ${visitor.id}" title="Reject">Reject</button>
-                                </th:block>
-                                <button th:if="${visitor.status == 'CHECKED-IN' and visitor.visitDate != null and visitor.visitDate.equals(#temporals.createToday())}"
-                                        type="button" class="btn btn-sm btn-danger" data-bs-toggle="modal" th:data-bs-target="'#denyModal' + ${visitor.id}" title="Void check-in and deny entry">Deny Entry</button>
+                        <!-- 🔘 COMPACT ACTIONS: ONE main button chosen by the booking's state (Visitor.mainAction), small icon
+                             buttons to view the ID photo / receipt, and everything else in the ⋮ menu (only the items that apply,
+                             destructive ones in red at the bottom). Every dialog they open sits at the top level of the page. -->
+                        <td class="text-end pe-4"
+                            th:with="main=${visitor.mainAction(#temporals.createToday())},
+                                     det=${visitor.hasBookingDetails() or (isDirector and visitor.status == 'PAYMENT_EXPIRED')},
+                                     resend=${isDirector and visitor.billingNumber != null and (visitor.waitingForReceipt() or visitor.approvedAwaitingPayment())},
+                                     markPaid=${isDirector and visitor.markPaidApplies() and main != 'markPaid'},
+                                     rejectReceipt=${isDirector and visitor.paymentStatus == 'PROOF_SUBMITTED'},
+                                     force=${isDirector and visitor.awaitsApproval() and visitor.inPendingQueue() and visitor.status != 'VERIFIED'},
+                                     rejectBooking=${visitor.awaitsApproval() or visitor.awaitsReceipt()}">
+                            <div class="av-actions" th:attr="data-main-action=${main}">
+                                <!-- ✅ Approve also marks a submitted receipt as paid (who and when), then the QR is emailed -->
+                                <form th:if="${main == 'approve'}" th:action="@{'/admin/approve/' + ${visitor.id}}" method="post" class="m-0">
+                                    <input type="hidden" name="returnTo" th:if="${pendingReturnTo != null}" th:value="${pendingReturnTo}">
+                                    <button type="submit" class="btn btn-sm btn-outline-success av-main-btn" th:title="${visitor.paymentStatus == 'PROOF_SUBMITTED'} ? 'Approve: marks the payment as verified and emails the QR code' : 'Approve'"
+                                            th:text="${visitor.paymentStatus == 'PROOF_SUBMITTED'} ? 'Approve & Mark Paid' : 'Approve'">Approve</button>
+                                </form>
+                                <!-- 💳 Mark as Paid with a note (Director only; the server refuses a Guard too) -->
+                                <button th:if="${main == 'markPaid' and isDirector}" type="button" class="btn btn-sm btn-outline-success av-main-btn" data-bs-toggle="modal"
+                                        th:data-bs-target="'#paidModal' + ${visitor.id}" title="Mark this payment as verified">Mark as Paid</button>
+                                <!-- ⌛ Waiting for the visitor's receipt: review only, approval opens once the receipt is uploaded -->
+                                <span th:if="${main == 'waiting'}" class="d-inline-block" tabindex="0" title="Approval opens once the visitor uploads the payment receipt">
+                                    <button type="button" class="btn btn-sm av-main-btn av-main-btn--waiting" disabled aria-disabled="true">
+                                        <i class="bi bi-hourglass-split me-1" aria-hidden="true"></i>Waiting for receipt</button>
+                                </span>
+                                <!-- ♻️ Reinstate (Director): opens the shared top-level #reinstateModal -->
+                                <button th:if="${main == 'reinstate' and isDirector}" type="button" class="btn btn-sm btn-outline-success av-main-btn" data-bs-toggle="modal"
+                                        data-bs-target="#reinstateModal" th:attr="data-reinstate-id=${visitor.id}" title="Reinstate this booking (paid at Landbank, receipt late)">
+                                    <i class="bi bi-arrow-counterclockwise me-1" aria-hidden="true"></i>Reinstate</button>
+                                <button th:if="${main == 'deny'}" type="button" class="btn btn-sm btn-danger av-main-btn" data-bs-toggle="modal"
+                                        th:data-bs-target="'#denyModal' + ${visitor.id}" title="Void check-in and deny entry">Deny Entry</button>
 
+                                <!-- 👁 Quick view: the ID photo (shared #kycModal) and the receipt (new tab), only when there is one -->
+                                <button th:if="${not #strings.isEmpty(visitor.idImageUrl) or not #strings.isEmpty(visitor.idCardImageUrl)}"
+                                        type="button" class="btn btn-sm btn-light av-icon-btn" data-bs-toggle="modal" data-bs-target="#kycModal"
+                                        th:attr="data-kyc-name=${visitor.name},data-kyc-card=${visitor.idCardImageUrl},data-kyc-selfie=${visitor.idImageUrl},aria-label=${'View ID photo of ' + visitor.name}"
+                                        th:title="${'View ID photo of ' + visitor.name}"><i class="bi bi-person-vcard" aria-hidden="true"></i></button>
+                                <a th:if="${isDirector and visitor.receiptImageUrl != null}" th:href="@{'/admin/payments/' + ${visitor.id} + '/receipt'}"
+                                   target="_blank" rel="noopener" class="btn btn-sm btn-light av-icon-btn"
+                                   th:attr="aria-label=${'View receipt for billing ' + visitor.billingNumber}" th:title="${'View receipt for billing ' + visitor.billingNumber}">
+                                    <i class="bi bi-receipt" aria-hidden="true"></i></a>
+
+                                <!-- ⋮ Everything else. Fixed popper strategy: placed against the viewport, so the menu is never clipped
+                                     by the sideways-scrolling table (iPhone Safari included). -->
                                 <div class="dropdown">
-                                    <button class="btn btn-sm btn-light p-1" type="button" data-bs-toggle="dropdown" aria-label="Open action menu" title="More options"><i class="bi bi-three-dots-vertical"></i></button>
-                                    <ul class="dropdown-menu dropdown-menu-end">
-                                        <!-- ⚠️ DIRECTOR OVERRIDE: approves past the slot's capacity (Master Bookings already skip the check).
-                                             In this menu, not beside Approve: a rare override shouldn't be the loudest button on every row. -->
-                                        <th:block th:if="${isDirector and visitor.awaitsApproval() and !visitor.masterBooking and visitor.status != 'VERIFIED'}">
-                                        <li>
+                                    <button class="btn btn-sm btn-light av-icon-btn" type="button" data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}'
+                                            aria-expanded="false" th:attr="aria-label=${'More actions for ' + visitor.name}" title="More actions"><i class="bi bi-three-dots-vertical" aria-hidden="true"></i></button>
+                                    <ul class="dropdown-menu dropdown-menu-end av-row-menu">
+                                        <!-- 1. View -->
+                                        <li th:if="${det}">
+                                            <button type="button" class="dropdown-item" th:attr="data-details-for=${'bookingDetails' + visitor.id}">
+                                                <i class="bi bi-card-text me-2" aria-hidden="true"></i> Details</button>
+                                        </li>
+                                        <li th:if="${det}"><hr class="dropdown-divider"></li>
+                                        <!-- 2. Payment -->
+                                        <li th:if="${resend}">
+                                            <form th:action="@{'/admin/payments/' + ${visitor.id} + '/resend-link'}" method="post" class="m-0">
+                                                <input type="hidden" name="returnTo" th:if="${pendingReturnTo != null}" th:value="${pendingReturnTo}">
+                                                <button type="submit" class="dropdown-item" title="Email the billing number, amount, deadline and payment link again">
+                                                    <i class="bi bi-envelope-arrow-up me-2" aria-hidden="true"></i> Resend payment link</button>
+                                            </form>
+                                        </li>
+                                        <li th:if="${markPaid}">
+                                            <button type="button" class="dropdown-item" data-bs-toggle="modal" th:data-bs-target="'#paidModal' + ${visitor.id}">
+                                                <i class="bi bi-cash-coin me-2" aria-hidden="true"></i> Mark as Paid</button>
+                                        </li>
+                                        <!-- 💳 Reject Receipt: the booking stays pending (seats kept) and the visitor may upload a new one -->
+                                        <li th:if="${rejectReceipt}">
+                                            <button type="button" class="dropdown-item" data-bs-toggle="modal" th:data-bs-target="'#rejectReceiptModal' + ${visitor.id}">
+                                                <i class="bi bi-receipt-cutoff me-2" aria-hidden="true"></i> Reject receipt</button>
+                                        </li>
+                                        <li th:if="${resend or markPaid or rejectReceipt}"><hr class="dropdown-divider"></li>
+                                        <!-- 3. ⚠️ DIRECTOR OVERRIDE: approves past the slot's capacity -->
+                                        <li th:if="${force}">
                                             <form th:action="@{'/admin/approve-override/' + ${visitor.id}}" method="post" class="m-0"
                                                   onsubmit="return confirm('Force Approve skips the capacity check and can overbook this time slot. Continue?');">
                                                 <input type="hidden" name="returnTo" th:if="${pendingReturnTo != null}" th:value="${pendingReturnTo}">
                                                 <button type="submit" class="dropdown-item text-warning" title="Approve even if the time slot is full (Director override)"><i class="bi bi-exclamation-triangle-fill me-2"></i> Force Approve</button>
                                             </form>
                                         </li>
-                                        <li><hr class="dropdown-divider"></li>
-                                        </th:block>
-                                        <!-- 🧬 Ban by face when the booking has face data, and always by email + phone number
-                                             (IdentityBans), so a booking made while AI features were off can still be banned -->
+                                        <li th:if="${force}"><hr class="dropdown-divider"></li>
+                                        <!-- 4. Destructive, in red, last -->
+                                        <li th:if="${rejectBooking}">
+                                            <button type="button" class="dropdown-item text-danger" data-bs-toggle="modal" th:data-bs-target="'#rejectModal' + ${visitor.id}">
+                                                <i class="bi bi-x-octagon me-2" aria-hidden="true"></i> Reject booking</button>
+                                        </li>
+                                        <!-- 🪪 Ban by email + phone number (refused) and name (flagged), IdentityBans; opens the shared #banModal -->
                                         <li>
-                                            <!-- Opens the shared #banModal (reason + 30 days / 6 months / permanent) -->
                                             <button type="button" class="dropdown-item text-danger" data-bs-toggle="modal" data-bs-target="#banModal"
-                                                    th:attr="data-ban-url=@{/admin/biometric-ban/{id}(id=${visitor.id})},data-ban-name=${visitor.name},data-ban-face=${visitor.faceEncoding != null}">
-                                                <i class="bi bi-person-x me-2"></i> Ban Visitor</button>
+                                                    th:attr="data-ban-url=@{/admin/biometric-ban/{id}(id=${visitor.id})},data-ban-name=${visitor.name}">
+                                                <i class="bi bi-person-x me-2"></i> Ban visitor</button>
                                         </li>
                                         <li th:if="${isDirector}">
                                             <form th:action="@{'/admin/delete/' + ${visitor.id}}" method="post" class="m-0" onsubmit="return confirm('Delete this record?');">
@@ -367,8 +548,6 @@
                                     </ul>
                                 </div>
                             </div>
-
-
                         </td>
                     </tr>
                     </th:block>
@@ -410,6 +589,16 @@
                                 </select>
                             </div>
 
+                            <!-- 💳 A receipt is on file (paid, in review, or rejected since): the server refuses without this confirmation -->
+                            <div th:if="${visitor.receiptOnFile()}" class="alert alert-warning small" role="note">
+                                <i class="bi bi-exclamation-triangle-fill me-1"></i> This visitor has paid; payments are non-refundable.
+                                <span th:unless="${visitor.paymentInHand()}">(A payment receipt was uploaded for this booking.)</span>
+                                <div class="form-check mt-2">
+                                    <input class="form-check-input" type="checkbox" name="confirmPaid" value="true" th:id="'confirmPaid' + ${visitor.id}" required>
+                                    <label class="form-check-label" th:for="'confirmPaid' + ${visitor.id}">I understand and still want to reject this booking.</label>
+                                </div>
+                            </div>
+
                             <div class="mb-3">
                                 <label class="form-label" th:for="'additionalNotes' + ${visitor.id}">Administrative Notes / Compliance Instructions</label>
                                 <textarea th:id="'additionalNotes' + ${visitor.id}" name="additionalNotes" class="form-control form-control-sm" rows="3" placeholder="Type specific instructions here... (Optional)"></textarea>
@@ -418,6 +607,60 @@
                         <div class="modal-footer">
                             <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
                             <button type="submit" class="btn btn-sm btn-danger">Send Rejection Alert</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- 💳 MARK AS PAID: from a submitted receipt, or (with a note) after checking the Landbank report -->
+        <div th:if="${isDirector and visitor.paymentRequired() and visitor.billingNumber != null}" class="modal fade" th:id="'paidModal' + ${visitor.id}" tabindex="-1" aria-hidden="true"
+             th:attr="aria-labelledby='paidTitle' + ${visitor.id}">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" th:id="'paidTitle' + ${visitor.id}"><i class="bi bi-cash-coin me-2"></i>Mark as Paid</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <form th:action="@{'/admin/payments/' + ${visitor.id} + '/verify'}" method="post">
+                        <div class="modal-body text-start">
+                            <p class="av-small mb-2">Billing <strong class="av-mono" th:text="${visitor.billingNumber}"></strong> &middot;
+                                <strong class="av-mono" th:text="${visitor.amountDueText()}"></strong> &middot; <span th:text="${visitor.admissionSummary()}"></span></p>
+                            <p class="av-small av-muted">Confirm that this amount reached the museum's account. An approved booking then gets its Entry QR Code by email.</p>
+                            <label class="form-label" th:for="'paidNote' + ${visitor.id}" th:text="${visitor.paymentStatus == 'PROOF_SUBMITTED'} ? 'Note (optional)' : 'How was the payment verified? (required, no receipt was uploaded)'">Note</label>
+                            <textarea th:id="'paidNote' + ${visitor.id}" name="note" class="form-control form-control-sm" rows="2" maxlength="300"
+                                      placeholder="e.g. verified in Landbank report" th:required="${visitor.paymentStatus != 'PROOF_SUBMITTED'}"></textarea>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" class="btn btn-sm btn-success">Mark as Paid</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- 💳 REJECT RECEIPT: the visitor is emailed the reason and may upload a new receipt -->
+        <div th:if="${isDirector and visitor.paymentStatus == 'PROOF_SUBMITTED'}" class="modal fade" th:id="'rejectReceiptModal' + ${visitor.id}" tabindex="-1" aria-hidden="true"
+             th:attr="aria-labelledby='rejectReceiptTitle' + ${visitor.id}">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header av-modal--danger">
+                        <h5 class="modal-title" th:id="'rejectReceiptTitle' + ${visitor.id}"><i class="bi bi-receipt me-2"></i>Reject Receipt</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <form th:action="@{'/admin/payments/' + ${visitor.id} + '/reject'}" method="post">
+                        <div class="modal-body text-start">
+                            <p class="av-small mb-2">Billing <strong class="av-mono" th:text="${visitor.billingNumber}"></strong> &middot;
+                                <strong class="av-mono" th:text="${visitor.amountDueText()}"></strong></p>
+                            <label class="form-label" th:for="'receiptReason' + ${visitor.id}">Reason (sent to the visitor)</label>
+                            <textarea th:id="'receiptReason' + ${visitor.id}" name="reason" class="form-control form-control-sm" rows="3" maxlength="500" required
+                                      placeholder="e.g. The amount on the receipt does not match the billing amount."></textarea>
+                            <p class="av-small av-muted mt-2 mb-0">The visitor gets at least 24 more hours to upload a new receipt (never past the start of the visit).</p>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" class="btn btn-sm btn-danger">Reject Receipt</button>
                         </div>
                     </form>
                 </div>
@@ -468,26 +711,27 @@
 </div>
 </main>
 
-<!-- 🪪 KYC VIEWER: one modal for every row, filled by the script below from the clicked "View KYC" button.
+<!-- 🪪 ID PHOTO VIEWER: one modal for every row, filled by the script below from the clicked "View ID" button.
      Images load only when it opens (a per-row modal would download every visitor's photos with the page). -->
 <div class="modal fade" id="kycModal" tabindex="-1" aria-labelledby="kycModalTitle" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="kycModalTitle"><i class="bi bi-person-vcard me-2"></i>KYC Documents: <span id="kycModalName"></span></h5>
+                <h5 class="modal-title" id="kycModalTitle"><i class="bi bi-person-vcard me-2"></i>ID Photo: <span id="kycModalName"></span></h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
                 <div class="av-kyc-grid">
                     <figure class="av-kyc-shot">
-                        <figcaption>Step 1: ID card close-up</figcaption>
+                        <figcaption>ID photo</figcaption>
                         <a id="kycCardLink" class="av-kyc-frame d-none" target="_blank" rel="noopener noreferrer" title="Open full size in a new tab">
-                            <img id="kycCardImg" alt="Close-up photo of the visitor's ID card">
+                            <img id="kycCardImg" alt="Photo of the visitor's ID">
                         </a>
-                        <p id="kycCardMissing" class="av-kyc-missing d-none">No ID close-up on file (a booking made before two-step capture, or removed by the 30-day purge).</p>
+                        <p id="kycCardMissing" class="av-kyc-missing d-none">No ID photo on file (an older booking, or removed by the 30-day purge).</p>
                     </figure>
-                    <figure class="av-kyc-shot">
-                        <figcaption>Step 2: Liveness selfie holding the ID</figcaption>
+                    <!-- Only bookings made before 2026-11 have a selfie; the column is hidden for the others -->
+                    <figure class="av-kyc-shot" id="kycSelfieShot">
+                        <figcaption>Selfie holding the ID (older booking)</figcaption>
                         <a id="kycSelfieLink" class="av-kyc-frame d-none" target="_blank" rel="noopener noreferrer" title="Open full size in a new tab">
                             <img id="kycSelfieImg" alt="Selfie of the visitor holding their ID">
                         </a>
@@ -499,13 +743,77 @@
     </div>
 </div>
 
+<!-- ♻️ REINSTATE BOOKING (Director): one shared dialog at the top level of the page (never inside the table, so it works on
+     iPhone). Filled from /admin/bookings/{id}/reinstate-options by /js/reinstate-booking.js when a row's button opens it. -->
+<div th:if="${isDirector}" class="modal fade" id="reinstateModal" tabindex="-1" aria-labelledby="reinstateTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="reinstateTitle"><i class="bi bi-arrow-counterclockwise me-2"></i>Reinstate booking</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="reinstateForm" th:action="@{/admin/bookings/0/reinstate}" method="post" enctype="multipart/form-data">
+                <div class="modal-body text-start">
+                    <p id="reinstateLoading" class="av-small av-muted mb-0">Loading the booking…</p>
+                    <div id="reinstateError" class="alert alert-danger small d-none" role="alert"></div>
+                    <div id="reinstateBody" class="d-none">
+                        <p class="av-small mb-1"><strong id="reinstateName"></strong> <span class="av-muted" id="reinstateEmail"></span></p>
+                        <dl class="av-small mb-3 row g-0">
+                            <dt class="col-5 fw-normal av-muted">Original date</dt><dd class="col-7 mb-1 av-mono" id="reinstateDate"></dd>
+                            <dt class="col-5 fw-normal av-muted">Time window</dt><dd class="col-7 mb-1" id="reinstateWindow"></dd>
+                            <dt class="col-5 fw-normal av-muted">Group</dt><dd class="col-7 mb-1" id="reinstateBreakdown"></dd>
+                            <dt class="col-5 fw-normal av-muted">Amount</dt><dd class="col-7 mb-1 av-mono" id="reinstateAmount"></dd>
+                            <dt class="col-5 fw-normal av-muted">Billing number</dt><dd class="col-7 mb-1"><span class="av-mono" id="reinstateBilling"></span> <span class="av-muted">(stays the same)</span></dd>
+                        </dl>
+                        <div id="reinstateOriginalOk" class="alert alert-success small d-none" role="status">
+                            <i class="bi bi-check-circle me-1" aria-hidden="true"></i>The original time slot still has seats. The booking returns there.</div>
+                        <div id="reinstateMove" class="d-none">
+                            <div class="alert alert-warning small" role="status"><i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>
+                                The original time slot <span id="reinstateProblem"></span>. Choose another open date and time window; the booking moves there.</div>
+                            <div class="row g-2 mb-3">
+                                <div class="col-sm-6">
+                                    <label class="form-label" for="reinstateNewDate">New date</label>
+                                    <select id="reinstateNewDate" name="visitDate" class="form-select form-select-sm"></select>
+                                </div>
+                                <div class="col-sm-6">
+                                    <label class="form-label" for="reinstateNewWindow">Time window</label>
+                                    <select id="reinstateNewWindow" name="timeWindow" class="form-select form-select-sm"></select>
+                                </div>
+                            </div>
+                            <p id="reinstateNoSlots" class="av-small text-danger d-none">No open time slot has enough seats for this group. Add slots first.</p>
+                        </div>
+                        <p id="reinstateWalkInNote" class="av-small av-muted d-none"></p>
+                        <div id="reinstateDuplicate" class="alert alert-warning small d-none" role="alert">
+                            <i class="bi bi-person-exclamation me-1" aria-hidden="true"></i>This email already has another active booking on this date. The visitor may have rebooked; check before reinstating.</div>
+                        <div class="mb-3">
+                            <label class="form-label" for="reinstateReceipt">Attach the visitor's receipt (optional)</label>
+                            <input id="reinstateReceipt" type="file" name="receipt" class="form-control form-control-sm" accept="image/jpeg,image/png,image/webp">
+                            <div class="form-text">JPG, PNG or WEBP, up to 5 MB (same checks as visitor uploads).</div>
+                        </div>
+                        <div class="mb-1">
+                            <label class="form-label" for="reinstateNote">Note (required)</label>
+                            <textarea id="reinstateNote" name="note" class="form-control form-control-sm" rows="2" maxlength="300" required
+                                      placeholder="Paid; confirmed in Landbank records, receipt sent by email"></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" id="reinstateSubmit" class="btn btn-sm btn-success" disabled>Reinstate booking</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <!-- 🧬 BAN VISITOR dialog (shared with the Guard Dashboard) -->
 <div th:replace="~{fragments/ban :: banDialog}"></div>
 
 <th:block th:replace="~{fragments/shell :: scripts}"></th:block>
 <th:block th:replace="~{fragments/ban :: banDialogScript}"></th:block>
+<script th:if="${isDirector}" src="/js/reinstate-booking.js"></script>
 <script>
-// KYC viewer: Bootstrap passes the clicked "View KYC" button as relatedTarget. File names are UUIDs from the server;
+// ID photo viewer: Bootstrap passes the clicked "View ID" button as relatedTarget. File names are UUIDs from the server;
 // they are still URL-encoded, and the visitor name goes in with textContent (never as HTML).
 (function () {
     var modal = document.getElementById('kycModal');
@@ -531,6 +839,7 @@
         document.getElementById('kycModalName').textContent = button.getAttribute('data-kyc-name') || '';
         show('Card', button.getAttribute('data-kyc-card'));
         show('Selfie', button.getAttribute('data-kyc-selfie'));
+        document.getElementById('kycSelfieShot').classList.toggle('d-none', !button.getAttribute('data-kyc-selfie'));
     });
     // Drop the photos on close, so the next visitor's viewer never flashes the previous one
     modal.addEventListener('hidden.bs.modal', function () {
@@ -538,6 +847,28 @@
         show('Selfie', null);
     });
 })();
+</script>
+<script>
+// 🗂️ Booking cell "Details": expands in place (no page load). Nothing is remembered, so every load starts collapsed.
+// Delegated, so it keeps working after DataTables redraws or paging.
+// The row's ⋮ "Details" item opens the same panel (through its in-cell toggle) and brings it into view.
+document.addEventListener('click', function (event) {
+    var item = event.target.closest('[data-details-for]');
+    if (!item) return;
+    var toggle = document.querySelector('.av-details-toggle[aria-controls="' + item.getAttribute('data-details-for') + '"]');
+    if (!toggle) return;
+    if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+    toggle.scrollIntoView({ block: 'nearest' });
+});
+document.addEventListener('click', function (event) {
+    var button = event.target.closest('.av-details-toggle');
+    if (!button) return;
+    var panel = document.getElementById(button.getAttribute('aria-controls'));
+    if (!panel) return;
+    var open = button.getAttribute('aria-expanded') !== 'true';
+    button.setAttribute('aria-expanded', open ? 'true' : 'false');
+    panel.hidden = !open;
+});
 </script>
 <script>
 // 🗂️ PENDING QUEUE: open/close date groups, quick-filter chips and search. While a chip or search is active every match

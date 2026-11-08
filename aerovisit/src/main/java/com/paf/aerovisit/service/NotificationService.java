@@ -39,18 +39,15 @@ public class NotificationService {
     public void bookingRequest(Visitor visitor) {
         try {
             if (visitor == null || !visitor.awaitsApproval()) return;
-            String message = visitor.isMasterBooking()
-                    ? "requested a Master Booking for " + day(visitor.getVisitDate()) + " · group of " + group(visitor) + "."
-                    : "requested a visit on " + when(visitor) + " · " + groupText(visitor) + "."
-                      + (visitor.getGroupSize() > LARGE_GROUP_THRESHOLD ? " Large group." : "");
-            save(visitor.isMasterBooking() ? AdminNotification.TYPE_MASTER_BOOKING_REQUEST : AdminNotification.TYPE_BOOKING_REQUEST,
-                    name(visitor), message, pendingUrl(visitor), visitor.getId(), null);
+            String message = "requested a visit on " + when(visitor) + " · " + groupText(visitor) + "."
+                    + (visitor.getGroupSize() > LARGE_GROUP_THRESHOLD ? " Large group." : "");
+            save(AdminNotification.TYPE_BOOKING_REQUEST, name(visitor), message, pendingUrl(visitor), visitor.getId(), null);
         } catch (RuntimeException e) {
             System.err.println("⚠️ Booking request notification skipped: " + e.getMessage());
         }
     }
 
-    // A visitor changed the date, time, group size or guest list online: it waits for approval again
+    // A visitor changed the date, time or group size online: it waits for approval again
     public void bookingRescheduled(Visitor visitor) {
         try {
             if (visitor == null) return;
@@ -65,18 +62,6 @@ public class NotificationService {
                     pendingUrl(visitor), visitor.getId(), null);
         } catch (RuntimeException e) {
             System.err.println("⚠️ Reschedule notification skipped: " + e.getMessage());
-        }
-    }
-
-    // A visitor cancelled online (their seats are free again)
-    public void bookingCancelled(Visitor visitor) {
-        try {
-            if (visitor == null) return;
-            save(AdminNotification.TYPE_BOOKING_CANCELLED, name(visitor),
-                    "cancelled their visit on " + when(visitor) + " · " + groupText(visitor) + ".",
-                    dayUrl(visitor.getVisitDate()), visitor.getId(), null);
-        } catch (RuntimeException e) {
-            System.err.println("⚠️ Cancellation notification skipped: " + e.getMessage());
         }
     }
 
@@ -108,30 +93,17 @@ public class NotificationService {
         }
     }
 
-    // 6:30 AM: a large group or a Master Booking arriving today (Guard + Director); once per booking and day
+    // 6:30 AM: a large group arriving today (Guard + Director); once per booking and day
     public void arrivingToday(Visitor visitor) {
         try {
             if (visitor == null || visitor.getVisitDate() == null) return;
-            if (!visitor.isMasterBooking() && visitor.getGroupSize() <= LARGE_GROUP_THRESHOLD) return;
-            String what = visitor.isMasterBooking() ? "Master Booking, group of " + group(visitor) : "group of " + group(visitor);
+            if (visitor.getGroupSize() <= LARGE_GROUP_THRESHOLD) return;
+            String what = "group of " + group(visitor);
             save(AdminNotification.TYPE_ARRIVING_TODAY, name(visitor),
                     "arrives today" + (visitor.getTimeWindow() == null ? "" : " · " + windowName(visitor.getTimeWindow())) + " · " + what + ".",
                     "/admin", visitor.getId(), "ARRIVING:" + visitor.getId() + ":" + visitor.getVisitDate());
         } catch (RuntimeException e) {
             System.err.println("⚠️ Arrival notification skipped: " + e.getMessage());
-        }
-    }
-
-    // A booking refused because the selfie matches a banned face (nothing was saved, so no booking link)
-    public void bannedFaceAttempt(Visitor attempted) {
-        try {
-            if (attempted == null) return;
-            save(AdminNotification.TYPE_BANNED_FACE_ATTEMPT, name(attempted),
-                    "tried to book " + (attempted.getVisitDate() == null ? "a visit" : day(attempted.getVisitDate()))
-                    + " but their face matches a ban. The booking was refused.",
-                    "/admin/blacklist", null, null);
-        } catch (RuntimeException e) {
-            System.err.println("⚠️ Banned face notification skipped: " + e.getMessage());
         }
     }
 
@@ -145,6 +117,64 @@ public class NotificationService {
                     "/admin/blacklist", null, null);
         } catch (RuntimeException e) {
             System.err.println("⚠️ Banned contact notification skipped: " + e.getMessage());
+        }
+    }
+
+    // 💳 A visitor uploaded a payment receipt; resolves itself once the Director verifies or rejects it
+    public void paymentProofSubmitted(Visitor visitor) {
+        try {
+            if (visitor == null) return;
+            // 🚶 A walk-in's receipt is checked at the gate: the guards' bell, linking to their Walk-ins tab
+            if (visitor.walkIn()) {
+                save(AdminNotification.TYPE_WALK_IN_PAYMENT_PROOF, name(visitor),
+                        "(walk-in) uploaded a payment receipt · billing " + visitor.getBillingNumber() + " · " + visitor.amountDueText() + ".",
+                        "/guard/dashboard?tab=walkins", visitor.getId(), null);
+                return;
+            }
+            save(AdminNotification.TYPE_PAYMENT_PROOF, name(visitor),
+                    "uploaded a payment receipt · billing " + visitor.getBillingNumber() + " · " + visitor.amountDueText() + ".",
+                    "/admin?filter=pending", visitor.getId(), null);
+        } catch (RuntimeException e) {
+            System.err.println("⚠️ Payment receipt notification skipped: " + e.getMessage());
+        }
+    }
+
+    // 💳 No receipt by the payment deadline: the sweep released the booking's seats
+    public void paymentExpired(Visitor visitor) {
+        try {
+            if (visitor == null) return;
+            save(AdminNotification.TYPE_PAYMENT_EXPIRED, name(visitor),
+                    "did not pay by the deadline · billing " + visitor.getBillingNumber() + ". The booking was released and its seats freed.",
+                    dayUrl(visitor.getVisitDate()), visitor.getId(), "PAYMENT_EXPIRED:" + visitor.getId());
+        } catch (RuntimeException e) {
+            System.err.println("⚠️ Payment expiry notification skipped: " + e.getMessage());
+        }
+    }
+
+    // 📅 A paid request reached its visit date without being reviewed: it now waits for the visitor to pick a new date
+    public void unreviewedPaidRequest(Visitor visitor) {
+        try {
+            if (visitor == null) return;
+            save(AdminNotification.TYPE_UNREVIEWED_PAID, name(visitor),
+                    "paid (billing " + visitor.getBillingNumber() + ") but was not reviewed before " + visitor.getVisitDate()
+                            + ". They were asked to pick a new date.",
+                    dayUrl(visitor.getVisitDate()), visitor.getId(), "UNREVIEWED_PAID:" + visitor.getId());
+        } catch (RuntimeException e) {
+            System.err.println("⚠️ Unreviewed paid request notification skipped: " + e.getMessage());
+        }
+    }
+
+    // ♻️ The Director reinstated a payment-expired booking (one note per booking: it can be reinstated only once)
+    public void bookingReinstated(Visitor visitor) {
+        try {
+            if (visitor == null) return;
+            String moved = visitor.getReinstatedFrom() == null ? ""
+                    : " (moved to " + visitor.getVisitDate() + " · " + visitor.getTimeWindow() + ")";
+            save(AdminNotification.TYPE_BOOKING_REINSTATED, name(visitor),
+                    "billing " + visitor.getBillingNumber() + " was reinstated by " + visitor.getReinstatedBy() + moved + ".",
+                    dayUrl(visitor.getVisitDate()), visitor.getId(), "BOOKING_REINSTATED:" + visitor.getId());
+        } catch (RuntimeException e) {
+            System.err.println("⚠️ Reinstatement notification skipped: " + e.getMessage());
         }
     }
 

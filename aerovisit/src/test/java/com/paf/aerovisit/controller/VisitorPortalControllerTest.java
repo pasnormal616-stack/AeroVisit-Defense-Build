@@ -37,7 +37,6 @@ import com.paf.aerovisit.model.Visitor;
 import com.paf.aerovisit.repository.BookingSlotRepository;
 import com.paf.aerovisit.repository.VisitorRepository;
 import com.paf.aerovisit.service.EmailService;
-import com.paf.aerovisit.service.OcrService;
 import com.paf.aerovisit.service.PredictiveAdvisorService;
 
 /** Public visitor pages: booking lookup, feedback links, mass-assignment guard and the email-OTP gate on /save. No database. */
@@ -54,7 +53,6 @@ class VisitorPortalControllerTest {
     @MockitoBean private VisitorRepository repo;
     @MockitoBean private BookingSlotRepository bookingRepo;
     @MockitoBean private EmailService emailService;
-    @MockitoBean private OcrService ocrService;
     @MockitoBean private PredictiveAdvisorService aiService;
 
     private static Visitor visitor(String status, String referenceId) {
@@ -216,10 +214,9 @@ class VisitorPortalControllerTest {
         assertThat(ReflectionTestUtils.getField(controller, "otpService")).isNull();
 
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart("/save")
-                .file(new org.springframework.mock.web.MockMultipartFile("livenessImage", new byte[0]))
                 .file(new org.springframework.mock.web.MockMultipartFile("highResIdImage", new byte[0]))
                 .param("fullName", "Juan Dela Cruz").param("email", "juan@example.com")
-                .param("visitDate", LocalDate.now().plusDays(2).toString()).param("timeWindow", "Morning (08:00 AM - 12:00 PM)").with(csrf()).with(com.paf.aerovisit.controller.KycNonceSupport.kycNonce()))
+                .param("visitDate", LocalDate.now().plusDays(2).toString()).param("timeWindow", "Morning (08:00 AM - 12:00 PM)").param("termsAccepted", "true").with(csrf()).with(com.paf.aerovisit.controller.KycNonceSupport.kycNonce()))
             .andExpect(redirectedUrl("/"))
             .andExpect(flash().attribute("error", "Security Error: Please verify your email address with the 6-digit code we sent before submitting."));
 
@@ -282,41 +279,29 @@ class VisitorPortalControllerTest {
         mvc.perform(get("/manage-booking").session(session))
             .andExpect(model().attribute("booking", v))
             .andExpect(model().attribute("statusLabel", "Approved"))
-            .andExpect(model().attribute("editable", true))
-            .andExpect(model().attribute("cancellable", true))
+            .andExpect(model().attribute("reschedulable", true))
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().string(org.hamcrest.Matchers.allOf(
                 org.hamcrest.Matchers.containsString("id=\"mbCountdown\""),
-                org.hamcrest.Matchers.containsString("Cancel My Visit"),
+                org.hamcrest.Matchers.containsString("Reschedule Your Visit"),
                 org.hamcrest.Matchers.containsString("name=\"formToken\""))));
     }
 
     @Test
     void manageFormsWithoutTheSessionTokenAreRefused() throws Exception {
         when(repo.findById(7L)).thenReturn(Optional.of(upcoming("APPROVED")));
-        mvc.perform(post("/manage-booking/cancel").with(csrf()).session(signedIn(7L)).param("formToken", "forged"))
+        mvc.perform(post("/manage-booking/reschedule").with(csrf()).session(signedIn(7L)).param("formToken", "forged"))
             .andExpect(flash().attribute("error", "Your session has expired. Please sign in again."));
-        mvc.perform(post("/manage-booking/cancel").with(csrf()).param("formToken", "tok-123"))
+        mvc.perform(post("/manage-booking/reschedule").with(csrf()).param("formToken", "tok-123"))
             .andExpect(flash().attribute("error", "Your session has expired. Please sign in again."));
         verify(repo, never()).save(any());
     }
 
     @Test
-    void cancelMarksBookingCancelledByVisitor() throws Exception {
-        Visitor v = upcoming("APPROVED");
-        v.setQrCodeUrl("QR_7.png");
-        when(repo.findById(7L)).thenReturn(Optional.of(v));
-        mvc.perform(post("/manage-booking/cancel").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123"))
-            .andExpect(redirectedUrl("/manage-booking"));
-        assertThat(v.getStatus()).isEqualTo("CANCELLED_BY_VISITOR");
-        assertThat(v.getQrCodeUrl()).isNull();
-        verify(repo).save(v);
-    }
-
-    @Test
-    void cancelRefusesFinishedVisit() throws Exception {
+    void rescheduleRefusesFinishedVisit() throws Exception {
         when(repo.findById(7L)).thenReturn(Optional.of(upcoming("CHECKED-OUT")));
-        mvc.perform(post("/manage-booking/cancel").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123"))
-            .andExpect(flash().attribute("error", "This booking can no longer be cancelled online."));
+        mvc.perform(post("/manage-booking/reschedule").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
+                .param("visitDate", LocalDate.now().plusDays(9).toString()).param("timeWindow", WINDOW))
+            .andExpect(flash().attribute("error", "This booking can no longer be changed online."));
         verify(repo, never()).save(any());
     }
 
@@ -337,17 +322,14 @@ class VisitorPortalControllerTest {
         when(repo.findById(7L)).thenReturn(Optional.of(v));
         when(bookingRepo.findAll()).thenReturn(List.of(slot(newDate, 10)));
         when(repo.findByVisitDate(newDate)).thenReturn(List.of(other, cancelled));
-        when(repo.findBuyoutDates()).thenReturn(List.of());
         when(repo.findByEmailAndVisitDate("juan@example.com", newDate)).thenReturn(new java.util.ArrayList<>());
 
-        mvc.perform(post("/manage-booking/update").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
-                .param("slot", newDate + "|" + WINDOW).param("groupSize", "3")
-                .param("companionNames", "Santos, Maria L.\n Reyes, Pedro \n"))
+        mvc.perform(post("/manage-booking/reschedule").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
+                .param("visitDate", newDate.toString()).param("timeWindow", WINDOW))
             .andExpect(redirectedUrl("/manage-booking"))
             .andExpect(flash().attribute("success", org.hamcrest.Matchers.startsWith("Booking updated. Your new schedule")));
         assertThat(v.getVisitDate()).isEqualTo(newDate);
-        assertThat(v.getGroupSize()).isEqualTo(3);
-        assertThat(v.getCompanionNames()).isEqualTo("Santos, Maria L.\nReyes, Pedro");
+        assertThat(v.getGroupSize()).isEqualTo(2); // the group stays as it is
         assertThat(v.getStatus()).isEqualTo("PENDING");
         assertThat(v.getQrCodeUrl()).isNull();
         assertThat(v.isReminderSent()).isFalse();
@@ -364,30 +346,36 @@ class VisitorPortalControllerTest {
         when(repo.findById(7L)).thenReturn(Optional.of(v));
         when(bookingRepo.findAll()).thenReturn(List.of(slot(newDate, 10)));
         when(repo.findByVisitDate(newDate)).thenReturn(List.of(other));
-        when(repo.findBuyoutDates()).thenReturn(List.of());
 
-        mvc.perform(post("/manage-booking/update").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
-                .param("slot", newDate + "|" + WINDOW))
+        mvc.perform(post("/manage-booking/reschedule").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
+                .param("visitDate", newDate.toString()).param("timeWindow", WINDOW))
             .andExpect(flash().attribute("error", "Not enough seats: only 1 left in that time slot."));
         verify(repo, never()).save(any());
     }
 
     @Test
-    void pendingRequestsDoNotHoldSeatsWhenRescheduling() throws Exception {
+    void pendingRequestsHoldSeatsSoAFullSlotRefusesTheReschedule() throws Exception {
+        // 💳 Pay first: a pending request holds its seats, so another pending group of 9 leaves 1 of 10 seats
         Visitor v = upcoming("PENDING");
+        LocalDate oldDate = v.getVisitDate();
         LocalDate newDate = LocalDate.now().plusDays(9);
-        Visitor waitlisted = upcoming("PENDING");
-        waitlisted.setId(8L);
-        waitlisted.setVisitDate(newDate);
-        waitlisted.setGroupSize(9);
+        Visitor otherPending = upcoming("PENDING");
+        otherPending.setId(8L);
+        otherPending.setVisitDate(newDate);
+        otherPending.setGroupSize(9);
         when(repo.findById(7L)).thenReturn(Optional.of(v));
         when(bookingRepo.findAll()).thenReturn(List.of(slot(newDate, 10)));
-        when(repo.findByVisitDate(newDate)).thenReturn(List.of(waitlisted));
-        when(repo.findBuyoutDates()).thenReturn(List.of());
+        when(repo.findByVisitDate(newDate)).thenReturn(List.of(otherPending));
         when(repo.findByEmailAndVisitDate("juan@example.com", newDate)).thenReturn(new java.util.ArrayList<>());
 
-        mvc.perform(post("/manage-booking/update").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
-                .param("slot", newDate + "|" + WINDOW))
+        mvc.perform(post("/manage-booking/reschedule").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
+                .param("visitDate", newDate.toString()).param("timeWindow", WINDOW))
+            .andExpect(flash().attribute("error", "Not enough seats: only 1 left in that time slot."));
+        assertThat(v.getVisitDate()).isEqualTo(oldDate);
+
+        otherPending.setGroupSize(8); // now the group of 2 fits exactly
+        mvc.perform(post("/manage-booking/reschedule").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
+                .param("visitDate", newDate.toString()).param("timeWindow", WINDOW))
             .andExpect(flash().attribute("success", "Booking updated."));
         assertThat(v.getVisitDate()).isEqualTo(newDate);
     }
@@ -399,11 +387,10 @@ class VisitorPortalControllerTest {
         when(repo.findById(7L)).thenReturn(Optional.of(v));
         when(bookingRepo.findAll()).thenReturn(List.of(slot(newDate, 10)));
         when(repo.findByVisitDate(newDate)).thenReturn(List.of());
-        when(repo.findBuyoutDates()).thenReturn(List.of());
         when(repo.findByEmailAndVisitDate("juan@example.com", newDate)).thenReturn(new java.util.ArrayList<>());
 
-        mvc.perform(post("/manage-booking/update").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
-                .param("visitDate", newDate.toString()).param("timeWindow", WINDOW).param("groupSize", "2"))
+        mvc.perform(post("/manage-booking/reschedule").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
+                .param("visitDate", newDate.toString()).param("timeWindow", WINDOW))
             .andExpect(flash().attribute("success", "Booking updated."));
         assertThat(v.getVisitDate()).isEqualTo(newDate);
         assertThat(v.getTimeWindow()).isEqualTo(WINDOW);
@@ -414,7 +401,7 @@ class VisitorPortalControllerTest {
         Visitor v = upcoming("PENDING");
         when(repo.findById(7L)).thenReturn(Optional.of(v));
 
-        mvc.perform(post("/manage-booking/update").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
+        mvc.perform(post("/manage-booking/reschedule").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
                 .param("visitDate", LocalDate.now().plusDays(9).toString()).param("timeWindow", ""))
             .andExpect(flash().attribute("error", "Please choose a time window for your selected date."));
         verify(repo, never()).save(any());
@@ -425,7 +412,6 @@ class VisitorPortalControllerTest {
         Visitor v = upcoming("APPROVED");
         LocalDate other = LocalDate.now().plusDays(9);
         when(repo.findById(7L)).thenReturn(Optional.of(v));
-        when(repo.findBuyoutDates()).thenReturn(List.of());
         when(bookingRepo.findAll()).thenReturn(List.of(slot(other, 10)));
         when(repo.findByVisitDate(other)).thenReturn(List.of());
 
@@ -437,38 +423,29 @@ class VisitorPortalControllerTest {
                 org.hamcrest.Matchers.containsString("\"date\":\"" + other + "\""))));
     }
 
-    @Test
-    void contactNumberOnlyChangeKeepsApproval() throws Exception {
-        Visitor v = upcoming("APPROVED");
-        v.setContactNumber("0917-000-0000");
-        when(repo.findById(7L)).thenReturn(Optional.of(v));
-        mvc.perform(post("/manage-booking/update").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
-                .param("slot", "").param("groupSize", "2").param("contactNumber", "0918-111-1111"))
-            .andExpect(flash().attribute("success", "Booking updated."));
-        assertThat(v.getStatus()).isEqualTo("APPROVED");
-        assertThat(v.getContactNumber()).isEqualTo("0918-111-1111");
-    }
-
-    // --- Group Manifest ---
+    // --- Group bookings: only the group size, no guest names ---
 
     @Test
-    void registrationFormBindsCompanionNames() {
+    void registrationFormBindsOnlyTheThreeCountsNeverNamesPricesTotalsOrTheConsentRecord() {
         Visitor target = new Visitor();
         WebDataBinder binder = new WebDataBinder(target, "visitor");
         controller.restrictVisitorFields(binder);
-        binder.bind(new MutablePropertyValues(Map.of("companionNames", "Santos, Maria L.")));
-        assertThat(target.getCompanionNames()).isEqualTo("Santos, Maria L.");
-    }
-
-    @Test
-    void manifestMustNameEveryGuestBesidesTheLeadBooker() {
-        assertThat(manifestError(List.of("Santos, Maria L.", "Reyes, Pedro"), 3)).isNull();
-        assertThat(manifestError(List.of("Sgt. Cruz (AFP 123-456/PAF)"), 2)).isNull();
-        assertThat(manifestError(List.of(), 1)).isNull();
-        assertThat(manifestError(List.of("Santos, Maria L."), 3))
-            .isEqualTo("Group Manifest: list exactly 2 companion name(s), one per line (your group of 3 includes you).");
-        assertThat(manifestError(List.of("<script>alert(1)</script>"), 2)).startsWith("Group Manifest: names may only contain");
-        assertThat(manifestError(List.of("A".repeat(Visitor.MAX_COMPANION_NAME_LENGTH + 1)), 2)).startsWith("Group Manifest: names may only contain");
+        binder.bind(new MutablePropertyValues(Map.ofEntries(Map.entry("companionNames", "Santos, Maria L."),
+                Map.entry("eventJustification", "School field trip"), Map.entry("groupSize", "5"),
+                Map.entry("discountedCount", "2"), Map.entry("regularCount", "3"), Map.entry("freeCount", "1"),
+                Map.entry("admissionTotalCentavos", "1"), Map.entry("regularPriceCentavos", "1"), Map.entry("discountedPriceCentavos", "1"),
+                Map.entry("termsAcceptedAt", "2020-01-01T00:00"), Map.entry("termsVersion", "forged"))));
+        assertThat(target.getCompanionNames()).isNull();
+        assertThat(target.getEventJustification()).isNull();
+        assertThat(target.getGroupSize()).isEqualTo(1); // set by the server from the counts, never from the form
+        assertThat(target.getDiscountedCount()).isEqualTo(2);
+        assertThat(target.getRegularCount()).isEqualTo(3);
+        assertThat(target.getFreeCount()).isEqualTo(1);
+        assertThat(target.getAdmissionTotalCentavos()).isNull();
+        assertThat(target.getRegularPriceCentavos()).isNull();
+        assertThat(target.getDiscountedPriceCentavos()).isNull();
+        assertThat(target.getTermsAcceptedAt()).isNull();
+        assertThat(target.getTermsVersion()).isNull();
     }
 
     @Test
@@ -478,57 +455,21 @@ class VisitorPortalControllerTest {
     }
 
     @Test
-    void soloBookingCannotGrowIntoAnUnnamedGroup() throws Exception {
-        Visitor v = upcoming("APPROVED");
-        v.setGroupSize(1);
-        when(repo.findById(7L)).thenReturn(Optional.of(v));
-        mvc.perform(post("/manage-booking/update").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
-                .param("slot", "").param("groupSize", "5").param("companionNames", ""))
-            .andExpect(flash().attribute("error", "Group Manifest: list exactly 4 companion name(s), one per line (your group of 5 includes you)."));
-        mvc.perform(post("/manage-booking/update").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
-                .param("slot", "").param("groupSize", "5"))
-            .andExpect(flash().attribute("error", "Group Manifest: list exactly 4 companion name(s), one per line (your group of 5 includes you)."));
-        verify(repo, never()).save(any());
-        assertThat(v.getGroupSize()).isEqualTo(1);
-    }
-
-    @Test
-    void guestListChangeOnApprovedBookingGoesBackToPending() throws Exception {
-        Visitor v = upcoming("APPROVED");
-        v.setCompanionNames("Santos, Maria L.");
-        v.setQrCodeUrl("QR_7.png");
-        when(repo.findById(7L)).thenReturn(Optional.of(v));
-        mvc.perform(post("/manage-booking/update").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
-                .param("slot", "").param("groupSize", "2").param("companionNames", "Reyes, Pedro"))
-            .andExpect(flash().attribute("success", org.hamcrest.Matchers.startsWith("Booking updated. Your new guest list")));
-        assertThat(v.getCompanionNames()).isEqualTo("Reyes, Pedro");
-        assertThat(v.getStatus()).isEqualTo("PENDING");
-        assertThat(v.getQrCodeUrl()).isNull();
-    }
-
-    @Test
-    void unchangedGuestListKeepsApproval() throws Exception {
-        Visitor v = upcoming("APPROVED");
-        v.setCompanionNames("Santos, Maria L.");
-        when(repo.findById(7L)).thenReturn(Optional.of(v));
-        mvc.perform(post("/manage-booking/update").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
-                .param("slot", "").param("groupSize", "2").param("companionNames", "  Santos, Maria L.  \n"))
-            .andExpect(flash().attribute("success", "No changes to save."));
-        assertThat(v.getStatus()).isEqualTo("APPROVED");
-    }
-
-    @Test
-    void manageDashboardShowsGuestListAndManifestField() throws Exception {
+    void manageDashboardShowsStoredGuestNamesReadOnlyAndHasNoGuestListField() throws Exception {
         Visitor v = upcoming("APPROVED");
         v.setCompanionNames("Santos, Maria L.\nReyes, Pedro");
         when(repo.findById(7L)).thenReturn(Optional.of(v));
-        when(repo.findBuyoutDates()).thenReturn(List.of());
         when(bookingRepo.findAll()).thenReturn(List.of());
         mvc.perform(get("/manage-booking").session(signedIn(7L)))
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().string(org.hamcrest.Matchers.allOf(
                 org.hamcrest.Matchers.containsString("<dt>Guest List</dt>"),
                 org.hamcrest.Matchers.containsString("<span>Santos, Maria L.</span><br><span>Reyes, Pedro</span>"),
-                org.hamcrest.Matchers.containsString("id=\"mbCompanions\" name=\"companionNames\""))));
+                org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("name=\"companionNames\"")))));
+
+        v.setCompanionNames(null); // a new group booking: no Guest List row at all
+        mvc.perform(get("/manage-booking").session(signedIn(7L)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().string(
+                org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("<dt>Guest List</dt>"))));
     }
 
     @Test
@@ -538,15 +479,13 @@ class VisitorPortalControllerTest {
         when(repo.findById(7L)).thenReturn(Optional.of(v));
         mvc.perform(get("/manage-booking").session(signedIn(7L)))
             .andExpect(model().attribute("statusLabel", "Entry Denied"))
-            .andExpect(model().attribute("editable", false))
-            .andExpect(model().attribute("cancellable", false))
+            .andExpect(model().attribute("reschedulable", false))
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().string(
                 org.hamcrest.Matchers.containsString("Entry was denied at the gate")));
 
-        mvc.perform(post("/manage-booking/update").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123").param("groupSize", "3"))
+        mvc.perform(post("/manage-booking/reschedule").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
+                .param("visitDate", LocalDate.now().plusDays(9).toString()).param("timeWindow", WINDOW))
             .andExpect(flash().attribute("error", "This booking can no longer be changed online."));
-        mvc.perform(post("/manage-booking/cancel").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123"))
-            .andExpect(flash().attribute("error", "This booking can no longer be cancelled online."));
         verify(repo, never()).save(any());
     }
 
@@ -577,17 +516,15 @@ class VisitorPortalControllerTest {
 
         String html = mvc.perform(get("/manage-booking").session(signedIn(7L)))
             .andExpect(model().attribute("statusLabel", "Not Approved"))
-            .andExpect(model().attribute("editable", false))
-            .andExpect(model().attribute("cancellable", false))
+            .andExpect(model().attribute("reschedulable", false))
             .andReturn().getResponse().getContentAsString();
         String card = bookingCard(html);
         assertThat(card).contains("Not Approved", "We were unable to approve this request.").doesNotContain("QR_");
         assertNoBanWording(card);
 
-        mvc.perform(post("/manage-booking/update").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123").param("groupSize", "3"))
+        mvc.perform(post("/manage-booking/reschedule").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
+                .param("visitDate", LocalDate.now().plusDays(9).toString()).param("timeWindow", WINDOW))
             .andExpect(flash().attribute("error", "This booking can no longer be changed online."));
-        mvc.perform(post("/manage-booking/cancel").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123"))
-            .andExpect(flash().attribute("error", "This booking can no longer be cancelled online."));
         verify(repo, never()).save(any());
     }
 
@@ -616,24 +553,26 @@ class VisitorPortalControllerTest {
     }
 
     @Test
-    void theRefusalForABannedFaceIsCompletelyGeneric() {
-        assertThat(com.paf.aerovisit.service.KycService.FACE_BANNED).isEqualTo(
+    void theRefusalForABanIsCompletelyGeneric() {
+        assertThat(com.paf.aerovisit.service.IdentityBans.BANNED_MESSAGE).isEqualTo(
             "Booking Failed. We are unable to process your request at this time. Please try again later or contact the reception desk for assistance.");
-        assertNoBanWording(com.paf.aerovisit.service.KycService.FACE_BANNED);
-        assertThat(com.paf.aerovisit.service.KycService.FACE_BANNED.toLowerCase()).doesNotContain("face", "account", "identity");
-    }
-
-    private String manifestError(List<String> companions, int groupSize) {
-        return ReflectionTestUtils.invokeMethod(VisitorPortalController.class, "manifestError", companions, groupSize);
+        assertNoBanWording(com.paf.aerovisit.service.IdentityBans.BANNED_MESSAGE);
+        assertThat(com.paf.aerovisit.service.IdentityBans.BANNED_MESSAGE.toLowerCase()).doesNotContain("face", "account", "identity");
     }
 
     @Test
-    void masterBookingCannotBeEditedOnline() throws Exception {
-        Visitor v = upcoming("APPROVED");
-        v.setPurpose(Visitor.MASTER_BOOKING_PURPOSE);
+    void anOlderMasterBookingCanBeRescheduledLikeAnyBooking() throws Exception {
+        Visitor v = upcoming("PENDING");
+        v.setPurpose("Educational Tour (Master Booking Request)");
+        LocalDate newDate = LocalDate.now().plusDays(9);
         when(repo.findById(7L)).thenReturn(Optional.of(v));
-        mvc.perform(post("/manage-booking/update").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123").param("groupSize", "80"))
-            .andExpect(flash().attribute("error", "This booking can no longer be changed online."));
-        verify(repo, never()).save(any());
+        when(bookingRepo.findAll()).thenReturn(List.of(slot(newDate, 10)));
+        when(repo.findByVisitDate(newDate)).thenReturn(List.of());
+        when(repo.findByEmailAndVisitDate("juan@example.com", newDate)).thenReturn(new java.util.ArrayList<>());
+        mvc.perform(post("/manage-booking/reschedule").with(csrf()).session(signedIn(7L)).param("formToken", "tok-123")
+                .param("visitDate", newDate.toString()).param("timeWindow", WINDOW))
+            .andExpect(flash().attribute("success", "Booking updated."));
+        assertThat(v.getVisitDate()).isEqualTo(newDate);
+        assertThat(v.getStatus()).isEqualTo("PENDING");
     }
 }

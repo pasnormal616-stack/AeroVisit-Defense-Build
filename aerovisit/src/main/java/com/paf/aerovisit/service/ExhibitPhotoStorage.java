@@ -63,12 +63,22 @@ public class ExhibitPhotoStorage {
     // Checks one photo and saves it (with its S3 copy) under a random server-generated name; returns that name.
     // Shared by the Exhibits slideshow and the hero slideshow.
     public String storeFile(MultipartFile file) throws IOException {
+        CheckedImage image = check(file, MAX_BYTES);
+        return storeBytes(image.bytes(), FORMAT_TO_EXTENSION.get(image.format()));
+    }
+
+    // 📰 An uploaded file that passed every check: its bytes, its real format ("jpeg", "png" or "webp") and a display label
+    public record CheckedImage(byte[] bytes, String format, String label) {}
+
+    // Every upload check (extension, declared type, magic bytes, full decode) with the caller's size limit.
+    // Shared by the Exhibits/hero slideshows (5 MB) and the News photos (10 MB, NewsPhotoStorage).
+    public CheckedImage check(MultipartFile file, long maxBytes) throws IOException {
         if (file == null || file.isEmpty()) {
             throw new InvalidImageException("Please choose a photo to upload.");
         }
         String label = displayName(file);
-        if (file.getSize() > MAX_BYTES) {
-            throw new InvalidImageException(label + " is larger than 5 MB.");
+        if (file.getSize() > maxBytes) {
+            throw new InvalidImageException(label + " is larger than " + (maxBytes / (1024 * 1024)) + " MB.");
         }
         String format = formatFromExtension(file.getOriginalFilename());
         String contentType = file.getContentType() == null ? "" : file.getContentType().toLowerCase(Locale.ROOT);
@@ -79,9 +89,13 @@ public class ExhibitPhotoStorage {
         if (!format.equals(formatFromSignature(bytes)) || !decodes(bytes, format)) {
             throw new InvalidImageException(label + " is not a valid image file.");
         }
+        return new CheckedImage(bytes, format, label);
+    }
 
+    // Saves already-checked bytes (with their S3 copy) under a random server-generated name; returns that name
+    public String storeBytes(byte[] bytes, String extension) throws IOException {
         Files.createDirectories(directory);
-        String filename = UUID.randomUUID() + "." + FORMAT_TO_EXTENSION.get(format);
+        String filename = UUID.randomUUID() + "." + extension;
         Files.write(directory.resolve(filename), bytes, StandardOpenOption.CREATE_NEW);
         if (uploadMirror != null) uploadMirror.pushExhibit(directory.resolve(filename));
         return filename;
@@ -123,7 +137,8 @@ public class ExhibitPhotoStorage {
         return EXTENSION_TO_FORMAT.get(originalFilename.substring(dot + 1).toLowerCase(Locale.ROOT));
     }
 
-    private static String formatFromSignature(byte[] b) {
+    // Also used by ReceiptStorage (payment receipts and the booking's ID photos), so every upload shares one check
+    static String formatFromSignature(byte[] b) {
         if (b.length >= 3 && (b[0] & 0xFF) == 0xFF && (b[1] & 0xFF) == 0xD8 && (b[2] & 0xFF) == 0xFF) {
             return "jpeg";
         }
@@ -139,7 +154,7 @@ public class ExhibitPhotoStorage {
     }
 
     // Decodes the whole image (downsampled, to keep memory low) so truncated or disguised files are rejected
-    private static boolean decodes(byte[] bytes, String format) {
+    static boolean decodes(byte[] bytes, String format) {
         try (ImageInputStream in = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
             if (in == null) return false;
             Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName(format);

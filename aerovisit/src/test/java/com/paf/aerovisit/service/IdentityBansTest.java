@@ -68,7 +68,7 @@ class IdentityBansTest {
     @Test
     void aFaceBanWithoutContactDetailsNeverMatchesByEmail() {
         BlacklistedFace faceOnly = new BlacklistedFace(); // made before the email / phone columns existed
-        faceOnly.setFaceEncoding(FaceEncodings.format(new double[FaceEncodings.DIMENSIONS]));
+        faceOnly.setFaceEncoding("0.0,0.1,0.2");
         assertThat(IdentityBans.contactBan("juan@example.com", "09171234567", List.of(faceOnly), TODAY)).isNull();
     }
 
@@ -84,15 +84,14 @@ class IdentityBansTest {
     }
 
     @Test
-    void aBookingWithTheBannedFaceIsBannedWhateverItsEmail() {
-        double[] face = new double[FaceEncodings.DIMENSIONS];
-        face[3] = 1;
+    void anOlderFaceOnlyBanNoLongerBansAnyone() {
+        // 🪪 Face matching was removed: the same stored vector on a booking and a ban no longer matches
         BlacklistedFace b = new BlacklistedFace();
-        b.setFaceEncoding(FaceEncodings.format(face));
+        b.setFaceEncoding("0.0,0.0,0.0,1.0");
         Visitor v = new Visitor();
         v.setEmail("brand.new@example.com");
-        v.setFaceEncoding(FaceEncodings.format(face));
-        assertThat(IdentityBans.activeBan(v, List.of(b), TODAY)).isSameAs(b);
+        v.setFaceEncoding("0.0,0.0,0.0,1.0");
+        assertThat(IdentityBans.activeBan(v, List.of(b), TODAY)).isNull();
     }
 
     // --- Name: flag only ---

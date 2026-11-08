@@ -88,9 +88,9 @@ class WaitlistAndCapacityTest {
     @Test
     @WithMockUser(username = "director", roles = "DIRECTOR")
     void directorSeesForceApproveAndTheCapacityRejectReason() throws Exception {
-        Visitor master = visitor(8, "PENDING", null);
-        master.setPurpose(Visitor.MASTER_BOOKING_PURPOSE);
-        when(repo.findAll()).thenReturn(List.of(visitor(3, "PENDING", null), master, visitor(9, "APPROVED", null)));
+        Visitor oldMaster = visitor(8, "PENDING", null);
+        oldMaster.setPurpose("Educational Tour (Master Booking Request)");
+        when(repo.findAll()).thenReturn(List.of(visitor(3, "PENDING", null), oldMaster, visitor(9, "APPROVED", null)));
 
         mvc.perform(get("/admin").param("filter", "all"))
             .andExpect(status().isOk())
@@ -99,8 +99,8 @@ class WaitlistAndCapacityTest {
             // In the row's ⋮ menu, not a loud yellow button beside Approve on every row
             .andExpect(content().string(containsString("class=\"dropdown-item text-warning\"")))
             .andExpect(content().string(not(containsString("btn btn-sm btn-warning"))))
-            // Master Bookings and non-pending rows get no override button
-            .andExpect(content().string(not(containsString("/admin/approve-override/8"))))
+            // An older Master Booking is an ordinary request now and gets the override too; non-pending rows don't
+            .andExpect(content().string(containsString("action=\"/admin/approve-override/8\" method=\"post\"")))
             .andExpect(content().string(not(containsString("/admin/approve-override/9"))))
             .andExpect(content().string(containsString("<option value=\"Capacity Reached\">Capacity Reached - Please choose another date</option>")));
     }
@@ -120,7 +120,7 @@ class WaitlistAndCapacityTest {
     @SuppressWarnings("unchecked")
     void pendingQueueIsOldestFirstWithUntimestampedRowsOnTop() throws Exception {
         LocalDateTime base = LocalDateTime.of(2026, 10, 12, 8, 30);
-        when(repo.findByStatusIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of(
+        when(repo.findPendingQueue()).thenReturn(List.of(
             visitor(5, "PENDING", base.plusHours(2)),
             visitor(3, "PENDING", base),
             visitor(7, "PENDING", null),
@@ -170,7 +170,7 @@ class WaitlistAndCapacityTest {
             slot(today.plusDays(1), MORNING, 50)));
         when(repo.findByVisitDate(today)).thenReturn(new ArrayList<>(List.of( // the Today's Manifest table sorts this list in place
             booking(1, "APPROVED", MORNING, 4),
-            booking(2, "PENDING", MORNING, 3),              // waitlist: holds no seat
+            booking(2, "PENDING", MORNING, 3),              // 💳 pay first: a pending request holds its seats too
             booking(3, "CANCELLED_BY_VISITOR", MORNING, 2), // cancelled: holds no seat
             booking(4, "CHECKED-IN", AFTERNOON, 5))));
 
@@ -185,7 +185,7 @@ class WaitlistAndCapacityTest {
 
         List<Map<String, Object>> rows = capacityRows(result);
         assertThat(rows).extracting(r -> r.get("window")).containsExactly(MORNING, AFTERNOON);
-        assertThat(rows).extracting(r -> r.get("remaining")).containsExactly(6, 0);
+        assertThat(rows).extracting(r -> r.get("remaining")).containsExactly(3, 0); // 10 - 4 approved - 3 pending
         assertThat(rows).extracting(r -> r.get("maxCapacity")).containsExactly(10, 5);
     }
 
@@ -194,7 +194,7 @@ class WaitlistAndCapacityTest {
         LocalDate picked = LocalDate.now().plusDays(10);
         when(bookingRepo.findAll()).thenReturn(List.of(slot(LocalDate.now(), MORNING, 99), slot(picked, MORNING, 20)));
         when(repo.findByVisitDate(picked)).thenReturn(List.of(booking(1, "APPROVED", MORNING, 8)));
-        when(repo.findByStatusIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of(visitor(3, "PENDING", LocalDateTime.now())));
+        when(repo.findPendingQueue()).thenReturn(List.of(visitor(3, "PENDING", LocalDateTime.now())));
 
         MvcResult result = mvc.perform(get("/admin").param("filter", "pending").param("capacityDate", picked.toString()))
             .andExpect(status().isOk())
@@ -217,15 +217,21 @@ class WaitlistAndCapacityTest {
     }
 
     @Test
-    void buyoutAndClosureAreCheckedAgainstThePickedDate() throws Exception {
-        LocalDate buyoutDay = LocalDate.now().plusDays(5);
+    void onlyAnEmergencyClosureClosesThePickedDate() throws Exception {
+        // An approved older Master Booking no longer closes its date: it only holds its own seats
+        LocalDate oldMasterDay = LocalDate.now().plusDays(5);
         LocalDate closedDay = LocalDate.now().plusDays(6);
         LocalDate openDay = LocalDate.now().plusDays(7);
-        when(bookingRepo.findAll()).thenReturn(List.of(slot(buyoutDay, MORNING, 10), slot(closedDay, MORNING, 10), slot(openDay, MORNING, 10)));
-        when(repo.findBuyoutDates()).thenReturn(List.of(buyoutDay));
+        when(bookingRepo.findAll()).thenReturn(List.of(slot(oldMasterDay, MORNING, 10), slot(closedDay, MORNING, 10), slot(openDay, MORNING, 10)));
+        Visitor oldMaster = visitor(8, "APPROVED", null);
+        oldMaster.setPurpose("Educational Tour (Master Booking Request)");
+        oldMaster.setVisitDate(oldMasterDay);
+        oldMaster.setTimeWindow(MORNING);
+        oldMaster.setGroupSize(4);
+        when(repo.findByVisitDate(oldMasterDay)).thenReturn(List.of(oldMaster));
         when(repo.findClosureDates()).thenReturn(List.of(closedDay));
 
-        for (Object[] c : new Object[][] {{buyoutDay, 0}, {closedDay, 0}, {openDay, 10}}) {
+        for (Object[] c : new Object[][] {{oldMasterDay, 6}, {closedDay, 0}, {openDay, 10}}) {
             MvcResult result = mvc.perform(get("/admin").param("filter", "pending").param("capacityDate", c[0].toString()))
                 .andExpect(status().isOk()).andReturn();
             assertThat(capacityRows(result)).as("remaining on " + c[0]).extracting(r -> r.get("remaining")).containsExactly(c[1]);

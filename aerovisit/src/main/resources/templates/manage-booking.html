@@ -50,7 +50,13 @@
 
                             <!-- What the current status means for the visitor -->
                             <div class="vp-note" th:switch="${booking.status}">
-                                <th:block th:case="'APPROVED'"><i class="bi bi-patch-check"></i><div><strong>Your visit is confirmed.</strong> At the main gate, show the guard the Entry QR Code from your approval email together with a valid government-issued ID.</div></th:block>
+                                <th:block th:case="'APPROVED'">
+                                    <th:block th:if="${booking.paymentCleared()}"><i class="bi bi-patch-check"></i><div><strong>Your visit is confirmed.</strong> At the main gate, show the guard the Entry QR Code from your approval email together with a valid government-issued ID.</div></th:block>
+                                    <th:block th:unless="${booking.paymentCleared()}"><i class="bi bi-credit-card"></i><div><strong>Your visit is approved and your seats are reserved.</strong> Please complete your payment by the deadline below; your Entry QR Code is emailed once the museum verifies it.</div></th:block>
+                                </th:block>
+                                <th:block th:case="'AWAITING_RECEIPT'"><i class="bi bi-credit-card"></i><div><strong>Your seats are reserved while you pay.</strong> Please pay through LANDBANK and upload your receipt by <strong th:text="${paymentDeadline}"></strong>. The museum then reviews your booking and payment, and emails your Entry QR Code once approved.</div></th:block>
+                                <th:block th:case="'PAYMENT_EXPIRED'"><i class="bi bi-hourglass-bottom"></i><div><strong>This booking was released</strong> because no payment receipt was received by the deadline. You are welcome to book a new visit anytime.</div></th:block>
+                                <th:block th:case="'RESCHEDULE_REQUIRED'"><i class="bi bi-calendar-event"></i><div><strong th:text="${booking.rejectionReason == T(com.paf.aerovisit.model.Visitor).UNREVIEWED_NOTE} ? 'The museum could not review your booking before your visit date.' : 'The museum is closed on your booked date.'">The museum is closed on your booked date.</strong> Your payment is kept: please choose a new date and time below<th:block th:if="${rescheduleDeadline != null}"> by <strong th:text="${rescheduleDeadline}">2026-11-19</strong></th:block>. Your new date goes to the museum for approval, and no new payment is needed.</div></th:block>
                                 <th:block th:case="'CHECKED-IN'"><i class="bi bi-door-open"></i><div><strong>You're checked in.</strong> Enjoy your tour, and please follow the museum's safety protocols throughout the facility.</div></th:block>
                                 <th:block th:case="'CHECKED-OUT'"><i class="bi bi-stars"></i><div><strong>Thank you for visiting the PAF Aerospace Museum.</strong> We hope you enjoyed the tour and look forward to welcoming you back.</div></th:block>
                                 <th:block th:case="'REJECTED'"><i class="bi bi-x-circle"></i><div><strong>We were unable to approve this request.</strong> You're welcome to submit a new booking for another date.</div></th:block>
@@ -59,8 +65,14 @@
                                 <th:block th:case="'CANCELLED_BY_VISITOR'"><i class="bi bi-calendar-x"></i><div><strong>You cancelled this visit</strong> and your seats have been released. We'd be glad to welcome you on another date.</div></th:block>
                                 <th:block th:case="'DENIED_ENTRY'"><i class="bi bi-shield-x"></i><div><strong>Entry was denied at the gate</strong> because the identification presented did not pass verification. This booking and its QR code are no longer valid. For concerns, please contact the museum directly.</div></th:block>
                                 <th:block th:case="'NO_SHOW'"><i class="bi bi-calendar-x"></i><div><strong>We missed you on your visit date.</strong> Your booking was not used and its QR code is no longer valid. You are welcome to book another visit anytime.</div></th:block>
-                                <th:block th:case="*"><i class="bi bi-hourglass-split"></i><div><strong>Your request is under review.</strong> Once it is approved, your Entry QR Code will be emailed to <strong th:text="${booking.email}"></strong>.</div></th:block>
+                                <th:block th:case="*">
+                                    <th:block th:if="${booking.paymentStatus == 'PAYMENT_REJECTED'}"><i class="bi bi-exclamation-circle"></i><div><strong>Your payment receipt was not accepted.</strong> Your seats are still reserved: please upload a new receipt by <strong th:text="${paymentDeadline}"></strong>, or your booking will expire.</div></th:block>
+                                    <th:block th:unless="${booking.paymentStatus == 'PAYMENT_REJECTED'}"><i class="bi bi-hourglass-split"></i><div><strong>Your request is under review.</strong> Once it is approved, your Entry QR Code will be emailed to <strong th:text="${booking.email}"></strong>.</div></th:block>
+                                </th:block>
                             </div>
+
+                            <!-- 🚶 The walk-in gate QR: the guard scans it to open this walk-in's Process panel -->
+                            <th:block th:if="${walkInQr != null}"><div th:replace="~{fragments/walkin-qr :: pass(${walkInQr}, ${booking.referenceId}, 'page')}"></div></th:block>
 
                             <!-- Countdown to the start of the visit window (filled in by the script below) -->
                             <div th:if="${showCountdown}" class="vp-countdown" id="mbCountdown"
@@ -77,31 +89,47 @@
                                 <div class="vp-details-row"><dt>Visit Date</dt><dd class="is-primary" th:text="${booking.visitDate != null ? #temporals.format(booking.visitDate, 'EEEE, MMMM d, yyyy') : '—'}"></dd></div>
                                 <div class="vp-details-row"><dt>Time Window</dt><dd th:text="${booking.timeWindow != null ? booking.timeWindow : '—'}"></dd></div>
                                 <div class="vp-details-row"><dt>Party Size</dt><dd th:text="${booking.groupSize + (booking.groupSize == 1 ? ' guest' : ' guests')}"></dd></div>
-                                <div class="vp-details-row" th:if="${booking.groupSize > 1}"><dt>Guest List</dt>
-                                    <dd th:if="${#lists.isEmpty(booking.companionList())}">Not provided</dd>
-                                    <dd th:unless="${#lists.isEmpty(booking.companionList())}"><th:block th:each="name, stat : ${booking.companionList()}"><span th:text="${name}"></span><br th:unless="${stat.last}"></th:block></dd>
+                                <!-- 💱 Admission counts and the total at the prices this booking was made at (none on older bookings) -->
+                                <div class="vp-details-row" th:if="${booking.admissionCounted()}"><dt>Admission</dt>
+                                    <dd><span th:text="${booking.admissionSummary()}"></span><br><strong id="mbAdmissionSaved" th:text="${booking.admissionTotalText()}"></strong></dd>
+                                </div>
+                                <!-- 💳 Payment (bookings with an admission total) -->
+                                <th:block th:if="${booking.paymentRequired() and booking.billingNumber != null}">
+                                    <div class="vp-details-row"><dt>Billing Number</dt><dd class="av-mono" th:text="${booking.billingNumber}"></dd></div>
+                                    <div class="vp-details-row"><dt>Payment</dt><dd><span th:text="${booking.amountDueText()}"></span> &middot; <span th:text="${booking.paymentStatusLabel()}"></span></dd></div>
+                                    <div class="vp-details-row" th:if="${booking.paymentStatus != 'PAID' and paymentDeadline != ''}"><dt>Payment Deadline</dt><dd class="is-primary" th:text="${paymentDeadline}"></dd></div>
+                                </th:block>
+                                <!-- Older bookings only: the guest names given at the time, shown read-only -->
+                                <div class="vp-details-row" th:unless="${#lists.isEmpty(booking.companionList())}"><dt>Guest List</dt>
+                                    <dd><th:block th:each="name, stat : ${booking.companionList()}"><span th:text="${name}"></span><br th:unless="${stat.last}"></th:block></dd>
                                 </div>
                                 <div class="vp-details-row"><dt>Email</dt><dd th:text="${booking.email}"></dd></div>
                                 <div class="vp-details-row"><dt>Contact Number</dt><dd th:text="${booking.contactNumber != null ? booking.contactNumber : '—'}"></dd></div>
                                 <div class="vp-details-row"><dt>Purpose of Visit</dt><dd th:text="${booking.purpose != null ? booking.purpose : '—'}"></dd></div>
                             </dl>
 
-                            <!-- Edit form -->
-                            <th:block th:if="${editable}">
-                                <h2 class="vp-mb-section">Update Your Visit</h2>
-                                <p class="text-muted small">Choose a new date and time, adjust your party size, or update your contact number. The list only shows time slots with enough open seats for your group.</p>
+                            <!-- 💳 Pay / upload proof (same page as the emailed link, opened through this signed-in session) -->
+                            <a th:if="${booking.paymentRequired() and booking.billingNumber != null and booking.paymentStatus != 'PAID' and canPay}"
+                               th:href="@{/manage-booking/payment}" class="vp-btn vp-btn--gold vp-btn--block mb-3">
+                                <span th:text="${booking.paymentStatus == 'PROOF_SUBMITTED'} ? 'View Payment / Replace Receipt' : 'Pay / Upload Proof of Payment'">Pay / Upload Proof of Payment</span>
+                                <span class="vp-btn-icon"><i class="bi bi-credit-card"></i></span></a>
+
+                            <!-- 📅 Reschedule: the only change made online (payments are non-refundable, so there is no cancelling) -->
+                            <th:block th:if="${reschedulable}">
+                                <h2 class="vp-mb-section">Reschedule Your Visit</h2>
+                                <p class="text-muted small">Can't make it on your date? Move your visit to another open date and time. The list only shows time slots with enough open seats for your group. Your group and payment stay as they are.</p>
                                 <div th:if="${booking.status == 'APPROVED'}" class="vp-note">
                                     <i class="bi bi-info-circle"></i>
-                                    <div>Changing your <strong>date, time, party size or guest list</strong> sends the booking back to the museum for approval, and your current QR code stops working until the new schedule is approved. Updating only your contact number does not affect your approval.</div>
+                                    <div>A new date sends the booking back to the museum for approval, and your current QR code stops working until the new schedule is approved. You don't pay again.</div>
                                 </div>
-                                <form th:action="@{/manage-booking/update}" method="post">
+                                <form th:action="@{/manage-booking/reschedule}" method="post">
                                     <input type="hidden" name="formToken" th:value="${formToken}">
                                     <!-- Step 1: pick a date. Step 2: pick one of that date's open time windows (filled in by the script below) -->
                                     <div class="vp-grid-2">
                                         <div class="vp-field">
-                                            <label class="form-label" for="mbDate">Visit Date</label>
+                                            <label class="form-label" for="mbDate">New Visit Date</label>
                                             <input type="date" id="mbDate" name="visitDate" class="form-control" required
-                                                   th:value="${booking.visitDate}" th:data-current-date="${booking.visitDate}" th:data-current-window="${booking.timeWindow}">
+                                                   th:data-current-date="${booking.visitDate}">
                                             <!-- Month view highlighting the days the museum is open; the script shows it and hides the plain date input above (the no-JS fallback) -->
                                             <div class="vp-mcal" id="mbCal" hidden>
                                                 <div class="vp-mcal-head">
@@ -119,64 +147,27 @@
                                         <div class="vp-field">
                                             <label class="form-label" for="mbWindow">Time Window</label>
                                             <select id="mbWindow" name="timeWindow" class="form-select" required>
-                                                <option th:value="${booking.timeWindow}" th:text="|${booking.timeWindow} (current)|" selected></option>
-                                                <option th:each="s : ${openSlots}" th:if="${s.date == booking.visitDate.toString()}"
-                                                        th:value="${s.window}" th:text="|${s.window} (${s.remaining} seats left)|"></option>
+                                                <option value="" selected disabled>Choose a date first</option>
+                                                <option th:each="s : ${openSlots}" th:value="${s.window}" th:text="${s.label}"></option>
                                             </select>
                                         </div>
                                     </div>
                                     <div class="form-text vp-field" id="mbSlotHint"
                                          th:text="${#lists.isEmpty(openSlots)} ? 'No other time slots currently have enough open seats for your group. Please check again later.' : 'Pick a date to see its open time windows.'"></div>
-                                    <div class="vp-grid-2">
-                                        <div class="vp-field">
-                                            <label class="form-label" for="mbGroup">Party Size</label>
-                                            <input type="number" id="mbGroup" name="groupSize" class="form-control" min="1" th:value="${booking.groupSize}" required>
-                                            <div class="form-text">Include yourself and every member of your group.</div>
-                                        </div>
-                                        <div class="vp-field">
-                                            <label class="form-label" for="mbContact">Contact Number</label>
-                                            <input type="text" id="mbContact" name="contactNumber" class="form-control" maxlength="30" placeholder="09XX-XXX-XXXX" th:value="${booking.contactNumber}">
-                                            <div class="form-text">Used only if the museum needs to reach you about this visit.</div>
-                                        </div>
-                                    </div>
-                                    <!-- GROUP MANIFEST (shown and required only when Party Size is 2 or more) -->
-                                    <div class="vp-field" id="mbCompanionField">
-                                        <label class="form-label" for="mbCompanions">Companion Names (one per line) <span class="req">*</span></label>
-                                        <textarea id="mbCompanions" name="companionNames" class="form-control" rows="4" aria-describedby="mbCompanionHelp"
-                                                  placeholder="Dela Cruz, Juan P.&#10;Santos, Maria L." th:text="${booking.companionNames}"></textarea>
-                                        <div class="form-text" id="mbCompanionHelp">
-                                            <i class="bi bi-shield-lock"></i> Military base protocol: list every guest besides yourself, exactly as named on their valid ID.
-                                            <span id="mbCompanionCount"></span>
-                                        </div>
-                                    </div>
-                                    <button type="submit" class="vp-btn vp-btn--primary vp-btn--block">Save Changes <span class="vp-btn-icon"><i class="bi bi-check2"></i></span></button>
+                                    <button type="submit" class="vp-btn vp-btn--primary vp-btn--block">Save New Date <span class="vp-btn-icon"><i class="bi bi-check2"></i></span></button>
                                 </form>
                             </th:block>
 
-                            <div th:if="${!editable and cancellable and booking.masterBooking}" class="vp-note">
-                                <i class="bi bi-telephone"></i>
-                                <div>Changes to a <strong>Master Booking</strong> are arranged directly with the museum's tour coordinators. You can still cancel the reservation below.</div>
+                            <!-- 🚶 A walk-in is for today and can't be moved; nothing to do if the visitor can't come -->
+                            <div th:if="${!reschedulable and booking.walkIn() and statusTone != 'warn' and statusTone != 'muted'}" class="vp-note">
+                                <i class="bi bi-person-walking"></i>
+                                <div>This is a walk-in booking for today, so its date and time can't be changed. If you can't come, no action is needed.</div>
                             </div>
-                            <div th:if="${!editable and cancellable and !booking.masterBooking}" class="vp-note">
-                                <i class="bi bi-hourglass-split"></i>
-                                <div>Your booking is being verified, so it can't be changed right now. You can still cancel it below if your plans have changed.</div>
-                            </div>
-                            <div th:if="${!cancellable and statusTone != 'warn' and statusTone != 'muted'}" class="vp-note">
+                            <div th:if="${!reschedulable and !booking.walkIn() and statusTone != 'warn' and statusTone != 'muted'}" class="vp-note">
                                 <i class="bi bi-lock"></i>
-                                <div>This booking can no longer be changed or cancelled online.</div>
+                                <div>This booking can no longer be changed online.</div>
                             </div>
                             <a th:if="${statusTone == 'warn' or statusTone == 'muted'}" href="/" class="vp-btn vp-btn--primary vp-btn--block">Book a New Visit <span class="vp-btn-icon"><i class="bi bi-arrow-right"></i></span></a>
-
-                            <!-- Cancel -->
-                            <div th:if="${cancellable}" class="vp-mb-cancel">
-                                <h2 class="vp-mb-section mt-0">Cancel Your Visit</h2>
-                                <p class="text-muted small">If your plans change, cancelling releases your seats right away so other visitors can book them. This cannot be undone.</p>
-                                <form th:action="@{/manage-booking/cancel}" method="post"
-                                      onsubmit="return confirm('Cancel your visit to the PAF Aerospace Museum? Your seats will be released immediately and this cannot be undone.');">
-                                    <input type="hidden" name="formToken" th:value="${formToken}">
-                                    <button type="submit" class="vp-btn vp-btn--danger vp-btn--block">Cancel My Visit <span class="vp-btn-icon"><i class="bi bi-x-lg"></i></span></button>
-                                </form>
-                            </div>
 
                             <form th:action="@{/manage-booking/logout}" method="post" class="vp-mb-signout">
                                 <button type="submit" class="vp-btn vp-btn--ghost vp-btn--block">Sign Out</button>
@@ -195,7 +186,7 @@
 <th:block th:replace="~{fragments/visitor :: scripts}"></th:block>
 <script th:inline="javascript">
     // Reschedule picker: after a date is chosen, list only that date's time windows with enough open seats.
-    // The visitor's current date keeps its current window as the first option.
+    // Only dates a new advance booking could take are offered (never today); the current slot is not one of them.
     (function () {
         var dateInput = document.getElementById('mbDate');
         var windowSelect = document.getElementById('mbWindow');
@@ -203,7 +194,6 @@
         var slots = /*[[${openSlots}]]*/ [];
         var hint = document.getElementById('mbSlotHint');
         var currentDate = dateInput.dataset.currentDate;
-        var currentWindow = dateInput.dataset.currentWindow;
 
         function pad(n) { return n < 10 ? '0' + n : String(n); }
         var now = new Date();
@@ -232,7 +222,6 @@
         function fillWindows() {
             var picked = dateInput.value;
             windowSelect.innerHTML = '';
-            if (picked === currentDate) addOption(currentWindow, currentWindow + ' (current)');
             slots.forEach(function (s) {
                 if (s.date === picked) addOption(s.window, s.window + ' (' + s.remaining + ' seats left)');
             });
@@ -286,10 +275,10 @@
                 btn.className = 'vp-mcal-day' + (isOpen ? ' is-open' : '') + (isCurrent ? ' is-current' : '')
                         + (day === dateInput.value ? ' is-selected' : '') + (day === today ? ' is-today' : '');
                 btn.textContent = d;
-                btn.disabled = (!isOpen && !isCurrent) || day < today;
+                btn.disabled = !isOpen || day < today;
                 btn.setAttribute('aria-pressed', day === dateInput.value ? 'true' : 'false');
                 btn.setAttribute('aria-label', new Date(view.y, view.m, d).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
-                        + (isCurrent ? ', your current date' : isOpen ? ', open' : ', closed or full'));
+                        + (isCurrent ? ', your current date' : '') + (isOpen ? ', open' : ', closed or full'));
                 btn.dataset.date = day;
                 grid.appendChild(btn);
             }
@@ -312,33 +301,6 @@
         dateInput.hidden = true;
         cal.hidden = false;
         render();
-    })();
-</script>
-<script>
-    // 🪖 GROUP MANIFEST: show + require companion names only when the party has 2 or more visitors
-    (function () {
-        var sizeInput = document.getElementById('mbGroup');
-        var field = document.getElementById('mbCompanionField');
-        var input = document.getElementById('mbCompanions');
-        if (!sizeInput || !field || !input) return;
-        function sync() {
-            var needed = (parseInt(sizeInput.value, 10) || 1) - 1;
-            if (needed > 0) {
-                field.classList.remove('d-none');
-                input.setAttribute('required', 'true');
-                var listed = input.value.split('\n').filter(function (n) { return n.trim() !== ''; }).length;
-                input.setCustomValidity(listed === needed ? '' : 'Enter exactly ' + needed + ' name(s), one per line.');
-                document.getElementById('mbCompanionCount').innerText = listed + ' of ' + needed + ' listed.';
-            } else {
-                // A hidden required field would block submit, so drop the requirement (the server ignores leftovers)
-                field.classList.add('d-none');
-                input.removeAttribute('required');
-                input.setCustomValidity('');
-            }
-        }
-        sizeInput.addEventListener('input', sync);
-        input.addEventListener('input', sync);
-        sync();
     })();
 </script>
 <script>

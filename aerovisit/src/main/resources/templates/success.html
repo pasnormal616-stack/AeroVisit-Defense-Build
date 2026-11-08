@@ -19,8 +19,16 @@
                     <div class="vp-bezel-core vp-card-pad">
 
                         <div class="vp-status-ico vp-status-ico--ok"><i class="bi bi-check2-circle"></i></div>
-                        <h1 class="vp-title-xl">Registration Received</h1>
-                        <p class="vp-lead">Your visit request has been securely transmitted to the Philippine Air Force Aerospace Museum Command Center.</p>
+                        <!-- 🚶 A free walk-in (total 0): no approval and no payment, straight to the gate -->
+                        <th:block th:if="${walkInGate == true}">
+                            <h1 class="vp-title-xl">Go to the Gate</h1>
+                            <p class="vp-lead">Your walk-in seats for today are reserved. Show your ID and this QR (or the Booking Reference ID) to the guard at the gate. We also emailed it to you.</p>
+                            <th:block th:if="${walkInQr != null}"><div th:replace="~{fragments/walkin-qr :: pass(${walkInQr}, ${visitor.referenceId}, 'page')}"></div></th:block>
+                        </th:block>
+                        <th:block th:unless="${walkInGate == true}">
+                            <h1 class="vp-title-xl">Registration Received</h1>
+                            <p class="vp-lead">Your visit request has been securely transmitted to the Philippine Air Force Aerospace Museum Command Center.</p>
+                        </th:block>
 
                         <dl class="vp-details">
                             <div class="vp-details-row" th:if="${visitor.referenceId != null}"><dt>Booking Reference ID</dt><dd class="is-primary" th:text="${visitor.referenceId}"></dd></div>
@@ -29,16 +37,21 @@
                             <div class="vp-details-row"><dt>Visit Date</dt><dd class="is-primary" th:text="${visitor.visitDate}"></dd></div>
                             <div class="vp-details-row"><dt>Time Window</dt><dd th:text="${visitor.timeWindow}"></dd></div>
                             <div class="vp-details-row"><dt>Total Guests</dt><dd th:text="${visitor.groupSize}"></dd></div>
-                            <div class="vp-details-row"><dt>Status</dt><dd><span class="vp-status-tag" th:text="${statusLabel != null ? statusLabel : visitor.status}"></span></dd></div>
+                            <div class="vp-details-row" th:unless="${walkInGate == true}"><dt>Status</dt><dd><span class="vp-status-tag" th:text="${statusLabel != null ? statusLabel : visitor.status}"></span></dd></div>
                         </dl>
 
                         <!-- statusLabel is only set by /check-status; right after booking it is absent and the PENDING note shows -->
-                        <div class="vp-note" th:unless="${statusLabel == null or statusLabel == 'Pending Review'}">
+                        <div class="vp-note" th:unless="${walkInGate == true or statusLabel == null or statusLabel == 'Pending Review'}">
                             <i class="bi bi-info-circle"></i>
                             <div><strong>This booking is no longer pending.</strong> Sign in to <a href="/manage-booking">Manage Booking</a> with your email and Booking Reference ID to see its details.</div>
                         </div>
 
-                        <div class="vp-note" th:if="${statusLabel == null or statusLabel == 'Pending Review'}">
+                        <div class="vp-note" th:if="${walkInGate == true}">
+                            <i class="bi bi-person-walking"></i>
+                            <div><strong>Please check in soon:</strong> walk-in seats are held only for a short time. If you are not checked in by <strong th:text="${#temporals.format(visitor.checkInDueAt, 'h:mm a')}">9:30 AM</strong>, your seats are released.</div>
+                        </div>
+
+                        <div class="vp-note" th:if="${walkInGate != true and (statusLabel == null or statusLabel == 'Pending Review')}">
                             <i class="bi bi-envelope-paper"></i>
                             <div><strong>Next Steps:</strong> Your application is currently <span class="vp-status-tag">PENDING</span>. Please monitor your email inbox (<strong><span th:text="${visitor.email}"></span></strong>). Once the Museum Director approves your visit, you will receive an official Entry QR Code. Our emails sometimes land in the Spam or Junk folder, so please check there too and mark them as "Not spam".</div>
                         </div>
