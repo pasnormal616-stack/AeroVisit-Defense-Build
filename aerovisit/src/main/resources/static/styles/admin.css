@@ -1093,6 +1093,37 @@ button.av-nav-link { width: 100%; background: none; border: 0; font: inherit; te
 .av-app .fc .fc-daygrid-day.av-open-day.fc-day-today { box-shadow: inset 0 -3px 0 var(--success); }
 .av-legend--open { --swatch: var(--success-tint); }
 .av-legend--open::before { box-shadow: inset 0 0 0 1px var(--success); }
+/* 🧲 Duty Roster calendar: like the public booking calendar, dates without slots are greyed out and holidays say "Closed" */
+.av-app .fc .fc-daygrid-day.av-day-off { cursor: default; }
+.av-app .fc .fc-daygrid-day.av-day-off .fc-daygrid-day-number { color: var(--text-muted); opacity: 0.55; }
+.av-app .fc .fc-daygrid-day.av-day-closed { background: color-mix(in srgb, var(--danger-tint) 70%, transparent); cursor: not-allowed; }
+.av-app .fc .av-day-closed-label { display: block; padding: 0 4px; font-size: 0.6875rem; font-weight: 600; color: var(--danger-ink); }
+.av-app #rosterCalendar .fc-daygrid-day.av-open-day { cursor: pointer; }
+
+/* 🧲 Duty Roster day panel: windows are drop zones, the Staff Directory is a pool of draggable names */
+.av-roster-window { border: 1px dashed var(--border-strong); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 12px; transition: background-color 0.12s, border-color 0.12s; }
+.av-roster-window--other { border-style: solid; border-color: var(--border-subtle); }
+.av-roster-window-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.av-roster-window.is-over, .av-roster-pool-box.is-over { background: var(--primary-tint); border-color: var(--primary); }
+#rosterDayPanel.is-dragging .av-roster-window:not(.av-roster-window--other),
+#rosterDayPanel.is-picking .av-roster-window:not(.av-roster-window--other) { border-color: var(--primary); }
+#rosterDayPanel.is-picking .av-roster-window:not(.av-roster-window--other) { cursor: pointer; }
+.av-roster-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.av-roster-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 10px; border: 1px solid var(--border-subtle);
+    border-radius: 999px; background: var(--bg-surface); color: var(--primary); font-weight: 600; font-size: 0.875rem; overflow-wrap: anywhere; }
+.av-roster-chip[draggable="true"] { cursor: grab; }
+.av-roster-chip[draggable="true"]:active { cursor: grabbing; }
+.av-roster-chip:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.av-roster-chip[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: #FFFFFF; }
+.av-roster-chip--pool { color: var(--text); font-weight: 500; }
+.av-roster-chip-x { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-right: -4px; padding: 0;
+    border: 0; border-radius: 50%; background: transparent; color: var(--danger); }
+.av-roster-chip-x:hover, .av-roster-chip-x:focus-visible { background: var(--danger-tint); }
+.av-roster-chip[aria-pressed="true"] .av-roster-chip-x { color: #FFFFFF; }
+.av-roster-empty { padding: 2px 0; }
+@media (max-width: 991.98px) {
+    #rosterPoolBox.border-start, #rosterDayPanel .border-start { border-left: 0 !important; border-top: 1px solid var(--border-subtle); }
+}
 .av-app .fc .fc-scrollgrid { border-color: var(--border-subtle); border-radius: var(--radius); overflow: hidden; }
 
 /* --------------------------------------------------------------------------

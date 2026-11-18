@@ -103,6 +103,89 @@ public class WalkInService {
         return null;
     }
 
+    // --- 🔑 Today's walk-in code (security fix M2) ---
+    // A walk-in is for people already AT the museum, but nothing proved that: anyone, anywhere, could book Walk-in and
+    // hold today's seats at once, with no review, again and again. Now /save takes a walk-in only with today's code: six
+    // characters shown to staff on the Guard Dashboard and posted at the gate. It changes every day (HMAC of the date
+    // with a random secret kept in PortalSettings), and the Director can replace it at once if it leaks (newCode).
+    // aerovisit.walk-in.code-required=false turns the check off (the test suites' default, like the rate limiter).
+    static final String CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O, 1/I: easy to read off a sign
+    public static final int CODE_LENGTH = 6;
+    public static final String CODE_REQUIRED_MESSAGE = "Please enter today's walk-in code. Ask the guard at the gate for it.";
+    public static final String CODE_WRONG_MESSAGE = "That walk-in code is not right. Please check today's code with the guard at the gate.";
+
+    @org.springframework.beans.factory.annotation.Value("${aerovisit.walk-in.code-required:true}")
+    boolean codeRequired = true;
+
+    // The secret in use when PortalSettings has none stored (no database, or the first save failed)
+    private volatile String fallbackSecret;
+
+    public boolean codeRequired() { return codeRequired; }
+
+    // Today's code, e.g. "K7M2QX"
+    public String todaysCode(LocalDate day) {
+        try {
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(secret().getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));
+            byte[] h = mac.doFinal(("walk-in|" + day).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder code = new StringBuilder(CODE_LENGTH);
+            for (int i = 0; i < CODE_LENGTH; i++) code.append(CODE_ALPHABET.charAt(h[i] & 31));
+            return code.toString();
+        } catch (java.security.GeneralSecurityException e) {
+            throw new IllegalStateException("HmacSHA256 unavailable", e);
+        }
+    }
+
+    // Why this typed code doesn't open a walk-in today, or null (also null when the check is turned off)
+    public String codeError(String typed, LocalDate day) {
+        if (!codeRequired) return null;
+        String clean = typed == null ? "" : typed.replaceAll("\\s", "").toUpperCase(java.util.Locale.ROOT);
+        if (clean.isEmpty()) return CODE_REQUIRED_MESSAGE;
+        boolean same = java.security.MessageDigest.isEqual(clean.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                todaysCode(day).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return same ? null : CODE_WRONG_MESSAGE;
+    }
+
+    // 🔁 Director: a new secret, so today's code (and every later one) changes at once. Returns the new code for today.
+    public String newCode(LocalDate day) {
+        String fresh = randomSecret();
+        fallbackSecret = fresh;
+        if (settingsRepo != null) {
+            PortalSettings s = settingsRepo.findById(PortalSettings.SINGLETON_ID).orElseGet(PortalSettings::new);
+            s.setWalkInCodeSecret(fresh);
+            settingsRepo.save(s);
+        }
+        return todaysCode(day);
+    }
+
+    // The stored secret; made and stored on first use
+    private String secret() {
+        String stored = settings().getWalkInCodeSecret();
+        if (stored != null && !stored.isBlank()) return stored;
+        synchronized (this) {
+            if (fallbackSecret == null) {
+                fallbackSecret = randomSecret();
+                if (settingsRepo != null) {
+                    try {
+                        PortalSettings s = settingsRepo.findById(PortalSettings.SINGLETON_ID).orElseGet(PortalSettings::new);
+                        if (s.getWalkInCodeSecret() != null && !s.getWalkInCodeSecret().isBlank()) return fallbackSecret = s.getWalkInCodeSecret();
+                        s.setWalkInCodeSecret(fallbackSecret);
+                        settingsRepo.save(s);
+                    } catch (RuntimeException e) {
+                        System.err.println("⚠️ Walk-in code secret could not be saved; using it for this run only. " + e.getMessage());
+                    }
+                }
+            }
+            return fallbackSecret;
+        }
+    }
+
+    private static String randomSecret() {
+        byte[] b = new byte[32];
+        new java.security.SecureRandom().nextBytes(b);
+        return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(b);
+    }
+
     public static String tooManyMessage(int maxPax) {
         return "Walk-in reservations must not exceed " + maxPax + " persons (pax).";
     }

@@ -241,6 +241,19 @@ class ManageBookingRescheduleTest {
         verify(notificationService).bookingRescheduled(v);
     }
 
+    // 🎫 Security fix L5: the old QR's token is replaced, so it can't open the gate again once the new date is approved
+    @Test
+    void anApprovedBookingMovedToANewDateGetsANewPassToken() throws Exception {
+        Visitor v = awaitingReceipt(47L, DAY, 2);
+        v.setStatus("APPROVED");
+        v.setPaymentStatus(Visitor.PAY_PAID);
+        v.setSecureToken("old-pass-token-47");
+
+        reschedule(v, LATER).andExpect(flash().attribute("success", Matchers.startsWith("Booking updated.")));
+        assertThat(v.getSecureToken()).isNotBlank().isNotEqualTo("old-pass-token-47");
+        assertThat(v.getStatus()).isEqualTo("PENDING");
+    }
+
     @Test
     void aRescheduleIsRefusedForTodayAHolidayAClosureTheSameSlotOrADateTooSoon() throws Exception {
         Visitor v = awaitingReceipt(47L, DAY, 2);

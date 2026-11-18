@@ -91,8 +91,8 @@
         // 1. Pull the raw schedule data from the Java backend
         var rawRoster = /*[[${rosterEntries}]]*/ [];
 
-        // 2. Package it into FullCalendar events: one colour for everyone (no roles), "Name (window)"
-        var rosterEvents = rawRoster.map(function(staff) {
+        // 2. One FullCalendar event per entry: one colour for everyone (no roles), "Name (window)"
+        function toEvent(staff) {
             var tinyShift = staff.shiftTime || '';
             if (tinyShift.includes("Morning")) tinyShift = "AM";
             else if (tinyShift.includes("Afternoon")) tinyShift = "PM";
@@ -100,8 +100,7 @@
 
             return {
                 id: staff.id,
-                title: staff.staffName + (tinyShift ? '
-(' + tinyShift + ')' : ''),
+                title: staff.staffName + (tinyShift ? '\n(' + tinyShift + ')' : ''),
                 start: staff.dutyDate,
                 backgroundColor: '#002B80', // PAF Ultramarine
                 textColor: '#ffffff',
@@ -112,19 +111,20 @@
                     fullShift: staff.shiftTime
                 }
             };
-        });
+        }
 
         // 3. Render the Calendar
+        var calendar = null;
         var calendarEl = document.getElementById('guardCalendar');
         if (calendarEl) {
-            var calendar = new FullCalendar.Calendar(calendarEl, {
+            calendar = new FullCalendar.Calendar(calendarEl, {
                 initialView: 'dayGridMonth',
                 headerToolbar: {
                     left: 'prev,next today',
                     center: 'title',
                     right: 'dayGridMonth,listWeek'
                 },
-                events: rosterEvents,
+                events: rawRoster.map(toEvent),
                 height: 700,
                 contentHeight: "auto",
 
@@ -148,6 +148,91 @@
             });
             calendar.render();
         }
+
+        // 5. The Duty List, drawn again from fresh entries: by date, then time window, then name (already in that
+        //    order from the server). Names go in as text, never HTML.
+        function drawDutyList(entries) {
+            var box = document.getElementById('dutyList');
+            if (!box) return;
+            box.textContent = '';
+            if (!entries.length) {
+                var none = document.createElement('p');
+                none.className = 'av-empty mb-0';
+                none.textContent = 'No one is on the duty roster yet.';
+                box.appendChild(none);
+                return;
+            }
+            var section = null, lastDate = null, lastWin = null, list = null;
+            entries.forEach(function (e) {
+                if (e.dutyDate !== lastDate) {
+                    section = document.createElement('section');
+                    section.className = 'mb-3';
+                    var h = document.createElement('h2');
+                    h.className = 'h6 fw-bold mb-2';
+                    h.textContent = new Date(e.dutyDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+                    section.appendChild(h);
+                    box.appendChild(section);
+                    lastDate = e.dutyDate;
+                    lastWin = null;
+                }
+                if (lastWin === null || e.shiftTime !== lastWin) {
+                    var win = document.createElement('div');
+                    win.className = 'ms-2 mb-2';
+                    var label = document.createElement('div');
+                    label.className = 'av-label av-mono';
+                    label.textContent = e.shiftTime ? e.shiftTime : 'No time window';
+                    list = document.createElement('ul');
+                    list.className = 'mb-0';
+                    win.append(label, list);
+                    section.appendChild(win);
+                    lastWin = e.shiftTime;
+                }
+                var li = document.createElement('li');
+                li.className = 'text-break';
+                li.textContent = e.staffName;
+                list.appendChild(li);
+            });
+        }
+
+        // 🔄 6. LIVE ROSTER: the same pattern as the Guard Dashboard. Every 30 s the page quietly re-reads the roster
+        //    (/admin/calendar/entries) and redraws the calendar and the Duty List when something changed, so a name the
+        //    Director drops in shows without a refresh. It waits while the details window is open or the tab is hidden,
+        //    catches up when the tab comes back, and ignores any answer that isn't the roster (signed out, restarting).
+        //    Read-only: nothing here can change the roster.
+        var EVERY_MS = 30000;
+        var last = Date.now();
+        var busy = false;
+        var shown = JSON.stringify(rawRoster);
+
+        function guardIsBusy() {
+            return document.hidden || !!document.querySelector('.modal.show');
+        }
+
+        function refresh() {
+            if (busy || guardIsBusy() || !window.fetch) return;
+            busy = true;
+            fetch('/admin/calendar/entries', { credentials: 'same-origin', cache: 'no-store', headers: { 'X-Requested-With': 'fetch' } })
+                .then(function (res) { return res.ok && !res.redirected ? res.json() : null; })
+                .then(function (entries) {
+                    if (!Array.isArray(entries)) return;
+                    last = Date.now();
+                    var fresh = JSON.stringify(entries);
+                    if (fresh === shown || guardIsBusy()) return;
+                    shown = fresh;
+                    if (calendar) {
+                        calendar.removeAllEvents();
+                        calendar.addEventSource(entries.map(toEvent));
+                    }
+                    drawDutyList(entries);
+                })
+                .catch(function () { /* offline for a moment: try again next round */ })
+                .then(function () { busy = false; });
+        }
+
+        setInterval(refresh, EVERY_MS);
+        document.addEventListener('visibilitychange', function () {
+            if (!document.hidden && Date.now() - last >= EVERY_MS) refresh();
+        });
     });
 </script>
 

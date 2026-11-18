@@ -46,6 +46,10 @@ public class GuardDashboardController {
     @Autowired(required = false)
     java.time.Clock clock;
 
+    // 🔑 Today's walk-in code for the gate (security fix M2). Optional, so test slices without it still start.
+    @Autowired(required = false)
+    com.paf.aerovisit.service.WalkInService walkInService;
+
     public GuardDashboardController(VisitorRepository repo) {
         this.repo = repo;
     }
@@ -93,8 +97,13 @@ public class GuardDashboardController {
         model.addAttribute("leftCount", left.size());
         model.addAttribute("walkInCount", walkIns.size());
         model.addAttribute("walkInBans", "walkins".equals(tab) ? bansOf(walkIns) : Map.of());
+        // ☑️ Each walk-in's single "ID(s) and payment" box label (data-px-verify-text), the one the server names
+        Map<Long, String> verifyTexts = new HashMap<>();
+        if ("walkins".equals(tab)) for (Visitor v : walkIns) verifyTexts.put(v.getId(), GuardOperationController.verifyTickLabel(v));
+        model.addAttribute("verifyTexts", verifyTexts);
         model.addAttribute("headcountInside", headcountInside);
         model.addAttribute("today", today);
+        model.addAttribute("walkInCode", walkInService != null && walkInService.codeRequired() ? walkInService.todaysCode(today) : null);
         model.addAttribute("selectedDate", selectedDate);
         model.addAttribute("arrivalsToday", arrivalsToday);
         model.addAttribute("visitors", "inside".equals(tab) ? inside : "left".equals(tab) ? left : "walkins".equals(tab) ? walkIns : expected);

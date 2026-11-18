@@ -72,10 +72,15 @@ class SingleConsentTest {
                 "<h2 class=\"modal-title\" id=\"vpBookingTermsTitle\">Terms and Conditions</h2>",
                 "id=\"vpBookingTermsSubtitle\">PAF Museum Booking and Reservation System</span>",
                 "<button type=\"button\" class=\"vp-btn vp-btn--primary\" id=\"termsAgreeBtn\" disabled>Agree &amp; Continue</button>");
-        assertThat(popup).containsSubsequence("<h3>Confidentiality of Information</h3>", "subject to the Data Privacy Act of 2012",
+        assertThat(popup).containsSubsequence("<h3>Confidentiality of Information</h3>", "subject to applicable data privacy laws and",
                 "<h3>No-Refund Policy</h3>", "Reservation payments are non-refundable.",
-                "<h3>Rescheduling Due to Museum Closure</h3>", "through Manage Booking.",
-                "<h3>Visitor Acknowledgment</h3>", "read, understood, and agreed to these Terms and Conditions.");
+                "<h3>Rescheduling Due to Museum Closure</h3>", "another available date and time.</p>",
+                "<h3>Visitor Acknowledgment</h3>", "read, understood, and agreed to these Terms and Conditions.",
+                "<h3>Advance Booking / Group Tour Payment Policy</h3>", "Payment at the museum counter is strictly prohibited.",
+                "Same-day payment on the scheduled date", "of visit is also not allowed.",
+                "<h3>Proper Dress Code</h3>", "Wearing slippers is not allowed.");
+        assertThat(popup).doesNotContain("Payment Before Review");
+        assertThat(popup.split("<li><h3>", -1)).hasSize(7);   // exactly six sections
         // The privacy notice and the Terms of Entry stay linked from the one consent (and from step 3)
         assertThat(popup).contains("data-terms-swap=\"#vpPrivacyModal\">Privacy Policy</a>",
                 "data-terms-swap=\"#vpTermsModal\">Terms of Entry &amp; Base Regulations</a>");

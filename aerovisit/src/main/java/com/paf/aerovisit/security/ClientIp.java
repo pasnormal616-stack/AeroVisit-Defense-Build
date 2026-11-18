@@ -15,11 +15,32 @@ public final class ClientIp {
     // 🌐 Behind Amazon CloudFront every request reaches the app from a CloudFront edge server, so getRemoteAddr() is
     // the same for all visitors in one region and they would share every limit. CloudFront adds the visitor's own
     // address, overwriting anything a browser sent: "CloudFront-Viewer-Address: 198.51.100.7:46532" (IPv6:
-    // "2001:db8::7:46532"). Trusted because the Elastic Beanstalk security group only accepts traffic from CloudFront.
+    // "2001:db8::7:46532").
+    // 🔒 Trusted ONLY when the request also carries our CloudFront distribution's secret origin header
+    // (X-Origin-Verify = CLOUDFRONT_ORIGIN_SECRET, added under CloudFront > Origin > Custom headers). The security group's
+    // CloudFront prefix list admits every CloudFront distribution (anyone can point one at our origin), and a local or
+    // ngrok run has no CloudFront at all, so the header alone could be forged to dodge every per-IP limit. No secret
+    // configured = the header is ignored (the peer / X-Forwarded-For rules below apply).
     static final String CLOUDFRONT_VIEWER = "CloudFront-Viewer-Address";
+    static final String ORIGIN_SECRET_HEADER = "X-Origin-Verify";
+
+    private static volatile byte[] originSecret = null;
+
+    // Set once at startup (ClientIpSettings) from aerovisit.cloudfront.origin-secret; blank = never trust the header
+    public static void configureOriginSecret(String secret) {
+        originSecret = secret == null || secret.isBlank() ? null : secret.trim().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    // True when the request proves it came through our own CloudFront distribution (constant-time compare)
+    static boolean fromOurCloudFront(HttpServletRequest request) {
+        byte[] expected = originSecret;
+        String sent = request.getHeader(ORIGIN_SECRET_HEADER);
+        if (expected == null || sent == null) return false;
+        return java.security.MessageDigest.isEqual(expected, sent.trim().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
 
     public static String of(HttpServletRequest request) {
-        String viewer = viewerAddress(request.getHeader(CLOUDFRONT_VIEWER));
+        String viewer = fromOurCloudFront(request) ? viewerAddress(request.getHeader(CLOUDFRONT_VIEWER)) : null;
         if (viewer != null) return viewer;
         String remote = request.getRemoteAddr();
         if (remote == null || remote.isBlank()) return "unknown";

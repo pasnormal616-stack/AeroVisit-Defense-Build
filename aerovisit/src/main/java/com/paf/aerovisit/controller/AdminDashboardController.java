@@ -1020,7 +1020,8 @@ public class AdminDashboardController {
                 }
                 if (v.getPaymentVerificationNote() != null) row.createCell(11).setCellValue(v.getPaymentVerificationNote());
                 row.createCell(12).setCellValue(v.getEmail());
-                row.createCell(13).setCellValue(v.getPhone());
+                // 📞 The form's contact number (older bookings: the legacy phone field); security fix L8
+                row.createCell(13).setCellValue(v.getContactNumber() != null && !v.getContactNumber().isBlank() ? v.getContactNumber() : v.getPhone());
                 Cell visitDate = row.createCell(14);
                 visitDate.setCellValue(v.getVisitDate());
                 visitDate.setCellStyle(dateStyle);

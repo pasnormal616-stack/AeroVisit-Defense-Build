@@ -194,7 +194,8 @@ class GuardProcessWalkInTest {
         Visitor v = booking(10, true, 1, 1, 1, 25_000L, Visitor.PAY_PROOF_SUBMITTED);
         v.setPossibleBanMatch("Ban #4: Guest Ten");
 
-        for (String[] ticks : new String[][] {{}, {"idsChecked", "banChecked"}, {"matchConfirmed", "banChecked"}, {"matchConfirmed", "idsChecked"}}) {
+        // ☑️ the single "ID(s) and payment" box and the ban tick; the old two tick names no longer count
+        for (String[] ticks : new String[][] {{}, {"banChecked"}, {"verifiedChecked"}, {"matchConfirmed", "idsChecked", "banChecked"}}) {
             process(v, GUARD, ticks)
                .andExpect(redirectedUrl(WALKINS))
                .andExpect(flash().attribute("error", Matchers.startsWith("Nothing was saved. Please tick")));
@@ -204,7 +205,7 @@ class GuardProcessWalkInTest {
             assertThat(v.getBanCheckedBy()).isNull();
         }
 
-        process(v, GUARD, "matchConfirmed", "idsChecked", "banChecked")
+        process(v, GUARD, "verifiedChecked", "banChecked")
            .andExpect(redirectedUrl(WALKINS))
            .andExpect(flash().attribute("success", "✅ Payment verified for billing 000010 (PHP 250.00) and checked in: Guest 10 (Group of 3)"));
         assertThat(v.getPaymentStatus()).isEqualTo(Visitor.PAY_PAID);
@@ -221,9 +222,9 @@ class GuardProcessWalkInTest {
     @Test
     void aFreeWalkInNeedsOnlyTheIdsTickAndAPaidOneSkipsTheMatchTick() throws Exception {
         Visitor free = booking(11, true, 0, 0, 2, 0L, Visitor.PAY_NOT_REQUIRED);
-        process(free, GUARD).andExpect(flash().attribute("error", Matchers.containsString("Checked the IDs of the Free and Discounted visitors")));
+        process(free, GUARD).andExpect(flash().attribute("error", "Nothing was saved. Please tick \"I've verified the ID(s)\"."));
         assertThat(free.getStatus()).isEqualTo("APPROVED");
-        process(free, GUARD, "idsChecked").andExpect(flash().attribute("success", "✅ Checked in: Guest 11 (Group of 2)"));
+        process(free, GUARD, "verifiedChecked").andExpect(flash().attribute("success", "✅ Checked in: Guest 11 (Group of 2)"));
         assertThat(free.getStatus()).isEqualTo("CHECKED-IN");
         assertThat(free.getEligibilityCheckedBy()).isNotBlank();
 
@@ -238,7 +239,7 @@ class GuardProcessWalkInTest {
         LocalTime now = FixedClock.TIME;
         v.setTimeWindow("Later (" + CLOCK.format(now.plusHours(2)) + " - " + CLOCK.format(now.plusHours(3)) + ")");
 
-        process(v, GUARD, "matchConfirmed")
+        process(v, GUARD, "verifiedChecked")
            .andExpect(flash().attribute("error", Matchers.allOf(
                Matchers.startsWith("Payment verified for billing 000013 (PHP 300.00), but check-in was refused: "),
                Matchers.containsString("Check-in opens at"))));
@@ -249,7 +250,7 @@ class GuardProcessWalkInTest {
     @Test
     void waitingForTheReceiptHasNothingToVerify() throws Exception {
         Visitor v = booking(14, true, 2, 0, 0, 30_000L, Visitor.PAY_AWAITING);
-        process(v, GUARD, "matchConfirmed").andExpect(flash().attribute("error", Matchers.startsWith("Waiting for the receipt")));
+        process(v, GUARD, "verifiedChecked").andExpect(flash().attribute("error", Matchers.startsWith("Waiting for the receipt")));
         assertThat(v.getPaymentStatus()).isEqualTo(Visitor.PAY_AWAITING);
     }
 
@@ -273,14 +274,14 @@ class GuardProcessWalkInTest {
         yesterday.setVisitDate(today.minusDays(1));
         Visitor advance = booking(17, false, 2, 0, 0, 30_000L, Visitor.PAY_PROOF_SUBMITTED);
         for (Visitor v : List.of(yesterday, advance)) {
-            process(v, GUARD, "matchConfirmed", "idsChecked", "banChecked").andExpect(status().isForbidden());
+            process(v, GUARD, "verifiedChecked", "banChecked").andExpect(status().isForbidden());
             assertThat(v.getPaymentStatus()).isEqualTo(Visitor.PAY_PROOF_SUBMITTED);
         }
         // The receipt: another day's is refused; today's advance one may be viewed (the scanner shows it), not verified
         mvc.perform(get("/admin/payments/16/receipt").with(GUARD)).andExpect(status().isForbidden());
         mvc.perform(get("/admin/payments/17/receipt").with(GUARD)).andExpect(status().isNotFound()); // allowed; no file
         // the Director may open the advance booking, but Process is for walk-ins only
-        process(advance, DIRECTOR, "matchConfirmed").andExpect(flash().attribute("error", GuardOperationController.PROCESS_WALK_IN_ONLY));
+        process(advance, DIRECTOR, "verifiedChecked").andExpect(flash().attribute("error", GuardOperationController.PROCESS_WALK_IN_ONLY));
     }
 
     // --- The Free / Discounted IDs tick at QR Accept and manual check-in ---

@@ -118,6 +118,7 @@ class AutoCheckOutSweepTest {
         missed.setStatus("APPROVED");
         when(repo.findByStatus("CHECKED-IN")).thenReturn(List.of(stillInside));
         when(repo.findByStatus("APPROVED")).thenReturn(List.of(missed));
+        when(repo.releaseIfStatus(2L, "APPROVED", "NO_SHOW")).thenReturn(1); // still APPROVED in the database (M4 guard)
 
         engine.executeNoShowSweep();
 

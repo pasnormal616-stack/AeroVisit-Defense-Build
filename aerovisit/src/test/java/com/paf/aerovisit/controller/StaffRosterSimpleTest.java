@@ -375,7 +375,8 @@ class StaffRosterSimpleTest {
 
         assertThat(html)
             .contains("<i class=\"bi bi-shield-check\"></i>Duty Roster</button>")
-            .contains("name=\"dutyDate\" id=\"rosterDate\" value=\"" + TODAY + "\"")   // the day view opens on today
+            .contains("window.AV_ROSTER = { day: {\"date\":\"" + TODAY + "\"")   // the drag-and-drop day view opens on today
+            .contains("\"staff\":[\"Sgt. Reyes\"]")                               // ...with the directory name in its pool
             .contains("<option value=\"Sgt. Reyes\">Sgt. Reyes</option>")
             .contains("Show past dates")
             .contains("data-staff-name=\"Sgt. Reyes\"")

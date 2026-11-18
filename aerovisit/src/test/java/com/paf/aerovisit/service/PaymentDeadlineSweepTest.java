@@ -27,6 +27,13 @@ class PaymentDeadlineSweepTest {
     private final NotificationService notifications = mock(NotificationService.class);
     private final AeroVisitAutomationEngine engine = new AeroVisitAutomationEngine(repo, emailService);
 
+    // The releases are conditional UPDATEs now (security fix M4): the database still agrees with the list in these tests
+    @org.junit.jupiter.api.BeforeEach
+    void theDatabaseStillAgrees() {
+        when(repo.expireIfStillUnpaid(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any())).thenReturn(1);
+        when(repo.releaseIfStatus(org.mockito.ArgumentMatchers.anyLong(), eq("APPROVED"), eq("NO_SHOW"))).thenReturn(1);
+    }
+
     private static Visitor approved(long id, String paymentStatus, LocalDateTime due) {
         Visitor v = new Visitor();
         v.setId(id);

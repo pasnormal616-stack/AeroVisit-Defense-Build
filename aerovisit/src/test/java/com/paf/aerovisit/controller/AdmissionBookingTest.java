@@ -136,7 +136,7 @@ class AdmissionBookingTest {
            .andExpect(redirectedUrl("/manage-booking/payment"));
 
         Visitor v = saved();
-        assertThat(v.getTermsVersion()).isEqualTo(VisitorPortalController.TERMS_VERSION).isEqualTo("2026-11d");
+        assertThat(v.getTermsVersion()).isEqualTo(VisitorPortalController.TERMS_VERSION).isEqualTo("2026-11e");
         assertThat(v.getTermsAcceptedAt()).isNotNull().isBetween(before, LocalDateTime.now());
     }
 

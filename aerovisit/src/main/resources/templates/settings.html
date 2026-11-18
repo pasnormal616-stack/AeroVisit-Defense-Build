@@ -97,6 +97,14 @@
                         </div>
                         <button type="submit" class="btn-primary-custom"><i class="bi bi-save"></i>Save Walk-in Settings</button>
                     </form>
+                    <!-- 🔑 Today's walk-in code (shown to staff on the Guard Dashboard): replace it at once if it leaked -->
+                    <form action="/admin/settings/walk-in/new-code" method="post" class="mt-3" id="walkInNewCodeForm"
+                          onsubmit="return confirm('Make a new walk-in code for today? The current code stops working at once.');">
+                        <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                        <p class="mb-2 text-muted">Walk-ins must type today's code, shown on the Gate Dashboard and posted at the gate. It changes every day.
+                            If it was shared outside the museum, make a new one.</p>
+                        <button type="submit" class="btn btn-sm btn-secondary"><i class="bi bi-arrow-repeat"></i> New Walk-in Code for Today</button>
+                    </form>
                 </div>
             </div>
         </div>

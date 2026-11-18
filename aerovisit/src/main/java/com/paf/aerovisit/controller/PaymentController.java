@@ -42,6 +42,10 @@ public class PaymentController {
     @Autowired(required = false)
     private NotificationService notificationService;
 
+    // 🔒 Stale-write guard (security fix M4). Optional, so web-layer test slices without it save as before.
+    @Autowired(required = false)
+    private com.paf.aerovisit.service.VisitorRowGuard rowGuard;
+
     // ⏱️ "Now" (ClockConfig; null in test slices = the system clock)
     @Autowired(required = false)
     java.time.Clock clock;
@@ -109,26 +113,42 @@ public class PaymentController {
             redirectAttributes.addFlashAttribute("error", blocker);
             return back;
         }
-        try {
+        // 🔒 The booking as read just now (security fix M4): the receipt is stored and saved only if, with the row locked,
+        // it is still exactly this (the payment sweep may have expired it a moment ago, or another tab uploaded first)
+        com.paf.aerovisit.service.VisitorRowGuard.Snapshot asRead = com.paf.aerovisit.service.VisitorRowGuard.Snapshot.of(v);
+        Visitor booking = v;
+        com.paf.aerovisit.service.VisitorRowGuard.Change attach = () -> {
             String saved = receiptStorage.saveReceipt(receipt);
-            v.keepEarlierReceipt(); // 🧾 the previous receipt is never deleted (proof of payment)
-            v.setReceiptImageUrl(saved);
+            booking.keepEarlierReceipt(); // 🧾 the previous receipt is never deleted (proof of payment)
+            booking.setReceiptImageUrl(saved);
+            booking.setReceiptUploadedAt(now());
+            booking.setPaymentStatus(Visitor.PAY_PROOF_SUBMITTED);
+            booking.setPaymentRejectionReason(null);
+            // 💳 PAY FIRST: the receipt is what puts an advance booking in the Pending Approval tab. Its seats have been
+            // held since it was booked, so there is no new seat check here.
+            if (booking.awaitsReceipt()) booking.setStatus("PENDING");
+        };
+        try {
+            boolean saved;
+            if (rowGuard != null) {
+                saved = rowGuard.saveIfUnchanged(v, asRead, attach);
+            } else { // web-layer test slices without the guard: as before
+                attach.apply();
+                repo.save(v);
+                saved = true;
+            }
+            if (!saved) {
+                redirectAttributes.addFlashAttribute("error", com.paf.aerovisit.service.VisitorRowGuard.CHANGED_MESSAGE);
+                return back;
+            }
         } catch (ReceiptStorage.InvalidReceiptException e) {
             redirectAttributes.addFlashAttribute("error", e.getMessage());
             return back;
-        } catch (java.io.IOException e) {
+        } catch (Exception e) {
             System.err.println("❌ Receipt upload failed for visitor #" + v.getId() + ": " + e.getMessage());
             redirectAttributes.addFlashAttribute("error", "Your receipt could not be saved. Please try again.");
             return back;
         }
-        v.setReceiptUploadedAt(now());
-        v.setPaymentStatus(Visitor.PAY_PROOF_SUBMITTED);
-        v.setPaymentRejectionReason(null);
-        // 💳 PAY FIRST: the receipt is what puts an advance booking in the Pending Approval tab. Its seats have been held
-        // since it was booked, so there is no new seat check here.
-        boolean firstReceipt = v.awaitsReceipt();
-        if (firstReceipt) v.setStatus("PENDING");
-        repo.save(v);
         if (notificationService != null) {
             if (v.walkIn() || "APPROVED".equals(v.getStatus())) notificationService.paymentProofSubmitted(v); // never throws
             else notificationService.bookingRequest(v); // one request for the Director: booking + payment; never throws

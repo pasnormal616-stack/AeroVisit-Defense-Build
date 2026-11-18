@@ -21,6 +21,9 @@
             <p class="av-pagehead-desc">Today's gate: walk-ins, advance bookings, visitors inside and visitors who have left. Booking approvals and ID reviews are handled by the Director.</p>
         </div>
         <div class="av-pagehead-actions">
+            <!-- 🔑 Today's walk-in code: post it at the gate; the booking page asks walk-ins for it (changes daily) -->
+            <span th:if="${walkInCode != null}" class="av-mono av-code" id="walkInCodeChip" title="Visitors need this code to book a walk-in today. Post it at the gate.">
+                <i class="bi bi-key"></i> Walk-in code today: <b th:text="${walkInCode}">K7M2QX</b></span>
             <a th:if="${isGuard}" href="/admin/scanner" class="btn btn-primary"><i class="bi bi-qr-code-scan"></i> Open Scanner</a>
         </div>
     </div>
@@ -217,6 +220,7 @@
                                         th:data-px-needs-match="${pxState == 'proof'}"
                                         th:data-px-needs-ban="${visitor.banCheckPending()}"
                                         th:data-px-ids-text="${visitor.eligibilityCheckText()}"
+                                        th:data-px-verify-text="${verifyTexts[visitor.id]}"
                                         th:data-px-process-url="@{/admin/walk-ins/{id}/process(id=${visitor.id})}"
                                         th:data-px-reject-url="@{/admin/payments/{id}/reject(id=${visitor.id})}"
                                         th:data-px-ban-url="@{/admin/biometric-ban/{id}(id=${visitor.id})}"

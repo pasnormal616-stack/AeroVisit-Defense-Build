@@ -120,6 +120,18 @@ public class NotificationService {
         }
     }
 
+    // 🛂 A Foreign visitor sent (or re-sent) a passport copy for review (Passport Review page; no booking exists yet)
+    public void passportSubmitted(String fullName, boolean resubmitted) {
+        try {
+            String actor = fullName == null || fullName.isBlank() ? "A foreign visitor" : fullName.trim();
+            save(AdminNotification.TYPE_PASSPORT_SUBMITTED, actor,
+                    resubmitted ? "uploaded a new passport copy for review." : "sent a passport copy for review before booking.",
+                    "/admin/passports", null, null);
+        } catch (RuntimeException e) {
+            System.err.println("⚠️ Passport notification skipped: " + e.getMessage());
+        }
+    }
+
     // 💳 A visitor uploaded a payment receipt; resolves itself once the Director verifies or rejects it
     public void paymentProofSubmitted(Visitor visitor) {
         try {

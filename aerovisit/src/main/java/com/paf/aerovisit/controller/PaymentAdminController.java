@@ -83,6 +83,25 @@ public class PaymentAdminController {
     @Autowired(required = false)
     java.time.Clock clock;
 
+    // 🔒 Stale-write guard (security fix M4). Optional, so web-layer test slices without it save as before.
+    @Autowired(required = false)
+    private com.paf.aerovisit.service.VisitorRowGuard rowGuard;
+
+    // Saves `v` only if its row is still as read (`asRead`); false = it changed meanwhile, nothing saved
+    private boolean saveIfUnchanged(Visitor v, com.paf.aerovisit.service.VisitorRowGuard.Snapshot asRead) {
+        if (rowGuard == null) {
+            repo.save(v);
+            return true;
+        }
+        try {
+            return rowGuard.saveIfUnchanged(v, asRead, () -> {});
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     private LocalDateTime now() {
         return LocalDateTime.now(com.paf.aerovisit.config.ClockConfig.or(clock));
     }
@@ -123,6 +142,7 @@ public class PaymentAdminController {
         String back = backTo(auth, returnTo);
         Visitor v = repo.findById(id).orElse(null);
         forbidUnlessAllowed(auth, v);
+        com.paf.aerovisit.service.VisitorRowGuard.Snapshot asRead = v == null ? null : com.paf.aerovisit.service.VisitorRowGuard.Snapshot.of(v);
         // 🚶 A guard verifies a walk-in only from its uploaded receipt, after ticking "Billing number and amount match the
         // receipt" (also comparing it with the LANDBANK confirmation on the visitor's phone); the note-only path is the Director's
         if (!isDirector(auth) && (!"true".equals(matchConfirmed) || !Visitor.PAY_PROOF_SUBMITTED.equals(v.getPaymentStatus()))) {
@@ -154,7 +174,12 @@ public class PaymentAdminController {
                 return back;
             }
         }
-        repo.save(v);
+        // 🔒 Only if the booking is still as read (the payment sweep may have released it meanwhile: M4)
+        if (!saveIfUnchanged(v, asRead)) {
+            if (qrFileName != null) discardQr(qrFileName);
+            redirectAttributes.addFlashAttribute("error", com.paf.aerovisit.service.VisitorRowGuard.CHANGED_MESSAGE);
+            return back;
+        }
         if (v.walkIn()) {
             redirectAttributes.addFlashAttribute("success", "Payment verified for walk-in billing " + v.getBillingNumber() + " ("
                     + v.amountDueText() + "). Check the ID, then check the group in.");
@@ -199,13 +224,15 @@ public class PaymentAdminController {
                 ? "Only a submitted receipt can be rejected (payment status: " + v.paymentStatusLabel() + ")." : null;
         if (error == null && (cleanReason.isEmpty() || cleanReason.length() > 500)) error = "Please give a reason (up to 500 characters).";
         if (error != null) return new GuardOperationController.Outcome(false, error);
+        com.paf.aerovisit.service.VisitorRowGuard.Snapshot asRead = com.paf.aerovisit.service.VisitorRowGuard.Snapshot.of(v);
         v.setPaymentStatus(Visitor.PAY_REJECTED);
         v.setPaymentRejectionReason(cleanReason);
         // 🚶 A walk-in gets the walk-in minutes again (never past its window's end); an advance booking at least 24 hours
         v.setPaymentDueAt(v.walkIn()
                 ? com.paf.aerovisit.service.WalkInService.deadlineAfterRejection(v, now(), walkInMinutes())
                 : PaymentWorkflow.deadlineAfterRejection(v, now()));
-        repo.save(v);
+        // 🔒 Only if the receipt is still the one read: a new upload in between is never reverted (M4)
+        if (!saveIfUnchanged(v, asRead)) return new GuardOperationController.Outcome(false, com.paf.aerovisit.service.VisitorRowGuard.CHANGED_MESSAGE);
         EmailService.PaymentNotice notice = EmailService.PaymentNotice.of(v);
         MailOutbox.send(mailOutbox, "receipt rejection email for visitor #" + v.getId(),
                 () -> emailService.sendPaymentRejected(notice),
@@ -293,6 +320,32 @@ public class PaymentAdminController {
         redirectAttributes.addFlashAttribute("success", "Walk-in settings saved: at most " + pax + " persons per walk-in, "
                 + mins + " minutes to pay.");
         return "redirect:/admin/settings#walkInSettings";
+    }
+
+    // 🔑 New walk-in code for today (Director; SecurityConfig): when today's code leaked, e.g. posted online, a new one
+    // takes effect at once. The Guard Dashboard shows the new code; the old sign at the gate must be replaced.
+    @PostMapping("/admin/settings/walk-in/new-code")
+    public String newWalkInCode(RedirectAttributes redirectAttributes) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (!isDirector(auth)) throw new ResponseStatusException(HttpStatus.FORBIDDEN); // SecurityConfig already refuses a Guard
+        if (walkInService == null) {
+            redirectAttributes.addFlashAttribute("error", "Walk-in settings are unavailable right now. Please try again.");
+            return "redirect:/admin/settings#walkInSettings";
+        }
+        String code = walkInService.newCode(now().toLocalDate());
+        redirectAttributes.addFlashAttribute("success", "New walk-in code for today: " + code
+                + ". The old code no longer works; replace the sign at the gate.");
+        return "redirect:/admin/settings#walkInSettings";
+    }
+
+    // A QR made for a payment that was then not saved
+    private void discardQr(String qrFileName) {
+        try {
+            java.nio.file.Files.deleteIfExists(java.nio.file.Paths.get("uploads").resolve(qrFileName));
+        } catch (java.io.IOException e) {
+            System.err.println("⚠️ Unused QR file could not be deleted: " + qrFileName);
+        }
+        if (uploadMirror != null) uploadMirror.deleteUpload(qrFileName);
     }
 
     private static int wholeNumber(String value) {

@@ -245,7 +245,7 @@ class WalkInPanelOverlayTest {
     @Test
     void checkInFromTheOverlayAnswersJsonAndChecksTheGroupIn() throws Exception {
         Visitor v = walkIn(8, 30_000L, Visitor.PAY_PROOF_SUBMITTED);
-        mvc.perform(overlay("/admin/walk-ins/8/process").param("matchConfirmed", "true"))
+        mvc.perform(overlay("/admin/walk-ins/8/process").param("verifiedChecked", "true"))
            .andExpect(status().isOk())
            .andExpect(jsonPath("$.status").value("success"))
            .andExpect(jsonPath("$.message").value(Matchers.allOf(Matchers.startsWith("✅ Payment verified for billing 000008"),
@@ -259,7 +259,7 @@ class WalkInPanelOverlayTest {
         Visitor v = walkIn(9, 30_000L, Visitor.PAY_PROOF_SUBMITTED);
         mvc.perform(overlay("/admin/walk-ins/9/process"))
            .andExpect(jsonPath("$.status").value("error"))
-           .andExpect(jsonPath("$.message").value("Nothing was saved. Please tick \"Billing number and amount match the receipt\"."));
+           .andExpect(jsonPath("$.message").value("Nothing was saved. Please tick \"I've verified the payment\"."));
         assertThat(v.getStatus()).isEqualTo("APPROVED");
         assertThat(v.getPaymentStatus()).isEqualTo(Visitor.PAY_PROOF_SUBMITTED);
         verify(repo, never()).save(any());
@@ -268,7 +268,7 @@ class WalkInPanelOverlayTest {
     @Test
     void aClosedWindowKeepsThePaymentVerifiedAndSaysWhy() throws Exception {
         Visitor v = booking(10, true, 30_000L, Visitor.PAY_PROOF_SUBMITTED, today, ENDED);
-        mvc.perform(overlay("/admin/walk-ins/10/process").param("matchConfirmed", "true"))
+        mvc.perform(overlay("/admin/walk-ins/10/process").param("verifiedChecked", "true"))
            .andExpect(jsonPath("$.status").value("error"))
            .andExpect(jsonPath("$.message").value(Matchers.allOf(Matchers.containsString("but check-in was refused"),
                    Matchers.containsString("Time window ended at 09:00 AM"))));
@@ -279,7 +279,7 @@ class WalkInPanelOverlayTest {
     @Test
     void aGuardCannotProcessAnotherDaysWalkInFromTheOverlay() throws Exception {
         Visitor v = booking(11, true, 0L, Visitor.PAY_NOT_REQUIRED, today.plusDays(1), OPEN);
-        mvc.perform(overlay("/admin/walk-ins/11/process").param("idsChecked", "true"))
+        mvc.perform(overlay("/admin/walk-ins/11/process").param("verifiedChecked", "true"))
            .andExpect(status().isForbidden());
         assertThat(v.getStatus()).isEqualTo("APPROVED");
     }
@@ -287,7 +287,7 @@ class WalkInPanelOverlayTest {
     @Test
     void theDashboardsNormalPostStillRedirects() throws Exception {
         Visitor v = walkIn(12, 0L, Visitor.PAY_NOT_REQUIRED);
-        mvc.perform(post("/admin/walk-ins/12/process").with(csrf()).with(GUARD).param("idsChecked", "true"))
+        mvc.perform(post("/admin/walk-ins/12/process").with(csrf()).with(GUARD).param("verifiedChecked", "true"))
            .andExpect(redirectedUrl(PaymentAdminController.GUARD_RETURN));
         assertThat(v.getStatus()).isEqualTo("CHECKED-IN");
     }

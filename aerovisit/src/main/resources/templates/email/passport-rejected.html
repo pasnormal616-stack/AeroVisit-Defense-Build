@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Passport Not Accepted</title></head>
+<!--/* Variables: name, reason, uploadUrl (the re-upload link) */-->
+<body th:replace="~{email/layout :: layout('Passport Not Accepted', ~{::content})}">
+<div th:fragment="content">
+  <p style="margin:0 0 14px;">Dear <span th:text="${name}">Juan Dela Cruz</span>,</p>
+  <p style="margin:0 0 16px;">We could not accept the passport copy you sent for your visit to the PAF Aerospace Museum.</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px; border:1px solid #d1d5db; border-left:4px solid #C41F1E; background-color:#f9fafb;">
+    <tr>
+      <td style="padding:14px 16px; font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:1.6; color:#1f2937;">
+        <strong>Reason:</strong> <span th:text="${reason}">The passport page is cropped.</span>
+      </td>
+    </tr>
+  </table>
+  <p style="margin:0 0 20px;">Please upload a new PDF copy of your passport with the button below. It replaces the one we could not accept, and we will review it again.</p>
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 4px;">
+    <tr>
+      <td style="background-color:#002B80;">
+        <a th:href="${uploadUrl}" href="#" style="display:inline-block; padding:12px 24px; font-family:Arial, Helvetica, sans-serif; font-size:15px; font-weight:bold; color:#ffffff; text-decoration:none;">Upload a New Passport Copy</a>
+      </td>
+    </tr>
+  </table>
+</div>
+</body>
+</html>

@@ -104,6 +104,24 @@ public class Visitor {
     // 🚶 A walk-in not checked in by this time is released by the 15-minute sweep (NO_SHOW), so it stops holding seats
     private java.time.LocalDateTime checkInDueAt;
 
+    // 🛂 NATIONALITY (Book a Visit): null = Local (every booking made before the choice existed), LOCAL or FOREIGN. Set by
+    // the server from the form's choice when the booking is made, never bound and never changed afterwards.
+    public static final String NATIONALITY_LOCAL = "LOCAL";
+    public static final String NATIONALITY_FOREIGN = "FOREIGN";
+    @Column(length = 10)
+    private String nationality;
+    // 🛂 A Foreign visitor's passport copy (passport-<uuid>.pdf, PassportStorage), in place of the ID photo. Purged with it.
+    @Column(length = 80)
+    private String passportFileUrl;
+    // 🛂 APPROVED: the Director approved the passport before this advance booking (Foreign visitors book in advance only);
+    // who decided, and when
+    public static final String PASSPORT_APPROVED = "APPROVED";
+    @Column(length = 20)
+    private String passportStatus;
+    @Column(length = 120)
+    private String passportReviewedBy;
+    private java.time.LocalDateTime passportReviewedAt;
+
     // --- QR Code Storage ---
     private String qrCodeUrl;  
 
@@ -773,4 +791,25 @@ public class Visitor {
     public static final String CANNOT_REJECT_MESSAGE = "Cannot reject a visitor who is currently inside or has already completed their visit.";
 
     public boolean visitUnderwayOrOver() { return status != null && VISIT_UNDERWAY_OR_OVER_STATUSES.contains(status); }
+
+    // 🛂 Nationality and passport (Foreign visitors)
+    public String getNationality() { return nationality; }
+    public void setNationality(String nationality) { this.nationality = nationality; }
+    public String getPassportFileUrl() { return passportFileUrl; }
+    public void setPassportFileUrl(String passportFileUrl) { this.passportFileUrl = passportFileUrl; }
+    public String getPassportStatus() { return passportStatus; }
+    public void setPassportStatus(String passportStatus) { this.passportStatus = passportStatus; }
+    public String getPassportReviewedBy() { return passportReviewedBy; }
+    public void setPassportReviewedBy(String passportReviewedBy) { this.passportReviewedBy = passportReviewedBy; }
+    public java.time.LocalDateTime getPassportReviewedAt() { return passportReviewedAt; }
+    public void setPassportReviewedAt(java.time.LocalDateTime passportReviewedAt) { this.passportReviewedAt = passportReviewedAt; }
+
+    public boolean foreign() { return NATIONALITY_FOREIGN.equals(nationality); }
+
+    // 🔒 Security fix M4 (never stored, never bound from a form): the booking as the request read it. SeatReservationService
+    // checks it against the locked row before saving an existing booking, so a change made meanwhile is never overwritten.
+    @jakarta.persistence.Transient
+    private transient com.paf.aerovisit.service.VisitorRowGuard.Snapshot expectedRow;
+    public com.paf.aerovisit.service.VisitorRowGuard.Snapshot expectedRow() { return expectedRow; }
+    public void expectRow(com.paf.aerovisit.service.VisitorRowGuard.Snapshot asRead) { this.expectedRow = asRead; }
 }

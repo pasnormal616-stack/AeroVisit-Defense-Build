@@ -45,12 +45,52 @@ class ClientIpTest {
         assertThat(ClientIp.isPrivate("not-an-ip.example")).isFalse(); // never resolved through DNS
     }
 
-    // --- Behind CloudFront: the viewer's own address, from the header CloudFront sets ---
+    // --- Behind CloudFront: the viewer's own address, from the header CloudFront sets, only with our origin secret ---
+
+    static final String SECRET = "test-origin-secret-7f3a";
+
+    @org.junit.jupiter.api.BeforeEach
+    void configureSecret() {
+        ClientIp.configureOriginSecret(SECRET);
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void clearSecret() {
+        ClientIp.configureOriginSecret(null);
+    }
 
     private static MockHttpServletRequest viaCloudFront(String remoteAddr, String viewerAddress) {
         MockHttpServletRequest request = from(remoteAddr, "130.176.1.10");
         request.addHeader(ClientIp.CLOUDFRONT_VIEWER, viewerAddress);
+        request.addHeader(ClientIp.ORIGIN_SECRET_HEADER, SECRET);
         return request;
+    }
+
+    // 🔒 M3: a client that sends its own CloudFront-Viewer-Address (ngrok, a local run, or through someone else's
+    // CloudFront distribution) can't pick its IP, so it can't reset a per-IP limit
+    @Test
+    void aForgedViewerHeaderWithoutTheOriginSecretIsIgnored() {
+        MockHttpServletRequest noSecret = from("203.0.113.9", null);
+        noSecret.addHeader(ClientIp.CLOUDFRONT_VIEWER, "1.2.3.4:1");
+        assertThat(ClientIp.of(noSecret)).isEqualTo("203.0.113.9");
+
+        MockHttpServletRequest wrongSecret = from("203.0.113.9", null);
+        wrongSecret.addHeader(ClientIp.CLOUDFRONT_VIEWER, "1.2.3.5:1");
+        wrongSecret.addHeader(ClientIp.ORIGIN_SECRET_HEADER, "guess");
+        assertThat(ClientIp.of(wrongSecret)).isEqualTo("203.0.113.9");
+
+        // Through ngrok / a local proxy: the forged header loses to the proxy's own X-Forwarded-For hop
+        MockHttpServletRequest viaNgrok = from("127.0.0.1", "198.51.100.7");
+        viaNgrok.addHeader(ClientIp.CLOUDFRONT_VIEWER, "1.2.3.6:1");
+        assertThat(ClientIp.of(viaNgrok)).isEqualTo("198.51.100.7");
+    }
+
+    @Test
+    void withNoSecretConfiguredTheViewerHeaderIsNeverTrusted() {
+        ClientIp.configureOriginSecret("  ");
+        assertThat(ClientIp.of(viaCloudFront("203.0.113.9", "1.2.3.4:1"))).isEqualTo("203.0.113.9");
+        ClientIp.configureOriginSecret(null);
+        assertThat(ClientIp.of(viaCloudFront("203.0.113.9", "1.2.3.4:1"))).isEqualTo("203.0.113.9");
     }
 
     @Test

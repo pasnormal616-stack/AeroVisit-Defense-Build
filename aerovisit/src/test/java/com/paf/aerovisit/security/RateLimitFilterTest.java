@@ -156,6 +156,26 @@ class RateLimitFilterTest {
         assertThat(send(r).getStatus()).isEqualTo(429);
     }
 
+    // 🔒 M3 (security fix pass): a new forged CloudFront-Viewer-Address on every request no longer buys a fresh limit
+    // (the OTP send limit is the one the walk-in / seat-blocking abuse relied on)
+    @Test
+    void aForgedCloudFrontViewerHeaderCannotResetTheLimit() throws Exception {
+        ClientIp.configureOriginSecret("the-real-secret");
+        try {
+            for (int i = 0; i < 10; i++) {
+                MockHttpServletRequest r = request("POST", "/login", "203.0.113.61");
+                r.addHeader("CloudFront-Viewer-Address", "1.2.3." + i + ":1");
+                r.addHeader("X-Origin-Verify", "a-guess");
+                send(r);
+            }
+            MockHttpServletRequest r = request("POST", "/login", "203.0.113.61");
+            r.addHeader("CloudFront-Viewer-Address", "1.2.3.99:1");
+            assertThat(send(r).getStatus()).isEqualTo(429);
+        } finally {
+            ClientIp.configureOriginSecret(null);
+        }
+    }
+
     @Test
     void visitorsBehindTheProxyAreCountedSeparately() throws Exception {
         for (int i = 0; i < 10; i++) {

@@ -84,28 +84,47 @@ public class ManagementController {
         this.closureRepo = closureRepo;
     }
 
+    static final String RECEIPT_ON_FILE_DELETE = "This booking has a payment receipt on file (proof of payment), so it can't be "
+            + "deleted. It is cleared automatically 30 days after the visit.";
+
     @PostMapping("/admin/delete/{id}")
     public String deleteVisitor(@PathVariable Long id, @RequestParam(value = "returnTo", required = false) String returnTo, RedirectAttributes redirectAttributes) {
         String back = AdminReturnTo.redirect(returnTo); // ↩️ the page the officer acted from, or /admin
         if (id == null) return back;
         Visitor v = repo.findById(id).orElse(null);
         if (v != null) {
-            try {
-                Path uploadDir = Paths.get(System.getProperty("user.dir"), "uploads");
-                if (v.getIdImageUrl() != null) { Files.deleteIfExists(uploadDir.resolve(v.getIdImageUrl())); }
-                if (v.getIdCardImageUrl() != null) { Files.deleteIfExists(uploadDir.resolve(v.getIdCardImageUrl())); }
-                if (v.getQrCodeUrl() != null) { Files.deleteIfExists(uploadDir.resolve(v.getQrCodeUrl())); }
-                if (uploadMirror != null) {
-                    uploadMirror.deleteUpload(v.getIdImageUrl());
-                    uploadMirror.deleteUpload(v.getIdCardImageUrl());
-                    uploadMirror.deleteUpload(v.getQrCodeUrl());
-                }
-                repo.delete(v);
-                if (notificationRepo != null) notificationRepo.deleteByVisitorId(id);
-                redirectAttributes.addFlashAttribute("success", "Visitor deleted and storage space freed up!");
-            } catch (IOException e) {
-                redirectAttributes.addFlashAttribute("error", "Database record deleted, but files could not be removed.");
+            // 💳 A receipt is proof of payment and is never deleted by hand (security fix M6 keeps that rule): a booking
+            // with one is refused here and cleared by the 30-day retention purge with its other files instead
+            if (v.receiptOnFile()) {
+                redirectAttributes.addFlashAttribute("error", RECEIPT_ON_FILE_DELETE);
+                return back;
             }
+            // 🗑️ Security fix M6: every file of the booking goes with it (local + S3): the old selfie, the ID photo, the
+            // legacy face crop, a Foreign visitor's passport PDF and the QR. Once the row is gone nothing could ever find
+            // them again, so the row is deleted only after every file is gone.
+            Path uploadDir = Paths.get(System.getProperty("user.dir"), "uploads");
+            List<String> files = new ArrayList<>();
+            for (String f : new String[] {v.getIdImageUrl(), v.getIdCardImageUrl(), v.getIdFaceCropUrl(), v.getPassportFileUrl(), v.getQrCodeUrl()}) {
+                if (f != null && !f.isBlank()) files.add(f);
+            }
+            boolean allGone = true;
+            for (String f : files) {
+                try {
+                    Path file = uploadDir.resolve(f).normalize();
+                    if (file.startsWith(uploadDir.normalize())) Files.deleteIfExists(file);
+                    if (uploadMirror != null && !uploadMirror.deleteUpload(f)) allGone = false;
+                } catch (IOException | RuntimeException e) {
+                    System.err.println("⚠️ Delete: file " + f + " of visitor #" + id + " could not be removed: " + e.getMessage());
+                    allGone = false;
+                }
+            }
+            if (!allGone) {
+                redirectAttributes.addFlashAttribute("error", "The booking was not deleted: some of its files could not be removed. Please try again.");
+                return back;
+            }
+            repo.delete(v);
+            if (notificationRepo != null) notificationRepo.deleteByVisitorId(id);
+            redirectAttributes.addFlashAttribute("success", "Visitor deleted and storage space freed up!");
         }
         return back;
     }
@@ -136,6 +155,11 @@ public class ManagementController {
             // 🛑 Rejecting someone inside would drop them from live occupancy (and the 5:30 PM sweep), and a finished
             // or missed visit is history
             redirectAttributes.addFlashAttribute("error", Visitor.CANNOT_REJECT_MESSAGE);
+            return back;
+        }
+        if (visitor != null && !GuardOperationController.rejectable(visitor)) {
+            // 🛑 Security fix L3: a cancelled, expired or already rejected booking keeps its outcome, and no email goes out
+            redirectAttributes.addFlashAttribute("error", GuardOperationController.alreadyClosedMessage(visitor));
             return back;
         }
         if (visitor != null) {
@@ -361,6 +385,9 @@ public class ManagementController {
         model.addAttribute("rosterSlots", rosterSlots);
         model.addAttribute("rosterDayEntries", entriesByWindow);
         model.addAttribute("rosterOtherTimes", otherTimes);
+        // 🧲 The drag-and-drop day panel draws itself from this (the same JSON as /admin/staff/roster/day), so the day
+        // shows at once without a request
+        model.addAttribute("rosterDayData", rosterDay(rosterDay, bookingSlots, booked, dayEntries));
         // The Edit window's choices for whichever date is picked in it: date -> [{value: slot label, text: exact times}]
         Map<String, List<Map<String, String>>> slotWindows = new TreeMap<>();
         for (BookingSlot s : bookingSlots) {
@@ -381,9 +408,10 @@ public class ManagementController {
             holidays.between(from, to).forEach((d, h) -> holidayDays.add(Map.of("date", d.toString(), "title", com.paf.aerovisit.service.Holidays.closedReason(h))));
         }
         model.addAttribute("holidayDays", holidayDays);
-        // 🟢 Duty Roster calendar: a date with at least one public booking slot is shaded as "museum open".
-        // A date under an emergency closure still has its slots, so it is left out here.
+        // 🟢 Duty Roster calendar: a date with at least one public booking slot is shaded as "museum open" and can be
+        // clicked. A date under an emergency closure or a listed holiday still has its slots, so it is left out here.
         Set<LocalDate> closedDates = new HashSet<>(repo.findClosureDates());
+        holidayDays.forEach(h -> closedDates.add(LocalDate.parse(h.get("date"))));
         model.addAttribute("openDates", bookingSlots.stream()
                 .map(BookingSlot::getSlotDate)
                 .filter(d -> d != null && !closedDates.contains(d))
@@ -847,6 +875,123 @@ public class ManagementController {
         return "OK";
     }
 
+    // 🧲 DUTY ROSTER, DRAG AND DROP (Director only: everything here is under /admin/staff/**). The day panel shows one
+    // date's booking-slot windows and the Staff Directory as a pool of names; each drop is saved at once in the background
+    // (assign, move), and a name is removed with the existing /admin/staff/ajax-delete/{id}. The rules are the ones of
+    // /admin/staff/add: today or later, only that date's slot windows, no overlapping shift for the same person. Several
+    // names may share a window, and one name may cover several windows the same day. A listed holiday or an emergency
+    // closure is closed: nothing can be added there.
+
+    // Why the date can't take names (holiday, emergency closure, no booking slots), or null when it is open
+    private String rosterClosedReason(LocalDate date, List<BookingSlot> daySlots) {
+        com.paf.aerovisit.model.Holiday holiday = holidays == null ? null : holidays.on(date).orElse(null);
+        if (holiday != null) return com.paf.aerovisit.service.Holidays.closedReason(holiday);
+        if (repo.findClosureDates().contains(date)) return "Closed: emergency closure";
+        if (daySlots.isEmpty()) return "No booking slots on this date";
+        return null;
+    }
+
+    // One date for the day panel: {date, label, past, open, editable, closedReason, windows:[{window, times, summary}],
+    // entries:[{id, staffName, dutyDate, shiftTime}], staff:[names]}. A past open date can only have names removed, so it
+    // gets no pool; neither does a closed date.
+    Map<String, Object> rosterDay(LocalDate date, List<BookingSlot> allSlots, Map<String, Integer> booked, List<StaffSchedule> dayEntries) {
+        List<BookingSlot> daySlots = slotsOn(date, allSlots);
+        String closedReason = rosterClosedReason(date, daySlots);
+        boolean past = date.isBefore(today());
+        boolean editable = closedReason == null && !past;
+        List<Map<String, Object>> windows = new ArrayList<>();
+        for (BookingSlot s : daySlots) {
+            Map<String, Object> w = new LinkedHashMap<>();
+            w.put("window", s.getTimeWindow());
+            w.put("times", slotTimes(s.getTimeWindow()));
+            w.put("summary", slotSummary(s.getTimeWindow(), capacityOf(date, s.getTimeWindow(), allSlots), booked.getOrDefault(date + "|" + s.getTimeWindow(), 0)));
+            windows.add(w);
+        }
+        List<StaffSchedule> sorted = new ArrayList<>(dayEntries);
+        sorted.sort(ROSTER_ORDER);
+        Map<String, Object> day = new LinkedHashMap<>();
+        day.put("date", date.toString());
+        day.put("label", date.format(java.time.format.DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy", Locale.US)));
+        day.put("past", past);
+        day.put("open", closedReason == null);
+        day.put("editable", editable);
+        day.put("closedReason", closedReason);
+        day.put("windows", windows);
+        day.put("entries", rosterEntries(sorted));
+        day.put("staff", editable ? directoryNames() : List.of());
+        return day;
+    }
+
+    // Staff Directory names, trimmed, each once, A to Z (case ignored): the drag-and-drop pool
+    private List<String> directoryNames() {
+        Map<String, String> byKey = new TreeMap<>();
+        for (MuseumEmployee e : employeeRepo.findAll()) {
+            String key = officerKey(e.getName());
+            if (key != null) byKey.putIfAbsent(key, e.getName().trim());
+        }
+        return new ArrayList<>(byKey.values());
+    }
+
+    private static org.springframework.http.ResponseEntity<Map<String, Object>> rosterRefusal(org.springframework.http.HttpStatus status, String error) {
+        return org.springframework.http.ResponseEntity.status(status).body(Map.of("error", error));
+    }
+
+    // GET one date for the day panel (a calendar click, the date picker, Today)
+    @GetMapping("/admin/staff/roster/day")
+    @ResponseBody
+    public Map<String, Object> rosterDayJson(@RequestParam(value = "date", required = false) String date) {
+        LocalDate day = parseDayOr(date, today());
+        List<BookingSlot> all = bookingRepo.findAll();
+        return rosterDay(day, all, seatsBooked(slotsOn(day, all)), staffRepo.findByDutyDateOrderByStaffNameAsc(day));
+    }
+
+    // Drop a Staff Directory name onto a window: 200 with the new entry, or 4xx with {error} and nothing saved
+    @PostMapping("/admin/staff/roster/assign")
+    @ResponseBody
+    public org.springframework.http.ResponseEntity<Map<String, Object>> rosterAssign(
+            @RequestParam("staffName") String staffName,
+            @RequestParam("dutyDate") String dutyDateStr,
+            @RequestParam("shiftTime") String shiftTime) {
+        String name = staffName.trim();
+        if (officerKey(name) == null || directoryNames().stream().noneMatch(n -> officerKey(n).equals(officerKey(name)))) {
+            return rosterRefusal(org.springframework.http.HttpStatus.BAD_REQUEST, "Choose a staff member from the Staff Directory. Nothing was saved.");
+        }
+        LocalDate date = parseDayOr(dutyDateStr, null);
+        if (date == null) return rosterRefusal(org.springframework.http.HttpStatus.BAD_REQUEST, "Please pick a valid date. Nothing was saved.");
+        if (date.isBefore(today())) return rosterRefusal(org.springframework.http.HttpStatus.BAD_REQUEST, pastDateError(date));
+        String closed = rosterClosedReason(date, slotsOn(date, bookingRepo.findAll()));
+        if (closed != null) return rosterRefusal(org.springframework.http.HttpStatus.BAD_REQUEST, "⛔ " + date + ": " + closed + ". Nothing was saved.");
+        if (!slotWindowsOn(date).contains(shiftTime)) return rosterRefusal(org.springframework.http.HttpStatus.BAD_REQUEST, notASlotError(shiftTime, date));
+        StaffSchedule clash = overlappingShift(name, date, shiftTime, null, staffRepo.findByDutyDateOrderByStaffNameAsc(date));
+        if (clash != null) return rosterRefusal(org.springframework.http.HttpStatus.CONFLICT, overlapError(name, date, shiftTime, clash));
+
+        StaffSchedule sched = new StaffSchedule();
+        sched.setStaffName(name);
+        sched.setDutyDate(date);
+        sched.setShiftTime(shiftTime);
+        return org.springframework.http.ResponseEntity.ok(rosterEntries(List.of(staffRepo.save(sched))).get(0));
+    }
+
+    // Drag a placed name onto another window of the same date: 200 with the entry, or 4xx with {error} and nothing changed
+    @PostMapping("/admin/staff/roster/move")
+    @ResponseBody
+    public org.springframework.http.ResponseEntity<Map<String, Object>> rosterMove(@RequestParam("id") Long id, @RequestParam("shiftTime") String shiftTime) {
+        StaffSchedule sched = staffRepo.findById(id).orElse(null);
+        if (sched == null) return rosterRefusal(org.springframework.http.HttpStatus.NOT_FOUND, "That assignment no longer exists. Please refresh the page.");
+        LocalDate date = sched.getDutyDate();
+        if (date == null || date.isBefore(today())) {
+            return rosterRefusal(org.springframework.http.HttpStatus.BAD_REQUEST, "⛔ A past entry can only be corrected from the Shift Directory. Nothing was saved.");
+        }
+        String closed = rosterClosedReason(date, slotsOn(date, bookingRepo.findAll()));
+        if (closed != null) return rosterRefusal(org.springframework.http.HttpStatus.BAD_REQUEST, "⛔ " + date + ": " + closed + ". Nothing was saved.");
+        if (!slotWindowsOn(date).contains(shiftTime)) return rosterRefusal(org.springframework.http.HttpStatus.BAD_REQUEST, notASlotError(shiftTime, date));
+        StaffSchedule clash = overlappingShift(sched.getStaffName(), date, shiftTime, sched.getId(), staffRepo.findByDutyDateOrderByStaffNameAsc(date));
+        if (clash != null) return rosterRefusal(org.springframework.http.HttpStatus.CONFLICT, overlapError(sched.getStaffName(), date, shiftTime, clash));
+
+        sched.setShiftTime(shiftTime);
+        return org.springframework.http.ResponseEntity.ok(rosterEntries(List.of(staffRepo.save(sched))).get(0));
+    }
+
     // ✏️ Edit one assignment: name and time window, and the date for an entry dated today or later. An entry dated before
     // today (shown with "Show past dates") can be corrected but stays on its own date, so a past date is never newly filled.
     @PostMapping("/admin/staff/update")
@@ -1089,5 +1234,15 @@ public class ManagementController {
         model.addAttribute("rosterEntries", rosterEntries(allShifts));
         model.addAttribute("groupedShifts", byDateThenWindow(allShifts));
         return "calendar";
+    }
+
+    // 🔄 The guards' Duty Roster page re-reads this every 30 s, so a name the Director drops in shows without a refresh.
+    // Read-only, the same entries as /admin/calendar (active ones, roster order). Guard and Director (/admin/**).
+    @GetMapping("/admin/calendar/entries")
+    @ResponseBody
+    public List<Map<String, Object>> calendarEntries() {
+        List<StaffSchedule> allShifts = new ArrayList<>(staffRepo.findByArchivedFalseOrderByDutyDateAscStaffNameAsc());
+        allShifts.sort(ROSTER_ORDER);
+        return rosterEntries(allShifts);
     }
 }

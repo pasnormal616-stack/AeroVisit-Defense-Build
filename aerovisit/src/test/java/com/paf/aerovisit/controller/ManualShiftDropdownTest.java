@@ -16,9 +16,8 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -80,11 +79,12 @@ class ManualShiftDropdownTest {
         when(bookingRepo.findAll()).thenReturn(slots);
     }
 
-    // The Assign Staff window checkboxes on the rendered page
-    private static List<String> windowBoxes(String html) {
-        Matcher box = Pattern.compile("name=\"shiftTime\" value=\"([^\"]*)\"").matcher(html);
-        List<String> values = new ArrayList<>();
-        while (box.find()) values.add(box.group(1));
+    // 🧲 The drag-and-drop day panel's windows (rosterDayData, which the page script draws): the slot labels, in order
+    @SuppressWarnings("unchecked")
+    private static List<Object> dayWindows(org.springframework.test.web.servlet.MvcResult result, String field) {
+        Map<String, Object> day = (Map<String, Object>) result.getModelAndView().getModel().get("rosterDayData");
+        List<Object> values = new ArrayList<>();
+        for (Map<String, Object> w : (List<Map<String, Object>>) day.get("windows")) values.add(w.get(field));
         return values;
     }
 
@@ -97,17 +97,18 @@ class ManualShiftDropdownTest {
         LocalDate day = LocalDate.now().plusDays(2);
         when(timeWindowRepo.findAllByOrderByStartTimeAsc()).thenReturn(List.of(MORNING, MIDDAY, EVENING)); // configured, but only two are slots
         slotsOn(day, EVENING, MORNING);
-        String html = mvc.perform(get("/admin/staff").param("day", day.toString())).andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        org.springframework.test.web.servlet.MvcResult result = mvc.perform(get("/admin/staff").param("day", day.toString())).andExpect(status().isOk()).andReturn();
+        String html = result.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
 
-        assertThat(windowBoxes(html)).containsExactly(MORNING.getLabel(), EVENING.getLabel());
-        String assign = html.substring(html.indexOf("id=\"assignStaffForm\""), html.indexOf("</form>", html.indexOf("id=\"assignStaffForm\"")));
-        assertThat(assign).doesNotContain("value=\"Morning (0800H-1200H)\"").doesNotContain("value=\"" + MIDDAY.getLabel() + "\"");
-        assertThat(html)
-            .contains("<label class=\"form-check-label av-mono\" for=\"rosterWindow0\">8:00 AM – 12:00 PM</label>")
-            .contains("id=\"rosterWholeDay\"");
-        // the Edit window gets the same slots for that date, by exact time
-        assertThat(html).contains("\"" + day + "\":[{\"value\":\"" + MORNING.getLabel() + "\",\"text\":\"8:00 AM \\u2013 12:00 PM\"}"); // JS-escaped dash
+        // 🧲 the drag-and-drop panel's windows: only that date's slots (not Midday, not the old Morning string), by time
+        assertThat(dayWindows(result, "window")).containsExactly(MORNING.getLabel(), EVENING.getLabel());
+        assertThat(dayWindows(result, "times")).containsExactly("8:00 AM – 12:00 PM", "4:00 PM – 8:00 PM");
+        // the Edit window gets the same slots for that date, by exact time. Its entries are Map.of(...), whose key order
+        // changes from run to run, so each pair is checked on its own (this used to fail now and then)
+        String editSlots = html.substring(html.indexOf("\"" + day + "\":["), html.indexOf("]", html.indexOf("\"" + day + "\":[")));
+        assertThat(editSlots).containsSubsequence(MORNING.getLabel(), EVENING.getLabel())
+            .contains("\"value\":\"" + MORNING.getLabel() + "\"").contains("\"text\":\"8:00 AM \\u2013 12:00 PM\"") // JS-escaped dash
+            .doesNotContain(MIDDAY.getLabel());
     }
 
     @Test
@@ -115,12 +116,14 @@ class ManualShiftDropdownTest {
         LocalDate day = LocalDate.now().plusDays(2);
         when(timeWindowRepo.findAllByOrderByStartTimeAsc()).thenReturn(List.of(MORNING, MIDDAY, EVENING));
         slotsOn(day.plusDays(1), MORNING);
-        String html = mvc.perform(get("/admin/staff").param("day", day.toString())).andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        org.springframework.test.web.servlet.MvcResult result = mvc.perform(get("/admin/staff").param("day", day.toString())).andExpect(status().isOk()).andReturn();
 
-        assertThat(windowBoxes(html)).isEmpty();
-        assertThat(html).contains("<p class=\"av-empty mb-0\">No booking slots on this date</p>")
-            .containsPattern("<fieldset class=\"m-0 p-0 border-0\" disabled=\"disabled\">");
+        assertThat(dayWindows(result, "window")).isEmpty();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> dayData = (Map<String, Object>) result.getModelAndView().getModel().get("rosterDayData");
+        assertThat(dayData.get("closedReason")).isEqualTo("No booking slots on this date");
+        assertThat(dayData.get("editable")).isEqualTo(false);   // nothing can be dropped on it
+        assertThat((List<?>) dayData.get("staff")).isEmpty();
     }
 
     @Test

@@ -26,4 +26,10 @@ public interface BookingSlotRepository extends JpaRepository<BookingSlot, Long> 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM BookingSlot s WHERE s.slotDate = :slotDate AND s.timeWindow = :timeWindow ORDER BY s.id")
     List<BookingSlot> lockBySlotDateAndTimeWindow(@Param("slotDate") LocalDate slotDate, @Param("timeWindow") String timeWindow);
+
+    // 🗑️ Delete Slots (SlotRangeDeletion): every slot from start to end, row-locked in the same id order as above, so a
+    // booking for one of them waits until the delete is done (and then finds no slot)
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT s FROM BookingSlot s WHERE s.slotDate BETWEEN :from AND :to ORDER BY s.id")
+    List<BookingSlot> lockBySlotDateBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
 }

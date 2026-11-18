@@ -51,6 +51,8 @@ final class WalkInPanelData {
         px.put("needs-match", String.valueOf("proof".equals(state)));
         px.put("needs-ban", String.valueOf(v.banCheckPending()));
         px.put("ids-text", text(v.eligibilityCheckText()));
+        // ☑️ The single receipt + IDs box: its label, the same one the server names when it is missing ("" = not shown)
+        px.put("verify-text", GuardOperationController.verifyTickLabel(v));
         px.put("process-url", "/admin/walk-ins/" + v.getId() + "/process");
         px.put("reject-url", "/admin/payments/" + v.getId() + "/reject");
         px.put("ban-url", "/admin/biometric-ban/" + v.getId());

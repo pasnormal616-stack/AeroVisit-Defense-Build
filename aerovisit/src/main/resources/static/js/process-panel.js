@@ -83,9 +83,12 @@ window.AeroProcess = (function () {
         show($('pxInside'), inside);
 
         // Ticks: only those that apply
-        show($('pxTickMatch'), state === 'proof');
+        // ☑️ One box for the receipt match and the Free/Discounted IDs (the server requires it whenever either applies)
+        $('pxVerifyText').textContent = data('verify-text');
+        show($('pxVerifyMatch'), state === 'proof');
         $('pxIdsText').textContent = data('ids-text');
-        show($('pxTickIds'), !waiting && !inside && !!data('ids-text'));
+        show($('pxIdsText'), !!data('ids-text'));
+        show($('pxTickVerify'), !waiting && !inside && !!data('verify-text'));
         show($('pxTickBan'), !waiting && !inside && data('needs-ban') === 'true');
 
         form.setAttribute('action', data('process-url'));

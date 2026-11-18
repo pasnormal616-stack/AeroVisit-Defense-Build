@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/shell :: head}"></th:block>
+    <title>Passport Review - AeroVisit</title>
+    <script src="/js/shell.js"></script>
+</head>
+<body class="av-app">
+
+<a href="#main" class="visually-hidden-focusable">Skip to content</a>
+<th:block th:replace="~{fragments/shell :: sidebar('passports')}"></th:block>
+<th:block th:replace="~{fragments/shell :: header('Passport Review')}"></th:block>
+
+<!-- 🛂 PASSPORT REVIEW (Director only, PassportAdminController): Foreign visitors' passports sent before an advance booking.
+     Separate from Pending Approval: there is no booking yet. Approve emails a booking link for one visit (14 days); Reject needs
+     a reason, which is emailed with a link to upload a new copy (it replaces this one on the same review). -->
+<main class="av-main" id="main">
+<div class="av-workspace">
+
+    <div class="av-pagehead">
+        <div>
+            <span class="av-mono av-code">SEC-07</span>
+            <h1 class="av-pagehead-title">Passport Review</h1>
+            <p class="av-pagehead-desc">Foreign visitors send a passport copy before they may book in advance. Approve to email them a booking link
+                (valid 14 days, books one visit), or reject with a reason they can act on. Foreign visitors book in advance only: there is no Foreign walk-in.</p>
+        </div>
+        <div class="av-pagehead-actions">
+            <a href="/admin" class="btn btn-light d-lg-none"><i class="bi bi-arrow-left"></i> Back to Dashboard</a>
+        </div>
+    </div>
+
+    <div th:if="${success}" class="alert alert-success alert-dismissible fade show" role="alert">
+        <i class="bi bi-check-square-fill"></i> <span th:text="${success}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    <div th:if="${error}" class="alert alert-danger alert-dismissible fade show" role="alert">
+        <i class="bi bi-exclamation-octagon-fill"></i> <span th:text="${error}"></span>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+
+    <div class="av-toolbar">
+        <div class="av-tabs"><span class="av-tab is-active"><i class="bi bi-passport"></i> Waiting for review <span class="count" th:text="'(' + ${reviews.size()} + ')'">(0)</span></span></div>
+        <div class="av-toolbar-meta av-mono">Oldest first</div>
+    </div>
+
+    <div class="av-panel">
+        <div class="av-panel-head"><span><i class="bi bi-passport me-2"></i>Passports</span></div>
+        <div class="av-panel-body">
+            <div class="table-responsive" th:unless="${reviews.isEmpty()}">
+                <table class="table table-custom mb-0" id="passportTable">
+                    <thead>
+                        <tr><th>Visitor</th><th>Contact</th><th>Sent</th><th>Passport</th><th class="text-end">Decision</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="r : ${reviews}">
+                            <td>
+                                <b th:text="${r.fullName}">Juan Dela Cruz</b>
+                                <div th:if="${r.possibleBanMatch != null}" class="text-danger av-small mt-1">
+                                    <i class="bi bi-exclamation-octagon"></i> Name matches a ban: <span th:text="${r.possibleBanMatch}">Ban #1</span>
+                                </div>
+                            </td>
+                            <td>
+                                <div th:text="${r.email}">juan@example.com</div>
+                                <div class="av-mono av-small" th:text="${r.contactNumber}">+1 555 0100</div>
+                            </td>
+                            <td class="av-mono av-small" th:text="${r.submittedAt != null} ? ${#temporals.format(r.submittedAt, 'MMM d, yyyy h:mm a')} : '—'">Nov 9, 2026 9:00 AM</td>
+                            <td>
+                                <a th:href="@{/admin/passports/{id}/file(id=${r.id})}" target="_blank" rel="noopener" class="av-doc-link">
+                                    <i class="bi bi-file-earmark-pdf"></i> View PDF</a>
+                            </td>
+                            <td class="text-end">
+                                <div class="av-actions justify-content-end">
+                                    <form th:action="@{/admin/passports/{id}/approve(id=${r.id})}" method="post" class="m-0"
+                                          th:attr="data-confirm-name=${r.fullName}"
+                                          onsubmit="return confirm('Approve the passport of ' + this.getAttribute('data-confirm-name') + '? A booking link is emailed to them.');">
+                                        <button type="submit" class="btn btn-sm btn-outline-success"><i class="bi bi-check2-circle"></i> Approve</button>
+                                    </form>
+                                    <details class="av-passport-reject">
+                                        <summary class="btn btn-sm btn-outline-danger"><i class="bi bi-x-circle"></i> Reject</summary>
+                                        <form th:action="@{/admin/passports/{id}/reject(id=${r.id})}" method="post" class="mt-2">
+                                            <label class="av-label" th:for="'reason' + ${r.id}">Reason (emailed to the visitor)</label>
+                                            <textarea th:id="'reason' + ${r.id}" name="reason" class="form-control form-control-sm mt-1" rows="2" maxlength="500" required
+                                                      placeholder="e.g. The photo page is cropped or blurred."></textarea>
+                                            <button type="submit" class="btn btn-sm btn-danger w-100 mt-2">Reject and email the reason</button>
+                                        </form>
+                                    </details>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div th:if="${reviews.isEmpty()}" class="av-empty av-empty--ok">
+                <i class="bi bi-check2-square"></i>
+                <span class="fw-semibold d-block">No passports are waiting for review.</span>
+                <small>New passport submissions from Foreign visitors appear here.</small>
+            </div>
+        </div>
+    </div>
+</div>
+</main>
+
+<th:block th:replace="~{fragments/shell :: scripts}"></th:block>
+</body>
+</html>

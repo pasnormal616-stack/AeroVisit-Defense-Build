@@ -46,6 +46,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
         // 💳 Payment page and receipt upload (PaymentController): token guessing and upload floods
         perIp("payment-page",   "GET",  60,  Duration.ofMinutes(5),  "/payment"),
         perIp("payment-upload", "POST", 10,  Duration.ofMinutes(10), "/payment/proof"),
+        perIp("passport-submit", "POST", 10, Duration.ofMinutes(10), "/passport/submit", "/passport/resubmit"),
+        perIp("passport-links", "GET",  60,  Duration.ofMinutes(5),  "/passport/**"),
         perIp("feedback",       "*",    10,  Duration.ofMinutes(10), "/leave-feedback", "/submit-feedback"),
         perIp("booking-page",   "GET",  120, Duration.ofMinutes(1),  "/"),
         perIp("public-api",     "GET",  60,  Duration.ofMinutes(1),  "/api/zones"),

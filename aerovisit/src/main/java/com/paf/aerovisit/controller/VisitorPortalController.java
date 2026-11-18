@@ -60,6 +60,10 @@ public class VisitorPortalController {
     @Autowired(required = false)
     private SeatReservationService seatReservation;
 
+    // 🔒 Stale-write guard (security fix M4). Optional, so web-layer test slices without it save as before.
+    @Autowired(required = false)
+    private com.paf.aerovisit.service.VisitorRowGuard rowGuard;
+
     // 📧 Email OTP (replaced reCAPTCHA). Optional so web-layer test slices still start; when missing, /save fails closed.
     @Autowired(required = false)
     private OtpService otpService;
@@ -105,6 +109,16 @@ public class VisitorPortalController {
     @Autowired(required = false)
     private com.paf.aerovisit.service.AdvanceBookingRules advanceBookingRules;
 
+    // 🛂 Foreign visitors: the Director's passport approvals (every Foreign booking needs one: Foreign visitors book in
+    // advance only). Optional, so test slices without it still start; without it a Foreign booking is refused and Local
+    // bookings work exactly as before.
+    @Autowired(required = false)
+    private com.paf.aerovisit.repository.PassportReviewRepository passportReviews;
+
+    static final String FOREIGN_PASSPORT_FIRST = "Foreign visitors: please submit your passport for review first. Choose Foreign > Advance Booking on the booking page.";
+    static final String FOREIGN_LINK_USED = "This passport approval has already been used for a booking, or its link has expired. Please submit your passport again.";
+    static final String FOREIGN_NO_WALK_IN = "Foreign visitors book in advance only: there is no walk-in booking for Foreign visitors. Choose Advance Booking and send your passport for review first.";
+
     // ⏱️ "Today" and "now" for bookings and Manage Booking (ClockConfig; null in test slices = the system clock)
     @Autowired(required = false)
     java.time.Clock clock;
@@ -119,7 +133,7 @@ public class VisitorPortalController {
 
     // 📝 Version of the Terms and Conditions popup (fragments/visitor :: bookingTerms). Bump it whenever the terms text
     // changes; each booking records the version its visitor agreed to.
-    public static final String TERMS_VERSION = "2026-11d";
+    public static final String TERMS_VERSION = "2026-11e";
     static final String TERMS_REQUIRED_MESSAGE = "Please read and agree to the Terms and Conditions before booking.";
 
     // 🚶 The booking form's bookingType for a walk-in (anything else is an Advance Booking)
@@ -222,9 +236,26 @@ public class VisitorPortalController {
                 ? new com.paf.aerovisit.service.WalkInService.Availability(List.of(), WALK_IN_UNAVAILABLE)
                 : walkInService.today(now()));
         model.addAttribute("walkInMaxPax", walkInService == null ? 0 : walkInService.maxPax());
+        model.addAttribute("walkInCodeRequired", walkInService != null && walkInService.codeRequired());
         model.addAttribute("walkInToday", today);
         // 📅 Advance mode: the calendar greys out every day before this one (today is Walk-in only)
         model.addAttribute("advanceEarliest", advanceEarliest().toString());
+        // 🛂 Opened from a Foreign visitor's passport-approval link: Foreign + Advance, the reviewed name, email and phone
+        com.paf.aerovisit.model.PassportReview foreignApproved = PassportController.approvedFor(session, passportReviews, now());
+        model.addAttribute("foreignApproved", foreignApproved);
+        if (foreignApproved != null && model.getAttribute("visitor") instanceof Visitor form) {
+            // The reviewed name, email and phone ride along (hidden on the page; /save takes them from the approval anyway)
+            form.setFullName(foreignApproved.getFullName());
+            form.setEmail(foreignApproved.getEmail());
+            form.setContactNumber(foreignApproved.getContactNumber());
+        }
+        // 💾 Reopened approval link: the date and time picked from it before (stored on the review, so any device), if
+        // that date can still be booked; the page reselects it when that window still has seats
+        if (foreignApproved != null && foreignApproved.getDraftVisitDate() != null && foreignApproved.getDraftTimeWindow() != null
+                && !foreignApproved.getDraftVisitDate().isBefore(advanceEarliest())) {
+            model.addAttribute("resumeDate", foreignApproved.getDraftVisitDate().toString());
+            model.addAttribute("resumeWindow", foreignApproved.getDraftTimeWindow());
+        }
         return "register";
     }
 
@@ -234,6 +265,8 @@ public class VisitorPortalController {
                               @RequestParam(name=KYC_NONCE, required=false) String kycNonce,
                               @RequestParam(name="termsAccepted", required=false) String termsAccepted,
                               @RequestParam(name="bookingType", required=false) String bookingType,
+                              @RequestParam(name="nationality", required=false) String nationality,
+                              @RequestParam(name="walkInCode", required=false) String walkInCode,
                               HttpServletRequest request,
                               RedirectAttributes redirectAttributes) {
 
@@ -250,10 +283,20 @@ public class VisitorPortalController {
         }
         visitor.setTermsAcceptedAt(now());
         visitor.setTermsVersion(TERMS_VERSION);
+        // 📧 One spelling of the email for every check below: the code check trims it, so the duplicate-booking check
+        // and the saved booking must too (" a@b.com" was a second booking for the same date; security fix L13)
+        if (visitor.getEmail() != null) visitor.setEmail(visitor.getEmail().trim());
 
         // 🚶 WALK-IN (TODAY): the date is today, set here; another date sent by the browser is refused
         boolean walkIn = WALK_IN.equals(bookingType);
         java.time.LocalDateTime now = now();
+        // 🛂 Foreign visitors book in advance only (passport review by email first): a Foreign walk-in is refused here,
+        // not only hidden on the page
+        boolean foreign = Visitor.NATIONALITY_FOREIGN.equals(nationality);
+        if (foreign && walkIn) {
+            redirectAttributes.addFlashAttribute("error", FOREIGN_NO_WALK_IN);
+            return "redirect:/";
+        }
         if (walkIn) {
             if (walkInService == null) {
                 redirectAttributes.addFlashAttribute("error", WALK_IN_UNAVAILABLE);
@@ -263,6 +306,12 @@ public class VisitorPortalController {
                 redirectAttributes.addFlashAttribute("error", WALK_IN_TODAY_ONLY);
                 return "redirect:/";
             }
+            // 🔑 Only people at the museum: today's walk-in code, posted at the gate (security fix M2)
+            String codeError = walkInService.codeError(walkInCode, now.toLocalDate());
+            if (codeError != null) {
+                redirectAttributes.addFlashAttribute("error", codeError);
+                return "redirect:/";
+            }
             visitor.setVisitDate(now.toLocalDate());
             visitor.setBookingCategory(Visitor.CATEGORY_WALK_IN);
         } else if (visitor.getVisitDate() != null && visitor.getVisitDate().isBefore(advanceEarliest())) {
@@ -270,6 +319,24 @@ public class VisitorPortalController {
             // greys these days out, but this is the check that counts.
             redirectAttributes.addFlashAttribute("error", advanceTooSoonMessage());
             return "redirect:/";
+        }
+
+        // 🛂 NATIONALITY: anything but FOREIGN is Local (the unchanged flow). Set here from the choice, never bound, and
+        // never changed afterwards. A Foreign booking (advance only, see above) needs the Director's passport approval,
+        // opened in this browser by its emailed link: the reviewed name, email and phone are used (not the form's), and
+        // that link stands in for the email code.
+        visitor.setNationality(foreign ? Visitor.NATIONALITY_FOREIGN : Visitor.NATIONALITY_LOCAL);
+        com.paf.aerovisit.model.PassportReview passportApproval = null;
+        if (foreign) {
+            passportApproval = PassportController.approvedFor(request.getSession(false), passportReviews, now);
+            if (passportApproval == null) {
+                redirectAttributes.addFlashAttribute("error", FOREIGN_PASSPORT_FIRST);
+                return "redirect:/";
+            }
+            visitor.setFullName(passportApproval.getFullName());
+            visitor.setName(null);
+            visitor.setEmail(passportApproval.getEmail());
+            visitor.setContactNumber(passportApproval.getContactNumber());
         }
 
         // Bridge the new PAF 'fullName' requirement with legacy 'name' methods
@@ -301,7 +368,7 @@ public class VisitorPortalController {
         }
 
         // 📧 EMAIL OTP: the booking email must have been verified with its 6-digit code (POST /otp/verify). Fails closed.
-        if (otpService == null || !otpService.isVerified(visitor.getEmail())) {
+        if (passportApproval == null && (otpService == null || !otpService.isVerified(visitor.getEmail()))) {
             redirectAttributes.addFlashAttribute("error", "Security Error: Please verify your email address with the 6-digit code we sent before submitting.");
             return "redirect:/";
         }
@@ -394,7 +461,8 @@ public class VisitorPortalController {
         // 🔒 The ID photo: the real file type is read from the bytes (signature + full decode, ReceiptStorage), never from
         // the name or the browser's declared type, so a renamed document or script is refused. HEIC (an iPhone setting) is
         // refused with its own message; the booking page converts photos to JPEG before upload whenever the browser can.
-        String photoError = idPhotoError(idCardFile);
+        // 🛂 A Foreign visitor's passport is the ID, already approved by the Director (passportApproval is set above)
+        String photoError = foreign ? null : idPhotoError(idCardFile);
         if (photoError != null) {
             redirectAttributes.addFlashAttribute("error", photoError);
             return "redirect:/";
@@ -418,7 +486,13 @@ public class VisitorPortalController {
             visitor.setStatus("PENDING");
             visitor.setPaymentStatus(visitor.admissionCounted() ? Visitor.PAY_NOT_REQUIRED : null);
         }
-        try {
+        if (passportApproval != null) {
+            // 🛂 The approved passport file becomes this booking's (the review hands it over once the booking is saved)
+            visitor.setPassportFileUrl(passportApproval.getFileName());
+            visitor.setPassportStatus(Visitor.PASSPORT_APPROVED);
+            visitor.setPassportReviewedBy(passportApproval.getDecidedBy());
+            visitor.setPassportReviewedAt(passportApproval.getDecidedAt());
+        } else try {
             Path uploadPath = Paths.get("uploads");
             if (!Files.exists(uploadPath)) Files.createDirectories(uploadPath);
             // 🔒 PRIVACY: anonymous UUID names, so the visitor's name never appears in the file system or /uploads URLs.
@@ -452,20 +526,38 @@ public class VisitorPortalController {
         } while (repo.existsByReferenceId(referenceId));
         visitor.setReferenceId(referenceId);
 
+        // 🛂 The passport approval works once: claimed right before the save (two tabs can't both book with it), and given
+        // back if the save below fails
+        if (passportApproval != null && passportReviews.claimApproval(passportApproval.getId(), now) == 0) {
+            redirectAttributes.addFlashAttribute("error", FOREIGN_LINK_USED);
+            return "redirect:/";
+        }
+
         Visitor savedVisitor;
         try {
             savedVisitor = saveWithinCapacity(visitor);
         } catch (SeatReservationService.CapacityFullException full) {
             // 🔒 Another booking took the last seats between the check above and this save
             discardIdPhoto(visitor.getIdCardImageUrl());
+            discardRefusedPassport(passportApproval);
             redirectAttributes.addFlashAttribute("error", "Insufficient slots available for this specific shift! Please choose another slot.");
             return "redirect:/";
         } catch (org.springframework.dao.PessimisticLockingFailureException busy) {
             discardIdPhoto(visitor.getIdCardImageUrl());
+            discardRefusedPassport(passportApproval);
             redirectAttributes.addFlashAttribute("error", "This time slot is being booked by other visitors right now. Please try again in a moment.");
             return "redirect:/";
         }
-        otpService.consume(visitor.getEmail()); // one verified code = one booking
+        if (passportApproval != null) {
+            // 🛂 Used: the review now points at this booking, which owns the passport file from here on
+            passportApproval.setStatus(com.paf.aerovisit.model.PassportReview.USED);
+            passportApproval.setVisitorId(savedVisitor.getId());
+            passportApproval.setFileName(null);
+            passportReviews.save(passportApproval);
+            HttpSession session = request.getSession(false);
+            if (session != null) session.removeAttribute(PassportController.FOREIGN_REVIEW_ID);
+        }
+        if (otpService != null) otpService.consume(visitor.getEmail()); // one verified code = one booking
         if (walkIn) return walkInBooked(savedVisitor, now, request, redirectAttributes);
         if (savedVisitor.awaitsReceipt()) return advanceAwaitingPayment(savedVisitor, now, request);
         redirectAttributes.addFlashAttribute("visitor", savedVisitor);
@@ -524,7 +616,7 @@ public class VisitorPortalController {
     }
 
     // 🔒 Signs this browser into Manage Booking for one booking, with a new session ID first (no session fixation)
-    private static void signIntoManageBooking(HttpServletRequest request, Long visitorId) {
+    static void signIntoManageBooking(HttpServletRequest request, Long visitorId) {
         request.getSession(true);
         request.changeSessionId();
         HttpSession session = request.getSession(false);
@@ -732,6 +824,8 @@ public class VisitorPortalController {
             }
         }
 
+        // 🔒 The booking as read: saved only if still exactly this (e.g. not approved meanwhile; security fix M4)
+        com.paf.aerovisit.service.VisitorRowGuard.Snapshot asRead = com.paf.aerovisit.service.VisitorRowGuard.Snapshot.of(v);
         // 🚨 A paid booking on a date the museum closed (RESCHEDULE_REQUIRED) moves like an approved one
         boolean mustReschedule = Visitor.STATUS_RESCHEDULE_REQUIRED.equals(v.getStatus());
         boolean wasApproved = "APPROVED".equals(v.getStatus()) || mustReschedule;
@@ -749,6 +843,8 @@ public class VisitorPortalController {
             v.setStatus("PENDING");
             v.setQrCodeUrl(null);
             v.setReminderSent(false);
+            // 🎫 A new pass token: the old QR really stops working, even after the new date is approved (security fix L5)
+            v.setSecureToken(java.util.UUID.randomUUID().toString());
         }
         // 💳 Awaiting its receipt: the payment deadline never falls after the new visit start
         if (v.awaitsReceipt() && v.getPaymentDueAt() != null) {
@@ -758,13 +854,27 @@ public class VisitorPortalController {
         // 🔒 A booking that holds seats is saved under the seat lock: the new slot is held and the old one frees
         if (v.holdsSeat()) {
             try {
-                saveWithinCapacity(v);
+                saveWithinCapacity(v, asRead);
+            } catch (com.paf.aerovisit.service.VisitorRowGuard.StaleBookingException changed) {
+                redirectAttributes.addFlashAttribute("error", com.paf.aerovisit.service.VisitorRowGuard.CHANGED_MESSAGE);
+                return "redirect:/manage-booking";
             } catch (SeatReservationService.CapacityFullException full) {
                 redirectAttributes.addFlashAttribute("error", "Not enough seats left in that time slot. Please choose another.");
                 return "redirect:/manage-booking";
             } catch (org.springframework.dao.PessimisticLockingFailureException busy) {
                 redirectAttributes.addFlashAttribute("error", "This time slot is being booked by other visitors right now. Please try again in a moment.");
                 return "redirect:/manage-booking";
+            }
+        } else if (rowGuard != null) {
+            try {
+                if (!rowGuard.saveIfUnchanged(v, asRead, () -> {})) {
+                    redirectAttributes.addFlashAttribute("error", com.paf.aerovisit.service.VisitorRowGuard.CHANGED_MESSAGE);
+                    return "redirect:/manage-booking";
+                }
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
             }
         } else {
             repo.save(v);
@@ -1026,6 +1136,13 @@ public class VisitorPortalController {
         return seatReservation.saveIfSeatsRemain(visitor);
     }
 
+    // An existing booking: also refused (StaleBookingException) if it changed since `asRead` (security fix M4)
+    private Visitor saveWithinCapacity(Visitor visitor, com.paf.aerovisit.service.VisitorRowGuard.Snapshot asRead) {
+        if (seatReservation == null) return repo.save(visitor);
+        visitor.expectRow(asRead); // checked under the seat lock
+        return seatReservation.saveIfSeatsRemain(visitor);
+    }
+
     // True when the submitted nonce is the one this session's booking page was given. The session's nonce is removed
     // on every attempt, right or wrong, so each page load allows exactly one submission (and no guessing).
     static boolean consumeKycNonce(HttpSession session, String submitted) {
@@ -1050,6 +1167,12 @@ public class VisitorPortalController {
             System.err.println("Could not remove refused booking's ID photo: " + e.getMessage());
         }
         if (uploadMirror != null) uploadMirror.deleteUpload(fileName); // ☁️ and its S3 copy
+    }
+
+    // 🛂 A refused Foreign booking: the approval is given back (its file stays with the review), so the same link can
+    // book another slot
+    private void discardRefusedPassport(com.paf.aerovisit.model.PassportReview approval) {
+        if (approval != null) passportReviews.releaseApproval(approval.getId());
     }
 
     // ID photo file name: a random UUID plus the uploaded file's own extension (.jpg, .jpeg, .png or .webp only, so nothing

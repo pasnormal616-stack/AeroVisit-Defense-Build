@@ -118,6 +118,28 @@ public interface VisitorRepository extends JpaRepository<Visitor, Long> {
     @Query("UPDATE Visitor v SET v.status = :to WHERE v.id = :id AND v.status = :from")
     int claimStatus(Long id, String from, String to);
 
+    // 🔒 STALE-WRITE GUARDS (security fix M4). Visitor has no @Version, so a sweep or action that loaded a booking and then
+    // saved the whole row could undo a change made in between (a guard's check-in, a receipt upload, a reschedule).
+
+    // A sweep's release (walk-in late, no-show): only while the booking is still `from`; clears the QR. 1 = released.
+    @Modifying(clearAutomatically = true)
+    @Transactional
+    @Query("UPDATE Visitor v SET v.status = :to, v.qrCodeUrl = NULL WHERE v.id = :id AND v.status = :from")
+    int releaseIfStatus(Long id, String from, String to);
+
+    // The payment deadline sweep: PAYMENT_EXPIRED only while the booking is still in that status, still unpaid (no receipt
+    // arrived since it was read) and its deadline is still past. 1 = expired.
+    @Modifying(clearAutomatically = true)
+    @Transactional
+    @Query("UPDATE Visitor v SET v.status = 'PAYMENT_EXPIRED', v.qrCodeUrl = NULL WHERE v.id = :id AND v.status = :status"
+         + " AND v.paymentStatus IN :payStatuses AND v.paymentDueAt < :now")
+    int expireIfStillUnpaid(Long id, String status, java.util.Collection<String> payStatuses, java.time.LocalDateTime now);
+
+    // The booking row, locked until the caller's transaction ends (VisitorRowGuard, SeatReservationService)
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT v FROM Visitor v WHERE v.id = :id")
+    Optional<Visitor> lockById(Long id);
+
     // 📝 The feedback email, exactly once: stamps the time only while none is set, in one UPDATE, so of the sweep and a
     // guard's check-out at the same moment exactly one gets 1 back (and sends). Used through FeedbackEmails.
     @Modifying
@@ -199,11 +221,18 @@ public interface VisitorRepository extends JpaRepository<Visitor, Long> {
     List<Object[]> sumSeatsHeldFrom(@org.springframework.data.repository.query.Param("from") LocalDate from,
                                     @org.springframework.data.repository.query.Param("statuses") java.util.Collection<String> statuses);
 
+    // 🗑️ Delete Slots (SlotRangeDeletion): every booking from `from` to `to` in ANY status, counted per date + time
+    // window + status: [visitDate, timeWindow, status, count]. A slot with any of them is never deleted.
+    @Query("SELECT v.visitDate, v.timeWindow, v.status, COUNT(v) FROM Visitor v WHERE v.visitDate BETWEEN :from AND :to"
+         + " GROUP BY v.visitDate, v.timeWindow, v.status")
+    List<Object[]> countByDateWindowAndStatus(@org.springframework.data.repository.query.Param("from") LocalDate from,
+                                              @org.springframework.data.repository.query.Param("to") LocalDate to);
+
     // 12. Data retention purge: finished visits dated before the cutoff that still have an ID photo, QR file or face
     // vector, or whose personal details are not anonymized yet (rows purged before anonymization existed included)
     @Query("SELECT v FROM Visitor v WHERE v.status IN :statuses AND v.visitDate < :cutoff"
          + " AND (v.idImageUrl IS NOT NULL OR v.qrCodeUrl IS NOT NULL OR v.idCardImageUrl IS NOT NULL OR v.faceEncoding IS NOT NULL"
-         + " OR v.receiptImageUrl IS NOT NULL OR v.earlierReceiptUrls IS NOT NULL OR v.idFaceCropUrl IS NOT NULL"
+         + " OR v.receiptImageUrl IS NOT NULL OR v.earlierReceiptUrls IS NOT NULL OR v.idFaceCropUrl IS NOT NULL OR v.passportFileUrl IS NOT NULL"
          + " OR v.fullName IS NULL OR v.fullName <> 'REDACTED')")
     List<Visitor> findExpiredWithFiles(@org.springframework.data.repository.query.Param("statuses") java.util.Collection<String> statuses,
                                        @org.springframework.data.repository.query.Param("cutoff") LocalDate cutoff);

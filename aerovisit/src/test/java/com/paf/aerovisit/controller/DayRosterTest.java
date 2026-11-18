@@ -129,13 +129,19 @@ class DayRosterTest {
         assertThat(daySlots).extracting(s -> s.get("window")).containsExactly(T930.getLabel(), T1030.getLabel(), T1130.getLabel());
         assertThat(daySlots).extracting(s -> s.get("summary")).first().isEqualTo("9:30 AM – 10:30 AM · 50 seats (12 booked)");
 
+        // 🧲 The drag-and-drop panel draws today from rosterDayData: its windows in time order, the name under its window
+        Map<String, Object> dayData = (Map<String, Object>) result.getModelAndView().getModel().get("rosterDayData");
+        assertThat(dayData.get("date")).isEqualTo(TODAY.toString());
+        assertThat((List<Map<String, Object>>) dayData.get("windows")).extracting(w -> w.get("summary")).containsExactly(
+                "9:30 AM – 10:30 AM · 50 seats (12 booked)", "10:30 AM – 11:30 AM · 50 seats (0 booked)", "11:30 AM – 12:30 PM · 50 seats (0 booked)");
+        assertThat((List<Map<String, Object>>) dayData.get("entries")).extracting(e -> e.get("staffName") + " @ " + e.get("shiftTime"))
+                .containsExactly("Sgt. Reyes @ " + T1030.getLabel());
+
         String html = result.getResponse().getContentAsString(StandardCharsets.UTF_8);
-        assertThat(html).containsSubsequence("id=\"rosterDayPanel\"", "9:30 AM – 10:30 AM · 50 seats (12 booked)",
-                "10:30 AM – 11:30 AM · 50 seats (0 booked)", "Sgt. Reyes", "11:30 AM – 12:30 PM · 50 seats (0 booked)")
+        assertThat(html).containsSubsequence("id=\"rosterDayPanel\"", "id=\"rosterWindowsBox\"", "id=\"rosterPool\"")
             .contains("id=\"rosterDayPicker\" name=\"day\"").contains("value=\"" + TODAY + "\"")
-            .contains("id=\"rosterWholeDay\"")
-            .containsSubsequence("name=\"shiftTime\" value=\"" + T930.getLabel() + "\"", "name=\"shiftTime\" value=\"" + T1030.getLabel() + "\"",
-                "name=\"shiftTime\" value=\"" + T1130.getLabel() + "\"")
+            .contains("<script src=\"/js/duty-roster.js\"></script>")
+            .doesNotContain("id=\"assignStaffForm\"")
             .doesNotContain("id=\"dailyRosterModal\"");
     }
 
@@ -144,14 +150,23 @@ class DayRosterTest {
         mvc.perform(get("/admin/staff").param("day", DAY.toString())).andExpect(model().attribute("rosterDay", DAY.toString()));
         mvc.perform(get("/admin/staff").param("day", "garbage")).andExpect(model().attribute("rosterDay", TODAY.toString()));
 
-        String empty = mvc.perform(get("/admin/staff").param("day", DAY.plusDays(9).toString())).andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        assertThat(empty).contains("No booking slots on this date").doesNotContain("name=\"shiftTime\" value=");
+        Map<String, Object> empty = dayData(mvc.perform(get("/admin/staff").param("day", DAY.plusDays(9).toString())).andExpect(status().isOk()).andReturn());
+        assertThat(empty.get("closedReason")).isEqualTo("No booking slots on this date");
+        assertThat(empty.get("open")).isEqualTo(false);
+        assertThat((List<?>) empty.get("windows")).isEmpty();
+        assertThat((List<?>) empty.get("staff")).isEmpty();
 
-        String past = mvc.perform(get("/admin/staff").param("day", TODAY.minusDays(1).toString()))
-                .andExpect(model().attribute("rosterDayPast", true))
-                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        assertThat(past).contains("This date is in the past: past dates can be corrected, but not newly filled.");
+        // a past date: shown (names can still be removed) but takes no new names, so it gets no pool
+        Map<String, Object> past = dayData(mvc.perform(get("/admin/staff").param("day", TODAY.minusDays(1).toString()))
+                .andExpect(model().attribute("rosterDayPast", true)).andReturn());
+        assertThat(past.get("past")).isEqualTo(true);
+        assertThat(past.get("editable")).isEqualTo(false);
+        assertThat((List<?>) past.get("staff")).isEmpty();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> dayData(MvcResult result) {
+        return (Map<String, Object>) result.getModelAndView().getModel().get("rosterDayData");
     }
 
     // --- Several windows at once ---

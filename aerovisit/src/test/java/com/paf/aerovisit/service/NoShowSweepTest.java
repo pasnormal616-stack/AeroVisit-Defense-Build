@@ -30,6 +30,13 @@ class NoShowSweepTest {
     private final EmailService emailService = mock(EmailService.class);
     private final AeroVisitAutomationEngine engine = new AeroVisitAutomationEngine(repo, emailService);
 
+    // The release is a conditional UPDATE now (security fix M4): the database still says APPROVED in these tests
+    @org.junit.jupiter.api.BeforeEach
+    void stillApprovedInTheDatabase() {
+        when(repo.releaseIfStatus(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.eq("APPROVED"),
+                org.mockito.ArgumentMatchers.eq("NO_SHOW"))).thenReturn(1);
+    }
+
     private static Visitor approved(long id, LocalDate date, String window) {
         Visitor v = new Visitor();
         v.setId(id);
@@ -62,11 +69,11 @@ class NoShowSweepTest {
         for (Visitor v : List.of(yesterday, lastMonth, morningEnded, eveningEnded, nightEnded)) {
             assertThat(v.getStatus()).as("visitor " + v.getId()).isEqualTo("NO_SHOW");
             assertThat(v.getQrCodeUrl()).as("visitor " + v.getId()).isNull();
-            verify(repo).save(v);
+            verify(repo).releaseIfStatus(v.getId(), "APPROVED", "NO_SHOW");
         }
         for (Visitor v : List.of(endsThisMinute, masterToday, tomorrow, noDate)) {
             assertThat(v.getStatus()).as("visitor " + v.getId()).isEqualTo("APPROVED");
-            verify(repo, never()).save(v);
+            verify(repo, never()).releaseIfStatus(v.getId(), "APPROVED", "NO_SHOW");
         }
         verifyNoInteractions(emailService); // a no-show is not emailed
     }

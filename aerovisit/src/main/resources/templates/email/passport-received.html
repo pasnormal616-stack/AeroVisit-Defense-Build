@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Passport Received</title></head>
+<!--/* Variables: name */-->
+<body th:replace="~{email/layout :: layout('Passport Received', ~{::content})}">
+<div th:fragment="content">
+  <p style="margin:0 0 14px;">Dear <span th:text="${name}">Juan Dela Cruz</span>,</p>
+  <p style="margin:0 0 14px;">Thank you for your interest in visiting the PAF Aerospace Museum. We have received your passport copy, and it is now <strong>under review</strong> by the museum.</p>
+  <p style="margin:0 0 14px;">You do not need to do anything yet. We will email you once it has been reviewed:</p>
+  <ul style="margin:0 0 14px; padding-left:20px;">
+    <li style="margin:0 0 6px;">If it is approved, the email will have a link to choose your visit date and time.</li>
+    <li style="margin:0;">If it cannot be accepted, the email will say why and how to upload a new copy.</li>
+  </ul>
+  <p style="margin:0;">No time slot has been reserved for you yet.</p>
+</div>
+</body>
+</html>

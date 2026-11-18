@@ -44,6 +44,10 @@ public class GuardOperationController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private SeatReservationService seatReservation;
 
+    // 🔒 Stale-write guard (security fix M4). Optional, so web-layer test slices without it save as before.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.paf.aerovisit.service.VisitorRowGuard rowGuard;
+
     // 📝 The feedback email, once per booking (a check-out after the window-end sweep sends nothing again). Optional, so
     // test slices without it still start: then the booking's own timestamp guards the send.
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -340,6 +344,12 @@ public class GuardOperationController {
                     }
                 }
 
+                // 🚶 A free walk-in late for its check-in deadline (security fix L9)
+                String late = lateWalkInBlocker(v, LocalDateTime.now(clock()));
+                if (late != null) {
+                    redirectAttributes.addFlashAttribute("error", late);
+                    return back;
+                }
                 // 🚶 A walk-in whose name resembles a ban: the guard compares the ID with the ban's photo first
                 if (banCheckMissing(v, banChecked)) {
                     redirectAttributes.addFlashAttribute("error", BAN_CHECK_REQUIRED);
@@ -388,6 +398,15 @@ public class GuardOperationController {
             System.err.println("❌ Background gate email failed: " + e);
             return null;
         });
+    }
+
+    // 🚶 Security fix L9: a FREE walk-in must check in within the walk-in minutes (checkInDueAt); the 15-minute sweep
+    // releases it, and until then the gate refuses it too, so the setting is the real limit. A paid walk-in's deadline is
+    // its window's end, which the window check already enforces.
+    static String lateWalkInBlocker(Visitor v, LocalDateTime now) {
+        if (!v.walkIn() || v.paymentRequired() || v.getCheckInDueAt() == null || !now.isAfter(v.getCheckInDueAt())) return null;
+        return "ACCESS DENIED: This free walk-in was not checked in by its deadline ("
+                + v.getCheckInDueAt().toLocalTime().format(GATE_TIME) + "), so its seats were released. The visitor must book again.";
     }
 
     // Why this visitor cannot be checked in right now, or null when they can (APPROVED and scheduled for today).
@@ -450,15 +469,28 @@ public class GuardOperationController {
     // Who may: the payment rule (PaymentAdminController.canVerify): a Guard only for today's walk-ins, else 403.
     static final String PROCESS_WALK_IN_ONLY = "Process is for walk-in bookings only.";
 
+    // ☑️ ONE BOX for the receipt match and the Free/Discounted IDs: "I've verified the ID(s) and payment" (verifiedChecked).
+    // It stands for both confirmations, each still required here only when it applies and recorded as before (who, when);
+    // the ban tick stays separate. The label is the same on the panel (WalkInPanelData "verify-text").
+    static final String VERIFY_BOTH = "I've verified the ID(s) and payment";
+    static final String VERIFY_PAYMENT = "I've verified the payment";
+    static final String VERIFY_IDS = "I've verified the ID(s)";
+
+    // The single box's label for this walk-in, or "" when neither the receipt nor any ID needs confirming
+    public static String verifyTickLabel(Visitor v) {
+        boolean payment = "proof".equals(WalkInPanelData.state(v));
+        boolean ids = v.eligibilityCheckNeeded();
+        return payment && ids ? VERIFY_BOTH : payment ? VERIFY_PAYMENT : ids ? VERIFY_IDS : "";
+    }
+
     @PostMapping("/admin/walk-ins/{id}/process")
     public String processWalkIn(@PathVariable Long id,
-                                @RequestParam(value = "matchConfirmed", required = false) String matchConfirmed,
-                                @RequestParam(value = "idsChecked", required = false) String idsChecked,
+                                @RequestParam(value = "verifiedChecked", required = false) String verifiedChecked,
                                 @RequestParam(value = "banChecked", required = false) String banChecked,
                                 @RequestParam(value = "returnTo", required = false) String returnTo,
                                 RedirectAttributes redirectAttributes) {
         String back = AdminReturnTo.isOurs(returnTo) ? "redirect:" + returnTo : "redirect:" + PaymentAdminController.GUARD_RETURN;
-        Outcome outcome = processWalkInOutcome(id, matchConfirmed, idsChecked, banChecked);
+        Outcome outcome = processWalkInOutcome(id, verifiedChecked, banChecked);
         redirectAttributes.addFlashAttribute(outcome.ok() ? "success" : "error", outcome.message());
         return back;
     }
@@ -468,10 +500,9 @@ public class GuardOperationController {
     @PostMapping(value = "/admin/walk-ins/{id}/process", headers = AJAX_HEADER)
     @ResponseBody
     public ResponseEntity<Map<String, String>> processWalkInAjax(@PathVariable Long id,
-                                @RequestParam(value = "matchConfirmed", required = false) String matchConfirmed,
-                                @RequestParam(value = "idsChecked", required = false) String idsChecked,
+                                @RequestParam(value = "verifiedChecked", required = false) String verifiedChecked,
                                 @RequestParam(value = "banChecked", required = false) String banChecked) {
-        return ResponseEntity.ok(processWalkInOutcome(id, matchConfirmed, idsChecked, banChecked).json());
+        return ResponseEntity.ok(processWalkInOutcome(id, verifiedChecked, banChecked).json());
     }
 
     // The answer of a panel action: ok (green) or not (red, nothing more happened), and what to tell the guard
@@ -487,7 +518,7 @@ public class GuardOperationController {
     // The scanner overlay's requests carry this header (the dashboard's normal form posts don't)
     static final String AJAX_HEADER = "X-Requested-With=fetch";
 
-    private Outcome processWalkInOutcome(Long id, String matchConfirmed, String idsChecked, String banChecked) {
+    private Outcome processWalkInOutcome(Long id, String verifiedChecked, String banChecked) {
         org.springframework.security.core.Authentication auth =
                 org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
         Visitor v = repo.findById(id).orElse(null);
@@ -510,8 +541,10 @@ public class GuardOperationController {
 
         // No tick, no action: every missing tick is named, and nothing is saved
         List<String> missing = new ArrayList<>();
-        if (verifyPayment && !"true".equals(matchConfirmed)) missing.add("\"Billing number and amount match the receipt\"");
-        if (eligibilityCheckMissing(v, idsChecked)) missing.add("\"Checked the IDs of the Free and Discounted visitors\"");
+        // ☑️ The one box covers the receipt match (when there is a receipt to verify) and the Free/Discounted IDs
+        if ((verifyPayment || eligibilityCheckMissing(v, verifiedChecked)) && !"true".equals(verifiedChecked)) {
+            missing.add("\"" + verifyTickLabel(v) + "\"");
+        }
         if (v.banCheckPending() && !"true".equals(banChecked)) missing.add("\"ID checked against the ban\"");
         if (!missing.isEmpty()) return new Outcome(false, "Nothing was saved. Please tick " + String.join(", ", missing) + ".");
 
@@ -538,6 +571,9 @@ public class GuardOperationController {
         if (!v.paymentCleared()) return PAYMENT_NOT_VERIFIED;
         // 🚫 Backstop for a pass whose holder was banned after approval (the ban also revokes open bookings)
         if (isBanned(v)) return BANNED_ENTRY;
+        // 🚶 A free walk-in late for its check-in deadline (security fix L9)
+        String late = lateWalkInBlocker(v, LocalDateTime.now(clock()));
+        if (late != null) return late;
         // 🔒 The QR is only valid on the scheduled date
         if (!LocalDate.now(clock()).equals(v.getVisitDate())) return "ACCESS DENIED: Scheduled for " + v.getVisitDate() + ".";
         // 🕒 ...and within the booked time window (opens 15 minutes early)
@@ -708,6 +744,13 @@ public class GuardOperationController {
             redirectAttributes.addFlashAttribute("error", BANNED_APPROVAL);
             return back;
         }
+        // ⌛ A visit whose time window is over can't be approved any more (security fix L1)
+        if (v != null && windowEnded(v)) {
+            redirectAttributes.addFlashAttribute("error", WINDOW_ENDED_APPROVAL);
+            return back;
+        }
+        // 🔒 The booking as read now: saved only if still exactly this (e.g. not moved to a new date meanwhile; M4)
+        com.paf.aerovisit.service.VisitorRowGuard.Snapshot asRead = v == null ? null : com.paf.aerovisit.service.VisitorRowGuard.Snapshot.of(v);
         if (v != null) {
             // 👻 GHOST SLOTS: every booking needs a real slot for its date and time window (never created, deleted,
             // or a made-up window from a hand-made request)
@@ -742,7 +785,14 @@ public class GuardOperationController {
                 String qrFileName = next == PaymentWorkflow.Next.ISSUE_QR ? issuePass(v, uploadMirror) : null;
 
                 try {
-                    saveWithinCapacity(v);
+                    saveWithinCapacity(v, asRead);
+                } catch (com.paf.aerovisit.service.VisitorRowGuard.StaleBookingException changed) {
+                    if (qrFileName != null) {
+                        Files.deleteIfExists(Paths.get("uploads").resolve(qrFileName));
+                        if (uploadMirror != null) uploadMirror.deleteUpload(qrFileName);
+                    }
+                    redirectAttributes.addFlashAttribute("error", com.paf.aerovisit.service.VisitorRowGuard.CHANGED_MESSAGE);
+                    return back;
                 } catch (SeatReservationService.CapacityFullException | org.springframework.dao.PessimisticLockingFailureException full) {
                     // 🔒 Another approval took the last seats after the check above: nothing was saved, the request stays pending
                     if (qrFileName != null) {
@@ -779,8 +829,9 @@ public class GuardOperationController {
             redirectAttributes.addFlashAttribute("error", "Visitor ID not found in database.");
             return back;
         }
-        if (!"PENDING".equals(v.getStatus()) && !"PENDING_MANUAL_REVIEW".equals(v.getStatus())) {
-            // 🛑 Also keeps denied, cancelled and rejected bookings from being revived through the override
+        if (!v.awaitsApproval()) {
+            // 🛑 Also keeps denied, cancelled and rejected bookings from being revived through the override. Any request
+            // awaiting approval qualifies, including an older VERIFIED one (security fix L7), like normal Approve.
             redirectAttributes.addFlashAttribute("error", "Force Approve only applies to a pending request (status: " + v.getStatus() + ").");
             return back;
         }
@@ -793,6 +844,11 @@ public class GuardOperationController {
             redirectAttributes.addFlashAttribute("error", INVALID_SLOT);
             return back;
         }
+        if (windowEnded(v)) { // ⌛ L1
+            redirectAttributes.addFlashAttribute("error", WINDOW_ENDED_APPROVAL);
+            return back;
+        }
+        com.paf.aerovisit.service.VisitorRowGuard.Snapshot asRead = com.paf.aerovisit.service.VisitorRowGuard.Snapshot.of(v); // 🔒 M4
 
         // 💳 The override skips the capacity check only: the payment steps still apply
         String receiptError = receiptBlocker(v);
@@ -811,7 +867,17 @@ public class GuardOperationController {
         try {
             if (next == PaymentWorkflow.Next.ISSUE_QR) qrFileName = issuePass(v, uploadMirror);
             v.setStatus("APPROVED");
-            repo.save(v);
+            boolean saved = true;
+            if (rowGuard == null) repo.save(v); // web-layer test slices: as before
+            else saved = rowGuard.saveIfUnchanged(v, asRead, () -> {});
+            if (!saved) {
+                if (qrFileName != null) {
+                    Files.deleteIfExists(Paths.get("uploads").resolve(qrFileName));
+                    if (uploadMirror != null) uploadMirror.deleteUpload(qrFileName);
+                }
+                redirectAttributes.addFlashAttribute("error", com.paf.aerovisit.service.VisitorRowGuard.CHANGED_MESSAGE);
+                return back;
+            }
             notifySlotFilling(v);
         } catch (Exception e) {
             System.err.println("❌ Force approval failed for visitor #" + v.getId() + ": " + e);
@@ -921,9 +987,26 @@ public class GuardOperationController {
     // 🔒 RACE-SAFE SAVE: every approval is saved under a row lock on its slot with the seat count re-read inside the
     // lock (SeatReservationService), so two approvals can't both take the last seats. Web-layer test slices without
     // SeatReservationService save directly, as before.
-    private void saveWithinCapacity(Visitor v) {
+    private void saveWithinCapacity(Visitor v, com.paf.aerovisit.service.VisitorRowGuard.Snapshot asRead) {
         if (seatReservation == null) repo.save(v);
-        else seatReservation.saveIfSeatsRemain(v);
+        else {
+            v.expectRow(asRead); // 🔒 checked under the seat lock (M4)
+            seatReservation.saveIfSeatsRemain(v);
+        }
+    }
+
+    // ⌛ Security fix L1: approving after the visit's window ended would email a QR (or a payment request) for a visit the
+    // gate already refuses. A paid request becomes Reschedule Needed overnight (expireUnreviewedBookings) instead.
+    static final String WINDOW_ENDED_APPROVAL = "Approval refused: this visit's time window has already ended. A paid request "
+            + "becomes Reschedule Needed overnight so the visitor can pick a new date; an unpaid one expires as not reviewed.";
+
+    private boolean windowEnded(Visitor v) {
+        if (v.getVisitDate() == null) return false;
+        LocalDate today = LocalDate.now(clock());
+        if (v.getVisitDate().isBefore(today)) return true;
+        if (v.getVisitDate().isAfter(today)) return false;
+        LocalTime[] window = parseTimeWindow(v.getTimeWindow());
+        return window != null && LocalTime.now(clock()).isAfter(window[1].withSecond(59).withNano(999_999_999));
     }
 
     // 🔔 After an approval: tells the bell when the visit's time slot is almost full (or full). Never fails the approval.
@@ -978,12 +1061,30 @@ public class GuardOperationController {
             redirectAttributes.addFlashAttribute("error", Visitor.CANNOT_REJECT_MESSAGE);
             return "redirect:/admin";
         }
+        if (v != null && !rejectable(v)) { // 🛑 security fix L3
+            redirectAttributes.addFlashAttribute("error", alreadyClosedMessage(v));
+            return "redirect:/admin";
+        }
         if (v != null) {
             v.setStatus("REJECTED");
             v.setQrCodeUrl(null);
             repo.save(v);
         }
         return "redirect:/admin";
+    }
+
+    // 🛑 Security fix L3: only an open booking can be rejected: one awaiting its receipt or approval, approved, or waiting
+    // for a new date. A cancelled, expired or already rejected booking keeps its outcome (and the visitor gets no
+    // misleading "not approved" email). Shared with ManagementController's Reject (the form with a reason).
+    static final java.util.Set<String> REJECTABLE_STATUSES = java.util.Set.of(Visitor.STATUS_AWAITING_RECEIPT, "PENDING",
+            "PENDING_MANUAL_REVIEW", "VERIFIED", "APPROVED", Visitor.STATUS_RESCHEDULE_REQUIRED);
+
+    static boolean rejectable(Visitor v) {
+        return v.getStatus() != null && REJECTABLE_STATUSES.contains(v.getStatus());
+    }
+
+    static String alreadyClosedMessage(Visitor v) {
+        return "This booking is already closed (status: " + v.getStatus() + "); there is nothing to reject.";
     }
 
     // 👤 Who did it: the signed-in staff account (e.g. "guard"), recorded on check-ins, ban and ID checks and denials.

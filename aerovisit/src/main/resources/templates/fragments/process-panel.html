@@ -68,14 +68,12 @@
                 <!-- The ticks that apply (each one checked again by the server) -->
                 <form id="processForm" method="post" class="av-process-ticks">
                     <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
-                    <label class="av-process-tick" id="pxTickMatch">
-                        <input type="checkbox" name="matchConfirmed" value="true">
-                        <span>Billing number and amount match the receipt
-                            <small>Also compare it with the Landbank/GCash confirmation on the visitor's phone.</small></span>
-                    </label>
-                    <label class="av-process-tick" id="pxTickIds">
-                        <input type="checkbox" name="idsChecked" value="true">
-                        <span id="pxIdsText"></span>
+                    <!-- ☑️ One box for the receipt and the Free/Discounted IDs; its label comes from data-px-verify-text -->
+                    <label class="av-process-tick" id="pxTickVerify">
+                        <input type="checkbox" name="verifiedChecked" value="true">
+                        <span><span id="pxVerifyText"></span>
+                            <small id="pxVerifyMatch">Billing number and amount match the receipt. Also compare it with the Landbank/GCash confirmation on the visitor's phone.</small>
+                            <small id="pxIdsText"></small></span>
                     </label>
                     <label class="av-process-tick" id="pxTickBan">
                         <input type="checkbox" name="banChecked" value="true">

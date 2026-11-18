@@ -42,7 +42,7 @@ public class EmailService {
     String fromAddress = DEFAULT_FROM;
     static final String DEFAULT_FROM = "PAFMuseumOfficial@gmail.com";
 
-    // Public address of this site, used to build links in emails (set PUBLIC_BASE_URL when running behind ngrok or a domain)
+    // Public address of this site, used to build links in emails (set PUBLIC_BASE_URL to the public HTTPS address on AWS)
     private final String publicBaseUrl;
 
     // 🔒 Gmail App Password (AEROVISIT_MAIL_PASSWORD via spring.mail.password). When it is missing, sending fails at once
@@ -533,6 +533,51 @@ public class EmailService {
             System.out.println("💳 Payment expiry email successfully sent to " + n.to());
         } catch (MailDeliveryException e) {
             System.err.println("❌ Failed to send payment expiry email: " + e.getMessage());
+        }
+    }
+
+    // ---------- 🛂 Passport review (Foreign advance bookings) ----------
+
+    // The passport was received (or a new one replaced a rejected one): the museum reviews it, nothing to do yet
+    public void sendPassportReceived(String to, String name) {
+        Map<String, Object> vars = new java.util.HashMap<>();
+        vars.put("name", name);
+        try {
+            sendHtml(to, "PAF Aerospace Museum - Passport Received: Under Review", render("passport-received", vars));
+            System.out.println("🛂 Passport-received email successfully sent to " + to);
+        } catch (MailDeliveryException e) {
+            System.err.println("❌ Failed to send passport-received email: " + e.getMessage());
+            throw e;
+        }
+    }
+
+    // Approved: the one-time link into the booking form (bookUrl ends with the token), usable until `expires`
+    public void sendPassportApproved(String to, String name, String token, String expires) {
+        Map<String, Object> vars = new java.util.HashMap<>();
+        vars.put("name", name);
+        vars.put("bookUrl", publicBaseUrl + "/passport/continue?token=" + token);
+        vars.put("expires", expires);
+        try {
+            sendHtml(to, "PAF Aerospace Museum - Passport Approved: Book Your Visit", render("passport-approved", vars));
+            System.out.println("🛂 Passport-approved email successfully sent to " + to);
+        } catch (MailDeliveryException e) {
+            System.err.println("❌ Failed to send passport-approved email: " + e.getMessage());
+            throw e;
+        }
+    }
+
+    // Rejected: the reason, and the link to upload a new passport PDF (it replaces the rejected one)
+    public void sendPassportRejected(String to, String name, String reason, String token) {
+        Map<String, Object> vars = new java.util.HashMap<>();
+        vars.put("name", name);
+        vars.put("reason", reason);
+        vars.put("uploadUrl", publicBaseUrl + "/passport/resubmit?token=" + token);
+        try {
+            sendHtml(to, "PAF Aerospace Museum - Passport Not Accepted: Please Upload a New One", render("passport-rejected", vars));
+            System.out.println("🛂 Passport-rejected email successfully sent to " + to);
+        } catch (MailDeliveryException e) {
+            System.err.println("❌ Failed to send passport-rejected email: " + e.getMessage());
+            throw e;
         }
     }
 }

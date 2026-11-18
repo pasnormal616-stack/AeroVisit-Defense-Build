@@ -205,6 +205,7 @@
                     <li><b>Booking details:</b> full name, sex, age, address, affiliation, visitor type, contact number, email address,
                         visit date and time window, purpose of visit and group size. Only the booking holder's details are collected, not those of the rest of the group.</li>
                     <li><b>ID photo:</b> one photo of your valid ID, which you take or upload when you book (advance bookings and walk-ins alike).</li>
+                    <li><b>Passport copy (foreign visitors):</b> the PDF copy of your passport that you upload when you book as a foreign visitor.</li>
                     <li><b>Payment details:</b> your billing number, the amount due and the screenshot of your LANDBANK payment receipt that you upload.</li>
                     <li><b>Entry records:</b> your booking reference, gate check-in and check-out times, and the personnel who processed your entry.</li>
                     <li><b>Feedback:</b> ratings, comments and the museum area you choose to review.</li>
@@ -222,7 +223,8 @@
                 <p>Your ID photo is not read or analysed by any software: no text recognition, no face recognition and no biometric
                    data. It is only stored so that authorized museum personnel can look at it: advance bookings are reviewed and
                    approved by museum personnel before an entry pass is issued, and the guard compares it with your physical ID at
-                   the gate. Your ID photo and payment receipt are never sent to any outside service. Your name, email address and
+                   the gate. Your ID photo, passport copy and payment receipt are kept on the museum's own hosting and file storage
+                   at Amazon Web Services (AWS) and are not sent to any other outside service. Your name, email address and
                    contact number are compared with the list of visitors barred from the base for security violations.</p>
 
                 <h3>3. Sharing and disclosure</h3>
@@ -231,12 +233,14 @@
                 <ul>
                     <li>to Philippine Air Force security units and law enforcement agencies when required for base security, or when required by law; and</li>
                     <li>to the service provider that sends this portal's emails on our behalf: Google email services (booking emails and
-                        email verification codes).</li>
+                        email verification codes); and</li>
+                    <li>to Amazon Web Services (AWS), which hosts this portal and stores its records and uploaded files on our behalf.</li>
                 </ul>
 
                 <h3>4. Retention</h3>
                 <ul>
                     <li><b>CCTV footage</b> is kept for up to 60 days, unless it is needed for an ongoing security investigation.</li>
+                    <li><b>Passport copies</b> of foreign visitors are deleted automatically 30 days after the visit date, in the same way as ID photos.</li>
                     <li><b>ID photos and payment receipts</b> are deleted automatically 30 days after the visit date, once the visit is
                         completed, missed, rejected, cancelled or denied entry at the gate. The billing number and amount are kept as a
                         payment record.</li>
@@ -350,23 +354,23 @@
                 <ol class="vp-terms-list">
                     <li><h3>Confidentiality of Information</h3>
                         <p>All personal information you provide will be treated as confidential and used only for legitimate museum
-                           reservation, coordination, and administrative purposes, subject to the Data Privacy Act of 2012 and other
-                           applicable regulations. The ID photo and payment receipt you upload are deleted automatically 30 days
-                           after your visit date.</p></li>
-                    <li><h3>Payment Before Review</h3>
-                        <p>For an advance booking with an admission fee, you pay through LANDBANK and upload a screenshot of your
-                           receipt by the deadline shown on your payment page (it never falls after the start of your visit). Your
-                           seats are held until then; without a receipt by the deadline, the booking expires and the seats are
-                           released. The museum then reviews your booking and payment, and emails your Entry QR Code once approved.</p></li>
+                           reservation, coordination, and administrative purposes, subject to applicable data privacy laws and
+                           regulations.</p></li>
                     <li><h3>No-Refund Policy</h3>
                         <p>Reservation payments are non-refundable. Please review your booking details carefully before confirming your
                            reservation.</p></li>
                     <li><h3>Rescheduling Due to Museum Closure</h3>
                         <p>In the event of sudden command activities, an official holiday announcement, or other unforeseen circumstances
-                           requiring the museum to close, your reservation will be subject to rescheduling. You will be notified by email
-                           and asked to select another available date and time through Manage Booking.</p></li>
+                           requiring the museum to close, your reservation will be subject to rescheduling. You will be asked to select
+                           another available date and time.</p></li>
                     <li><h3>Visitor Acknowledgment</h3>
                         <p>By proceeding, you acknowledge that you have read, understood, and agreed to these Terms and Conditions.</p></li>
+                    <li><h3>Advance Booking / Group Tour Payment Policy</h3>
+                        <p>All payments for Advance Booking / Group Tours must be completed in advance through the designated online
+                           payment portal. Payment at the museum counter is strictly prohibited. Same-day payment on the scheduled date
+                           of visit is also not allowed. Visitors must settle the required payment before their scheduled visit.</p></li>
+                    <li><h3>Proper Dress Code</h3>
+                        <p>Visitors must dress appropriately when entering the museum. Wearing slippers is not allowed.</p></li>
                 </ol>
                 <p class="vp-terms-related">These terms include the museum guidelines, the
                     <a href="#vpTermsModal" role="button" data-terms-swap="#vpTermsModal">Terms of Entry &amp; Base Regulations</a> and the

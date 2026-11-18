@@ -50,6 +50,10 @@ public class SecurityConfig {
                 // through its unguessable emailed token or the visitor's own Manage Booking session. CSRF applies.
                 .requestMatchers("/payment", "/payment/**").permitAll()
 
+                // 🛂 Foreign visitors' passport submission and its emailed links (PassportController): public paths, CSRF
+                // applies, RateLimitFilter limits them per IP; a link opens only its own review by its unguessable token
+                .requestMatchers("/passport", "/passport/**").permitAll()
+
                 // 📧 Booking-form email verification codes (OtpController): public, POST only
                 .requestMatchers(HttpMethod.POST, "/otp/send", "/otp/verify").permitAll()
 
@@ -73,6 +77,8 @@ public class SecurityConfig {
                 // 💳 Payment receipts are never served from /uploads, for anyone: only through
                 // /admin/payments/{id}/receipt, which checks the role AND the booking (PaymentAdminController.canViewReceipt)
                 .requestMatchers("/uploads/receipt-*").denyAll()
+                // 🛂 ...and passport copies likewise: only through PassportAdminController (role AND booking checked)
+                .requestMatchers("/uploads/passport-*").denyAll()
 
                 // 🔒 Visitor ID photos and entry QR codes: staff only (file names are guessable, e.g. QR_5.png)
                 .requestMatchers("/uploads/**").hasAnyRole("GUARD", "DIRECTOR")
@@ -81,7 +87,7 @@ public class SecurityConfig {
                 // PaymentAdminController.canVerify lets a Guard act on today's WALK-IN bookings only (403 otherwise)
                 .requestMatchers("/admin/payments/*/receipt", "/admin/payments/*/verify", "/admin/payments/*/reject").hasAnyRole("GUARD", "DIRECTOR")
                 // ...anything else under payments, and the payment and walk-in settings: DIRECTOR ONLY
-                .requestMatchers("/admin/payments/**", "/admin/settings/payment", "/admin/settings/walk-in").hasRole("DIRECTOR")
+                .requestMatchers("/admin/payments/**", "/admin/settings/payment", "/admin/settings/walk-in", "/admin/settings/walk-in/**").hasRole("DIRECTOR")
 
                 // 📝 FEEDBACK EMAIL DELAY (DIRECTOR ONLY): minutes after the time window ends
                 .requestMatchers("/admin/settings/feedback").hasRole("DIRECTOR")
@@ -110,6 +116,9 @@ public class SecurityConfig {
 
                 // 3d-2. ♻️ REINSTATE BOOKING (DIRECTOR ONLY): brings a payment-expired booking back as paid + approved
                 .requestMatchers("/admin/bookings/*/reinstate", "/admin/bookings/*/reinstate-options").hasRole("DIRECTOR")
+
+                // 3d-3. 🛂 PASSPORT REVIEW (DIRECTOR ONLY): Foreign visitors' passports before an advance booking
+                .requestMatchers("/admin/passports", "/admin/passports/**").hasRole("DIRECTOR")
 
                 // 3e. 🛡️ GUARD DASHBOARD: today's arrivals, visitors inside and visitors who left (the Director may open it too)
                 .requestMatchers("/guard/dashboard", "/guard/dashboard/**").hasAnyRole("GUARD", "DIRECTOR")

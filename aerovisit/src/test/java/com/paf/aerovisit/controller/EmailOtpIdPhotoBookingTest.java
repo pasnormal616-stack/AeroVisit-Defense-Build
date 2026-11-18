@@ -156,7 +156,7 @@ class EmailOtpIdPhotoBookingTest {
         assertThat(saved.getIdImageUrl()).isNull();
         assertThat(saved.getIdCardImageUrl()).doesNotContain("id-card");
         assertThat(Files.readAllBytes(Paths.get("uploads").resolve(saved.getIdCardImageUrl()))).isEqualTo(ID_CARD);
-        assertThat(saved.getTermsVersion()).isEqualTo("2026-11d");
+        assertThat(saved.getTermsVersion()).isEqualTo(VisitorPortalController.TERMS_VERSION);
         verify(otpService).consume(EMAIL);
     }
 

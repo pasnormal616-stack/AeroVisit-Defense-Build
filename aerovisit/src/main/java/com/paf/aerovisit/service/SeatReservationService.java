@@ -40,10 +40,26 @@ public class SeatReservationService {
 
     // Saves the booking only if its group still fits its slot, counting seat-holding bookings (APPROVED / CHECKED-IN /
     // CHECKED-OUT) other than this one, the same rule as the controllers' checks. The lock is taken first, so the
-    // count that follows is read after any booking that held the lock before us has committed.
+    // count that follows is read after any booking that held the lock before us has committed. An existing booking that
+    // carries the row its request read (Visitor.expectRow, security fix M4) is also checked as below.
     @Transactional
     public Visitor saveIfSeatsRemain(Visitor visitor) {
+        VisitorRowGuard.Snapshot expected = visitor.expectedRow();
+        visitor.expectRow(null); // used once
+        return saveIfSeatsRemain(visitor, expected);
+    }
+
+    // 🔒 The same, for an EXISTING booking changed by a request that read it earlier (Approve, Force Approve, Manage
+    // Booking reschedule; security fix M4): after the slot lock, the booking's own row is locked and must still be as
+    // read (`expected`), else StaleBookingException and nothing is saved. Slot first, then visitor: the same order
+    // everywhere, so two requests can't wait on each other.
+    @Transactional
+    public Visitor saveIfSeatsRemain(Visitor visitor, VisitorRowGuard.Snapshot expected) {
         List<BookingSlot> slots = bookingRepo.lockBySlotDateAndTimeWindow(visitor.getVisitDate(), visitor.getTimeWindow());
+        if (expected != null && visitor.getId() != null
+                && !expected.matches(repo.lockById(visitor.getId()).orElse(null))) {
+            throw new VisitorRowGuard.StaleBookingException();
+        }
         int capacity = slots.stream().mapToInt(BookingSlot::getMaxCapacity).sum();
         Long held = repo.sumSeatsHeld(visitor.getVisitDate(), visitor.getTimeWindow(), Visitor.SEAT_HOLDING_STATUSES, visitor.getId());
         if ((held == null ? 0 : held) + Math.max(1, visitor.getGroupSize()) > capacity) {

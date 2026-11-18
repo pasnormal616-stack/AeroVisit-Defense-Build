@@ -143,9 +143,32 @@
                         <button type="button" class="vp-btn vp-btn--primary" id="termsGateBtn" data-terms-open>Read Terms and Conditions</button>
                     </div>
                     <div class="vp-terms-locked" id="termsLockedRegion" inert aria-disabled="true">
+                    <!-- 🛂 NATIONALITY (required, nothing preselected): the steps below stay hidden until it is chosen. Local is
+                         the usual flow. Foreign is Advance Booking only: a passport is sent for review first (#passportPanel)
+                         and there is no Foreign walk-in. The choice is saved with the booking and can't be changed afterwards. -->
+                    <div class="vp-booking-type" id="nationalityChoice" role="group" aria-label="Nationality" th:classappend="${foreignApproved != null} ? 'd-none'">
+                        <button type="button" class="vp-type-card" data-nationality="LOCAL" aria-pressed="false">
+                            <i class="bi bi-house-door" aria-hidden="true"></i>
+                            <span><b>Local</b><small>Filipino citizen or resident of the Philippines.</small></span>
+                        </button>
+                        <button type="button" class="vp-type-card" data-nationality="FOREIGN" aria-pressed="false">
+                            <i class="bi bi-globe2" aria-hidden="true"></i>
+                            <span><b>Foreign</b><small>Visiting from abroad. Your passport is checked before your visit is booked.</small></span>
+                        </button>
+                    </div>
+                    <p class="vp-hint mb-3" id="nationalityHint" th:classappend="${foreignApproved != null} ? 'd-none'"><i class="bi bi-info-circle me-1" aria-hidden="true"></i>Choose your nationality to continue.</p>
+                    <!-- 🛂 Opened from a passport-approval email: Foreign + Advance, with the reviewed name, email and phone -->
+                    <div th:if="${foreignApproved != null}" id="foreignApproved" class="vp-alert vp-alert--ok mb-3" role="status"
+                         th:attr="data-name=${foreignApproved.fullName},data-email=${foreignApproved.email},data-phone=${foreignApproved.contactNumber},data-resume-date=${resumeDate},data-resume-window=${resumeWindow}">
+                        <i class="bi bi-passport" aria-hidden="true"></i>
+                        <span>Passport approved for <b th:text="${foreignApproved.fullName}">Juan Dela Cruz</b>
+                            (<span th:text="${foreignApproved.email}">juan@example.com</span>). Choose your date and time below,
+                            then complete your booking as usual.</span>
+                    </div>
+                    <span th:if="${passportRetry}" id="passportRetry" hidden></span>
                     <!-- 🚶 ADVANCE BOOKING or WALK-IN (TODAY). Walk-in is offered only while today has a window with seats and
                          20+ minutes left (VisitorPortalController.showForm: walkIn); otherwise the card says why. -->
-                    <div class="vp-booking-type" id="bookingTypeChoice" role="group" aria-label="How are you visiting?">
+                    <div class="vp-booking-type" id="bookingTypeChoice" role="group" aria-label="How are you visiting?" th:classappend="${foreignApproved != null} ? 'd-none'">
                         <button type="button" class="vp-type-card is-picked" data-booking-type="ADVANCE" aria-pressed="true">
                             <i class="bi bi-calendar-check" aria-hidden="true"></i>
                             <span><b>Advance Booking</b><small>Pick a date. The museum reviews your request and emails your entry QR code.</small></span>
@@ -164,6 +187,61 @@
                         <li><button type="button" class="vp-step-pill" disabled><span class="vp-step-num">02</span><span class="vp-step-text"><b>Visitor Profile</b><small>Identity &amp; contact</small></span></button></li>
                         <li><button type="button" class="vp-step-pill" disabled><span class="vp-step-num">03</span><span class="vp-step-text"><b>Clearance</b><small>Party, ID &amp; consent</small></span></button></li>
                     </ol>
+
+                    <!-- 🛂 FOREIGN + ADVANCE BOOKING: no slot yet. The passport PDF and contact details go to the museum for
+                         review (POST /passport/submit, PassportController); the approval email has the link to book. -->
+                    <section class="vp-step is-active d-none" id="passportPanel" aria-labelledby="passportTitle">
+                        <form th:action="@{/passport/submit}" method="post" enctype="multipart/form-data" id="passportForm">
+                            <input type="hidden" name="termsAccepted" id="passportTermsInput" value="">
+                            <div class="vp-step-body">
+                                <div class="vp-step-head">
+                                    <div>
+                                        <h2 id="passportTitle" tabindex="-1">Passport review first</h2>
+                                        <p>Foreign visitors send a copy of their passport before booking. Once the museum approves it, we email
+                                            you a link to choose your date and time (valid for 14 days, for one visit). No time slot is reserved yet.</p>
+                                    </div>
+                                </div>
+                                <div class="vp-field">
+                                    <label for="passportNameInput" class="form-label">Full name as on your passport <span class="req">*</span></label>
+                                    <input type="text" id="passportNameInput" name="fullName" class="form-control" maxlength="200" autocomplete="name" required>
+                                </div>
+                                <div class="vp-grid-2">
+                                    <div class="vp-field">
+                                        <label for="passportEmailInput" class="form-label">Email Address <span class="req">*</span></label>
+                                        <input type="email" id="passportEmailInput" name="email" class="form-control" maxlength="200" autocomplete="email" required>
+                                    </div>
+                                    <div class="vp-field">
+                                        <label for="passportPhoneInput" class="form-label">Contact Number <span class="req">*</span></label>
+                                        <input type="text" id="passportPhoneInput" name="contactNumber" class="form-control" maxlength="40" autocomplete="tel"
+                                               placeholder="+CC number" required>
+                                    </div>
+                                </div>
+                                <!-- 📧 The same email code as the booking form (POST /otp/send + /otp/verify); /passport/submit checks it -->
+                                <div class="vp-field vp-otp" id="passportOtpField">
+                                    <label for="passportOtpCode" class="form-label">Email Verification Code <span class="req">*</span></label>
+                                    <div class="vp-otp-row">
+                                        <button type="button" class="vp-btn vp-btn--ghost" id="passportOtpSend"><i class="bi bi-envelope-check"></i> Send Code</button>
+                                        <input type="text" id="passportOtpCode" class="form-control vp-otp-code" inputmode="numeric" autocomplete="one-time-code"
+                                               maxlength="6" pattern="[0-9]{6}" placeholder="6-digit code" aria-describedby="passportOtpStatus" required>
+                                        <button type="button" class="vp-btn vp-btn--primary" id="passportOtpVerify" disabled>Verify</button>
+                                    </div>
+                                    <div class="form-text" id="passportOtpStatus" aria-live="polite">We will email a 6-digit code to confirm this address. It expires in 5 minutes.</div>
+                                </div>
+                                <div class="vp-field">
+                                    <label for="passportFileInput" class="form-label"><i class="bi bi-passport me-1"></i>Passport copy (PDF) <span class="req">*</span></label>
+                                    <input type="file" id="passportFileInput" name="passportFile" class="form-control" accept="application/pdf,.pdf" required>
+                                    <div class="form-text">The photo page of your passport, as one PDF of 15 MB or less (not password-protected).
+                                        <i class="bi bi-lock"></i> Only museum staff see it, and it is deleted 30 days after your visit.</div>
+                                </div>
+                            </div>
+                            <div class="vp-step-actions">
+                                <span class="vp-hint"><i class="bi bi-info-circle me-1"></i>You will get an email once your passport has been reviewed.</span>
+                                <button type="submit" class="vp-btn vp-btn--gold" id="passportSubmitBtn">
+                                    Send for Review <span class="vp-btn-icon"><i class="bi bi-send"></i></span>
+                                </button>
+                            </div>
+                        </form>
+                    </section>
 
                     <div class="vp-steps" id="bookingSteps">
                         <div id="formCard">
@@ -204,7 +282,7 @@
                                         </div>
                                         <!-- 🎌 The full "Closed: <holiday>" text for the closed days of the month shown (a phone cell is too narrow) -->
                                         <ul class="vp-closed-note" id="closedDaysNote" hidden></ul>
-                                        <p class="vp-hint mt-2" id="walkInNudge">
+                                        <p class="vp-hint mt-2" id="walkInNudge" th:classappend="${foreignApproved != null} ? 'd-none'">
                                             <i class="bi bi-person-walking me-1" aria-hidden="true"></i>Visiting today? Choose Walk-in (Today) instead.
                                             <button type="button" class="vp-btn vp-btn--ghost vp-btn--sm ms-1" data-switch-walkin th:if="${walkIn.open()}">Switch to Walk-in</button>
                                         </p>
@@ -241,6 +319,8 @@
                                 <input type="hidden" name="kycNonce" th:value="${kycNonce}">
                                 <!-- 🚶 WALK_IN for a walk-in; empty = Advance Booking (set by the choice cards above) -->
                                 <input type="hidden" name="bookingType" id="bookingTypeInput" value="">
+                                <!-- 🛂 LOCAL or FOREIGN (set by the Nationality cards above) -->
+                                <input type="hidden" name="nationality" id="nationalityInput" value="">
 
                                 <!-- STEP 2: VISITOR PROFILE -->
                                 <section class="vp-step" aria-labelledby="stepTitle1">
@@ -262,6 +342,14 @@
                                                 <input type="text" class="form-control bg-light" id="formTimeWindow" th:field="*{timeWindow}" readonly>
                                             </div>
                                         </div>
+                                        <!-- 🔑 WALK-IN ONLY: today's code, posted at the gate (only visitors at the museum can book Walk-in).
+                                             Disabled (not sent) unless Walk-in is chosen; /save checks it. -->
+                                        <div class="vp-field d-none" id="walkInCodeBlock" th:if="${walkInCodeRequired}">
+                                            <label for="walkInCodeInput" class="form-label"><i class="bi bi-key me-1"></i>Today's walk-in code <span class="req">*</span></label>
+                                            <input type="text" id="walkInCodeInput" name="walkInCode" class="form-control text-uppercase" maxlength="12"
+                                                   autocomplete="off" autocapitalize="characters" spellcheck="false" disabled required>
+                                            <div class="form-text">Posted at the museum gate. Ask the guard if you can't see it.</div>
+                                        </div>
 
                                         <div class="vp-divider"></div>
 
@@ -280,7 +368,8 @@
                                             </select>
                                         </div>
 
-                                        <div class="vp-field">
+                                        <!-- 🛂 Approval link: name, email and phone come from the reviewed passport (hidden, still sent) -->
+                                        <div class="vp-field" id="nameBlock" th:classappend="${foreignApproved != null} ? 'd-none'">
                                             <label for="nameInput" class="form-label">Last Name, First Name Middle Initial <span class="req">*</span></label>
                                             <input type="text" id="nameInput" class="form-control" th:field="*{fullName}" placeholder="(Rank/Full Name/Serial Number/BOS For AFP Personnel)" required>
                                         </div>
@@ -311,7 +400,7 @@
                                             </div>
                                         </div>
 
-                                        <div class="vp-grid-2">
+                                        <div class="vp-grid-2" id="contactBlock" th:classappend="${foreignApproved != null} ? 'd-none'">
                                             <div class="vp-field">
                                                 <label for="emailInput" class="form-label">Email Address <span class="req">*</span></label>
                                                 <input type="email" id="emailInput" class="form-control" th:field="*{email}" placeholder="Email for QR Code" required>
@@ -679,6 +768,46 @@
 
             maxAllowedForSelectedDate = slot.remaining;
             syncAdmission();
+            saveDraft(slot);
+        }
+
+        // 💾 APPROVAL LINK PROGRESS: on a page opened from a passport-approval link, each advance date + time picked is
+        // kept on the approval itself (POST /passport/draft), so reopening the link (refresh, another tab or device)
+        // resumes there. Fire and forget: booking works the same if this fails.
+        var approvedEl = document.getElementById('foreignApproved');
+        var resumeDate = approvedEl ? approvedEl.getAttribute('data-resume-date') : null;
+        var resumeWindow = approvedEl ? approvedEl.getAttribute('data-resume-window') : null;
+        var resuming = false;
+        function saveDraft(slot) {
+            if (!approvedEl || resuming || walkInMode || !slot.date || !slot.timeWindow) return;
+            fetch('/passport/draft', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: window.AeroCsrf ? AeroCsrf.headers({ 'Content-Type': 'application/x-www-form-urlencoded' })
+                                         : { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ visitDate: slot.date, timeWindow: slot.timeWindow })
+            }).catch(function () {});
+        }
+        // Reselects the saved date and time once, if that window is still on the calendar with seats left
+        var resumed = false;
+        function resumeDraft() {
+            if (resumed || !resumeDate || !resumeWindow || !calendar || !slotsByDate[resumeDate]) return;
+            var daySlots = slotsByDate[resumeDate];
+            var index = -1;
+            daySlots.forEach(function (s, i) { if (index < 0 && (s.timeWindow || 'Standard Shift') === resumeWindow) index = i; });
+            if (index < 0 || daySlots[index].remaining <= 0) return;
+            calendar.gotoDate(resumeDate);
+            var cell = calendarEl.querySelector('.fc-daygrid-day[data-date="' + resumeDate + '"]');
+            if (!cell) return;
+            resumed = true;
+            resuming = true; // already saved: don't post it again
+            pickDay(resumeDate, cell);
+            var btn = timeList.querySelectorAll('.vp-time-btn')[index];
+            if (btn) {
+                btn.setAttribute('aria-pressed', 'true');
+                selectSlot(daySlots[index]);
+            }
+            resuming = false;
         }
 
         // A day without a time yet: relock the form, as on first load (visitor.js resets the summary and Continue)
@@ -770,12 +899,13 @@
                 }
             });
             calendar.render();
+            setTimeout(resumeDraft, 0);
         }
 
         var bookTab = document.getElementById('book-tab');
         if (bookTab) {
             bookTab.addEventListener('shown.bs.tab', function () {
-                if(calendar) { calendar.render(); }
+                if(calendar) { calendar.render(); resumeDraft(); }
             });
         }
 
@@ -837,6 +967,11 @@
             if (typeInput) typeInput.value = walkIn ? 'WALK_IN' : '';
             if (advancePicker) advancePicker.classList.toggle('d-none', walkIn);
             if (walkInPicker) walkInPicker.classList.toggle('d-none', !walkIn);
+            var codeBlock = document.getElementById('walkInCodeBlock');
+            if (codeBlock) {
+                codeBlock.classList.toggle('d-none', !walkIn);
+                document.getElementById('walkInCodeInput').disabled = !walkIn;
+            }
             if (timePicker) timePicker.classList.add('d-none');
             pickedDate = null;
             calendarEl && calendarEl.querySelectorAll('.is-picked').forEach(function (c) { c.classList.remove('is-picked'); c.setAttribute('aria-pressed', 'false'); });
@@ -893,6 +1028,14 @@
     // 📰 The page opens on News; after a refused booking it opens on Book a Visit instead, so the visitor sees the form
     (function () {
         if (location.hash === '#manage' || !window.bootstrap) return;
+        var tabBtn = document.getElementById('book-tab');
+        if (tabBtn) bootstrap.Tab.getOrCreateInstance(tabBtn).show();
+    })();
+</script>
+<script th:if="${foreignApproved != null and error == null}">
+    // 🛂 Opened from a passport-approval link: straight to Book a Visit (step 1, the date and time)
+    (function () {
+        if (!window.bootstrap) return;
         var tabBtn = document.getElementById('book-tab');
         if (tabBtn) bootstrap.Tab.getOrCreateInstance(tabBtn).show();
     })();
@@ -1135,6 +1278,173 @@
     gallery.addEventListener('change', function () { picked(gallery); });
     target.addEventListener('invalid', function () { if (!target.value) tell(NEEDS_PHOTO, 'error'); });
     clear();
+})();
+</script>
+
+<!-- 🛂 NATIONALITY: Local = the usual steps, unchanged (Advance or Walk-in). Foreign = Advance only: no Advance/Walk-in
+     choice, the passport form (#passportPanel) instead of the steps, unless this page was opened from a passport-approval
+     link (#foreignApproved: the reviewed details filled in and hidden, no email code, no ID photo). Inputs that don't
+     apply are disabled (neither checked nor sent); the server decides again from the posted nationality and refuses a
+     Foreign walk-in. Plain script, not th:inline. -->
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var choice = document.getElementById('nationalityChoice');
+    var input = document.getElementById('nationalityInput');
+    if (!choice || !input) return;
+    var $ = function (id) { return document.getElementById(id); };
+    var cards = Array.prototype.slice.call(choice.querySelectorAll('[data-nationality]'));
+    var typeInput = $('bookingTypeInput'), stepper = document.querySelector('.vp-stepper');
+    var idInput = $('idCardImageInput'), idPickers = [$('idPhotoCamera'), $('idPhotoGallery')];
+    var approved = $('foreignApproved');
+    var nationality = '';
+    var savedId = null; // the ID photo input's state while Foreign hides it
+
+    function walkIn() { return !!typeInput && typeInput.value === 'WALK_IN'; }
+    function show(el, on) { if (el) el.classList.toggle('d-none', !on); }
+
+    function sync() {
+        var chosen = nationality !== '', foreign = nationality === 'FOREIGN';
+        if (foreign && walkIn()) {
+            // 🛂 Foreign is Advance only: back to Advance Booking (its click handler below runs sync() again)
+            var advanceCard = document.querySelector('[data-booking-type="ADVANCE"]');
+            if (advanceCard) { advanceCard.click(); return; }
+        }
+        var passportFirst = foreign && !approved;
+        input.value = nationality;
+        cards.forEach(function (c) {
+            var on = c.getAttribute('data-nationality') === nationality;
+            c.classList.toggle('is-picked', on);
+            c.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+        show($('nationalityHint'), !chosen);
+        show($('bookingTypeChoice'), chosen && !foreign); // 🛂 Foreign: Advance only, no Walk-in choice
+        show($('walkInNudge'), !foreign);
+        var stepsWereHidden = $('bookingSteps').classList.contains('d-none');
+        show(stepper, chosen && !passportFirst);
+        show($('bookingSteps'), chosen && !passportFirst);
+        show($('passportPanel'), passportFirst);
+        // 📅 The calendar was laid out while hidden: a resize makes FullCalendar measure itself again
+        if (stepsWereHidden && chosen && !passportFirst) setTimeout(function () { window.dispatchEvent(new Event('resize')); }, 0);
+
+        // 🪪 Foreign: no ID photo (the passport is the ID)
+        if (foreign && savedId === null && idInput) {
+            savedId = { disabled: idInput.disabled, names: idPickers.map(function (p) { return p ? p.getAttribute('name') : null; }) };
+            idInput.disabled = true;
+            idPickers.forEach(function (p) { if (p) p.removeAttribute('name'); });
+        } else if (!foreign && savedId !== null && idInput) {
+            idInput.disabled = savedId.disabled;
+            idPickers.forEach(function (p, i) { if (p && savedId.names[i]) p.setAttribute('name', savedId.names[i]); });
+            savedId = null;
+        }
+        show($('idPhotoBlock'), !foreign);
+    }
+
+    function pick(value) {
+        nationality = value;
+        sync();
+    }
+    cards.forEach(function (card) {
+        card.addEventListener('click', function () { if (!card.disabled) pick(card.getAttribute('data-nationality')); });
+    });
+    // Advance / Walk-in: re-checked for Foreign (registered after the booking-type script, so this runs after it)
+    document.querySelectorAll('[data-booking-type], [data-switch-walkin]').forEach(function (el) {
+        el.addEventListener('click', function () { if (nationality) sync(); });
+    });
+
+    // The passport form carries the same Terms consent as the booking form
+    var passportForm = $('passportForm');
+    if (passportForm) passportForm.addEventListener('submit', function () {
+        $('passportTermsInput').value = ($('termsAcceptedInput') || {}).value || '';
+    });
+
+    if (approved) {
+        // 🛂 Opened from the approval link: Foreign + Advance only (both choices hidden), the reviewed details as they are
+        // (hidden, still sent), no email code, no passport upload: the visitor starts at the date and time
+        pick('FOREIGN');
+        cards.forEach(function (c) { c.disabled = c.getAttribute('data-nationality') !== 'FOREIGN'; });
+        var walkInCard = document.querySelector('[data-booking-type="WALK_IN"]');
+        if (walkInCard) walkInCard.disabled = true;
+        [ ['nameInput', 'data-name'], ['emailInput', 'data-email'], ['phoneInput', 'data-phone'] ].forEach(function (pair) {
+            var field = $(pair[0]);
+            if (!field) return;
+            field.value = approved.getAttribute(pair[1]) || '';
+            field.readOnly = true;
+        });
+        var otpField = $('otpField'), otpCode = $('otpCodeInput');
+        if (otpCode) { otpCode.setCustomValidity(''); otpCode.disabled = true; }
+        show(otpField, false);
+    } else if ($('passportRetry')) {
+        // A refused passport submission comes back to the same form
+        pick('FOREIGN');
+    } else {
+        sync(); // nothing chosen yet: only the Nationality cards show
+    }
+});
+</script>
+
+<!-- 📧 Email code for the passport form: the same /otp/send + /otp/verify as the booking form, on its own fields -->
+<script>
+(function () {
+    var email = document.getElementById('passportEmailInput');
+    var sendBtn = document.getElementById('passportOtpSend');
+    var codeInput = document.getElementById('passportOtpCode');
+    var verifyBtn = document.getElementById('passportOtpVerify');
+    var status = document.getElementById('passportOtpStatus');
+    var field = document.getElementById('passportOtpField');
+    if (!email || !sendBtn || !codeInput || !verifyBtn || !status) return;
+    var NEEDS_CODE = 'Please verify your email address with the 6-digit code we send you.';
+    var verifiedEmail = null, busy = false;
+
+    function current() { return email.value.trim().toLowerCase(); }
+    function ok() { return verifiedEmail !== null && verifiedEmail === current(); }
+    function say(text, tone) { status.textContent = text; status.className = 'form-text' + (tone ? ' vp-otp-' + tone : ''); }
+    function refresh() {
+        codeInput.setCustomValidity(ok() ? '' : NEEDS_CODE);
+        codeInput.readOnly = ok();
+        field.classList.toggle('is-verified', ok());
+        verifyBtn.disabled = ok() || busy || !/^[0-9]{6}$/.test(codeInput.value);
+        sendBtn.disabled = ok() || busy;
+    }
+    function post(url, data) {
+        return fetch(url, {
+            method: 'POST',
+            headers: AeroCsrf.headers({ 'Content-Type': 'application/x-www-form-urlencoded' }),
+            body: new URLSearchParams(data)
+        }).then(function (res) {
+            return res.json().catch(function () { return { ok: false, message: 'Unexpected server response. Please try again.' }; });
+        });
+    }
+    sendBtn.addEventListener('click', function () {
+        if (!email.checkValidity() || !email.value.trim()) { email.reportValidity(); return; }
+        busy = true; refresh(); say('Sending code…');
+        post('/otp/send', { email: email.value.trim() }).then(function (res) {
+            say(res.message, res.ok ? 'ok' : 'error');
+            if (res.ok) { codeInput.value = ''; codeInput.focus(); }
+        }).catch(function () { say('Network error: the code could not be sent. Please try again.', 'error'); })
+          .then(function () { busy = false; refresh(); });
+    });
+    function verify() {
+        if (busy || ok() || !/^[0-9]{6}$/.test(codeInput.value)) return;
+        busy = true; refresh(); say('Checking code…');
+        var forEmail = current();
+        post('/otp/verify', { email: email.value.trim(), code: codeInput.value }).then(function (res) {
+            if (res.ok) { verifiedEmail = forEmail; say('✓ Email verified.', 'ok'); } else { say(res.message, 'error'); }
+        }).catch(function () { say('Network error: the code could not be checked. Please try again.', 'error'); })
+          .then(function () { busy = false; refresh(); });
+    }
+    verifyBtn.addEventListener('click', verify);
+    codeInput.addEventListener('input', function () {
+        var digits = codeInput.value.replace(/[^0-9]/g, '').slice(0, 6);
+        if (digits !== codeInput.value) codeInput.value = digits;
+        refresh();
+        if (digits.length === 6) verify();
+    });
+    codeInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); verify(); } });
+    email.addEventListener('input', function () {
+        if (verifiedEmail !== null && !ok()) { verifiedEmail = null; codeInput.value = ''; say('Email changed: please send a code to the new address.', 'error'); }
+        refresh();
+    });
+    refresh();
 })();
 </script>
 </body>

@@ -41,6 +41,10 @@
             <a th:unless="${isGuard}" href="/admin" class="av-nav-link" th:classappend="${active == 'manifest' or active == 'approvals' or active == 'audit'} ? 'is-active'" th:attr="aria-current=${active == 'manifest' or active == 'approvals' or active == 'audit'} ? 'page'">
                 <i class="bi bi-people"></i><span>Visitor Dashboard</span>
             </a>
+            <!-- 🛂 Foreign visitors' passports waiting for review before they may book (Director only) -->
+            <a th:if="${isDirector}" href="/admin/passports" class="av-nav-link" th:classappend="${active == 'passports'} ? 'is-active'" th:attr="aria-current=${active == 'passports'} ? 'page'">
+                <i class="bi bi-passport"></i><span>Passport Review</span>
+            </a>
             <!-- 🛡️ A Guard never sees the full manifest: their dashboard is today's gate (least privilege, enforced server-side) -->
             <a th:if="${isGuard}" href="/guard/dashboard" class="av-nav-link" th:classappend="${active == 'gate'} ? 'is-active'" th:attr="aria-current=${active == 'gate'} ? 'page'">
                 <i class="bi bi-shield-check"></i><span>Gate Dashboard</span>
@@ -210,6 +214,7 @@
                 BOOKING_REINSTATED:     ['bi-arrow-counterclockwise', 'success', true],
                 UNREVIEWED_PAID:        ['bi-calendar-event', 'gold', true],
                 WALK_IN_PAYMENT_PROOF:  ['bi-receipt', 'primary', true],
+                PASSPORT_SUBMITTED:     ['bi-passport', 'primary', true],
                 BOOKING_RESCHEDULED:    ['bi-arrow-repeat', 'info', true],
                 BOOKING_CANCELLED:      ['bi-calendar-x', 'neutral', true],
                 SLOT_FILLING:           ['bi-hourglass-split', 'gold', false],

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:replace="~{fragments/visitor :: head}"></th:block>
+    <title>AeroVisit - Passport Received</title>
+</head>
+<body class="vp vp--immersive">
+
+<th:block th:replace="~{fragments/visitor :: backdrop}"></th:block>
+
+<th:block th:replace="~{fragments/visitor :: topnav(false)}"></th:block>
+
+<!-- 🛂 After a Foreign visitor's passport submission (PassportController): nothing is booked yet -->
+<div class="vp-page">
+    <div class="vp-page-band" aria-hidden="true"></div>
+    <main class="vp-page-main">
+        <div class="container">
+            <div class="vp-narrow">
+                <div class="vp-bezel vp-reveal">
+                    <div class="vp-bezel-core vp-card-pad text-center">
+                        <div class="vp-status-ico vp-status-ico--ok"><i class="bi bi-passport"></i></div>
+                        <h1 class="vp-title-xl">Passport received</h1>
+                        <p class="vp-lead fw-semibold">Your passport is now under review by the museum.</p>
+                        <p>We sent a confirmation to <b th:text="${passportEmail}">you@example.com</b>. Once your passport has been reviewed, we will
+                            email you a link to choose your visit date and time, or tell you what to correct.</p>
+                        <p class="vp-foot-note">No time slot has been reserved yet. If you don't see our emails, check your Spam or Junk folder.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<th:block th:replace="~{fragments/visitor :: scripts}"></th:block>
+</body>
+</html>

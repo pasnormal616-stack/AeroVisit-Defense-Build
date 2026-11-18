@@ -44,6 +44,8 @@ public class AdminNotification {
     public static final String TYPE_ARRIVING_TODAY = "ARRIVING_TODAY";
     // Older rows only: large group at booking time (replaced by booking requests and arriving-today)
     public static final String TYPE_LARGE_GROUP = "LARGE_GROUP";
+    // 🛂 A Foreign visitor sent (or re-sent) a passport for review; links to the Director-only Passport Review page
+    public static final String TYPE_PASSPORT_SUBMITTED = "PASSPORT_SUBMITTED";
 
     // Booking requests: resolved by themselves once the booking leaves the approval queue
     public static final List<String> REQUEST_TYPES = List.of(TYPE_BOOKING_REQUEST, TYPE_MASTER_BOOKING_REQUEST, TYPE_BOOKING_RESCHEDULED);
@@ -56,7 +58,7 @@ public class AdminNotification {
     public static final List<String> DIRECTOR_TYPES = List.of(TYPE_BOOKING_REQUEST, TYPE_MASTER_BOOKING_REQUEST,
             TYPE_BOOKING_RESCHEDULED, TYPE_BOOKING_CANCELLED, TYPE_SLOT_FILLING, TYPE_GATE_DENIED, TYPE_BANNED_FACE_ATTEMPT,
             TYPE_EMAIL_FAILED, TYPE_AI_OFFLINE, TYPE_NEGATIVE_FEEDBACK, TYPE_ARRIVING_TODAY, TYPE_LARGE_GROUP,
-            TYPE_PAYMENT_PROOF, TYPE_PAYMENT_EXPIRED, TYPE_BOOKING_REINSTATED);
+            TYPE_PAYMENT_PROOF, TYPE_PAYMENT_EXPIRED, TYPE_BOOKING_REINSTATED, TYPE_PASSPORT_SUBMITTED);
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

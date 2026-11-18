@@ -245,9 +245,10 @@ public class AeroVisitAutomationEngine {
         int count = 0;
         for (Visitor v : repo.findByBookingCategoryAndStatusAndCheckInDueAtBefore(Visitor.CATEGORY_WALK_IN, "APPROVED", now)) {
             if (!v.walkIn() || !"APPROVED".equals(v.getStatus()) || v.getCheckInDueAt() == null || !now.isAfter(v.getCheckInDueAt())) continue;
+            // 🔒 Only if still APPROVED in the database: a guard who checked the group in after this list was read wins
+            if (repo.releaseIfStatus(v.getId(), "APPROVED", "NO_SHOW") != 1) continue;
             v.setStatus("NO_SHOW");
             v.setQrCodeUrl(null);
-            repo.save(v);
             count++;
         }
         return count;
@@ -260,9 +261,11 @@ public class AeroVisitAutomationEngine {
             if (v.getStatus() == null || !EXPIRABLE_BOOKING_STATUSES.contains(v.getStatus())
                     || !EXPIRABLE_PAYMENT_STATUSES.contains(v.getPaymentStatus())) continue;
             if (v.getPaymentDueAt() == null || !now.isAfter(v.getPaymentDueAt())) continue;
+            // 🔒 Only if the database still says unpaid: a receipt uploaded (or a payment verified) after this list was read
+            // wins, and gets no "released" email
+            if (repo.expireIfStillUnpaid(v.getId(), v.getStatus(), EXPIRABLE_PAYMENT_STATUSES, now) != 1) continue;
             v.setStatus(Visitor.STATUS_PAYMENT_EXPIRED);
             v.setQrCodeUrl(null);
-            repo.save(v);
             count++;
             if (count == 1 && paymentWorkflow != null) contactEmail = paymentWorkflow.contactEmail(); // read once per sweep
             emailService.sendPaymentExpired(EmailService.PaymentNotice.of(v, contactEmail)); // logs a failure, never throws
@@ -345,6 +348,8 @@ public class AeroVisitAutomationEngine {
         if (reminded > 0) System.out.println("📅 [RETENTION] " + reminded + " reminder(s) sent to pick a new date.");
         int purged = purgeExpiredFiles(today, uploads);
         System.out.println("✅ [PURGE COMPLETE] " + purged + " finished visit(s) anonymized and cleared of ID photo / QR files.");
+        int passports = purgePassportReviews(LocalDateTime.now(), uploads);
+        System.out.println("🛂 [RETENTION] " + passports + " passport review(s) older than " + RETENTION_DAYS + " days cleared of their file and personal details.");
         int lifted = liftExpiredBans(today, uploads);
         System.out.println("🧬 [RETENTION] " + lifted + " expired temporary ban(s) lifted, mugshot and face vector deleted.");
         int chats = purgeOldChatLogs(LocalDateTime.now().minusDays(RETENTION_DAYS));
@@ -471,6 +476,11 @@ public class AeroVisitAutomationEngine {
                 v.setIdFaceCropUrl(null);
                 changed = true;
             }
+            // 🛂 A Foreign visitor's passport copy is their ID: it goes with the ID photos
+            if (v.getPassportFileUrl() != null && removeFile(uploadDir, v.getPassportFileUrl())) {
+                v.setPassportFileUrl(null);
+                changed = true;
+            }
             // 💳 The payment receipt screenshot goes with the ID photos (the billing number and amount stay for audit)
             if (v.getReceiptImageUrl() != null && removeFile(uploadDir, v.getReceiptImageUrl())) {
                 v.setReceiptImageUrl(null);
@@ -494,6 +504,37 @@ public class AeroVisitAutomationEngine {
                 repo.save(v);
                 count++;
             }
+        }
+        return count;
+    }
+
+    // 🛂 Passport reviews (Foreign visitors, before an advance booking) no longer waiting for the Director, with nothing
+    // done to them for RETENTION_DAYS days (rejected and never re-sent, an approval link never used or long expired, or
+    // used for a booking): the passport file goes (local + S3; a USED review's file already belongs to its booking, which
+    // the booking purge above removes), the name, email and phone are overwritten, and the emailed link stops working.
+    // A PENDING review is never touched. Optional repository: test slices without it purge nothing. Returns the reviews changed.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.paf.aerovisit.repository.PassportReviewRepository passportReviews;
+
+    int purgePassportReviews(LocalDateTime now, Path uploadDir) {
+        if (passportReviews == null) return 0;
+        LocalDateTime cutoff = now.minusDays(RETENTION_DAYS);
+        int count = 0;
+        for (com.paf.aerovisit.model.PassportReview r : passportReviews.findPurgeCandidates()) {
+            if (com.paf.aerovisit.model.PassportReview.PENDING.equals(r.getStatus())) continue;
+            LocalDateTime last = r.lastActivity();
+            if (last != null && last.isAfter(cutoff)) continue;
+            if (r.getFileName() != null && !com.paf.aerovisit.model.PassportReview.USED.equals(r.getStatus())
+                    && !removeFile(uploadDir, r.getFileName())) continue; // retried next night
+            r.setFileName(null);
+            r.setFullName(REDACTED);
+            r.setEmail(REDACTED);
+            r.setContactNumber(redacted(r.getContactNumber()));
+            r.setPossibleBanMatch(null);
+            r.setToken(null);
+            r.setTokenExpiresAt(null);
+            passportReviews.save(r);
+            count++;
         }
         return count;
     }
@@ -589,10 +630,10 @@ public class AeroVisitAutomationEngine {
                 java.time.LocalTime[] window = com.paf.aerovisit.controller.GuardOperationController.parseTimeWindow(v.getTimeWindow());
                 over = window != null && now.toLocalTime().isAfter(window[1].withSecond(59).withNano(999_999_999));
             }
-            if (over) {
+            // 🔒 Only if still APPROVED in the database (a last-minute check-in wins)
+            if (over && repo.releaseIfStatus(v.getId(), "APPROVED", "NO_SHOW") == 1) {
                 v.setStatus("NO_SHOW");
                 v.setQrCodeUrl(null);
-                repo.save(v);
                 count++;
             }
         }

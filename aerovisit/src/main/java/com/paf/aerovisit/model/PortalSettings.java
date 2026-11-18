@@ -73,6 +73,11 @@ public class PortalSettings {
 
     private Integer walkInPaymentMinutes;
 
+    // 🔑 Secret behind the daily walk-in code (WalkInService.todaysCode): random, made on first use, replaced by the
+    // Director's "New code for today". Never shown anywhere; only the day's code derived from it is.
+    @Column(length = 64)
+    private String walkInCodeSecret;
+
     // 📝 Minutes after a visit's time window ends before its feedback email is sent (Settings, Director; null = 30)
     public static final int DEFAULT_FEEDBACK_DELAY_MINUTES = 30;
 
@@ -126,6 +131,8 @@ public class PortalSettings {
     public void setWalkInMaxPax(Integer walkInMaxPax) { this.walkInMaxPax = walkInMaxPax; }
     public Integer getWalkInPaymentMinutes() { return walkInPaymentMinutes; }
     public void setWalkInPaymentMinutes(Integer walkInPaymentMinutes) { this.walkInPaymentMinutes = walkInPaymentMinutes; }
+    public String getWalkInCodeSecret() { return walkInCodeSecret; }
+    public void setWalkInCodeSecret(String walkInCodeSecret) { this.walkInCodeSecret = walkInCodeSecret; }
 
     public Long getRegularPriceCentavos() { return regularPriceCentavos; }
     public void setRegularPriceCentavos(Long regularPriceCentavos) { this.regularPriceCentavos = regularPriceCentavos; }
